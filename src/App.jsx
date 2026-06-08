@@ -196,10 +196,15 @@ async function generateDescription(v) {
   return data.content?.[0]?.text?.trim()||'';
 }
 
-async function fetchMarketData() {
-  await new Promise(r=>setTimeout(r,900));
-  const base=45000+Math.random()*30000;
-  return {marketLow:Math.round(base*.88),marketMid:Math.round(base),marketHigh:Math.round(base*1.12),marketAvgPrice:Math.round(base*.97),marketAvgOdometer:Math.round(52000+Math.random()*20000),marketDaysSupply:Math.round(40+Math.random()*70),likeMineSupply:Math.round(18+Math.random()*45),activeComps:Math.round(8+Math.random()*35),avgDaysToSell:Math.round(20+Math.random()*35),marketDataFetched:new Date().toISOString()};
+// Real market data via VinAudit (Canadian comps). Needs vin + dealer postal.
+async function fetchMarketData(vin, postal, radius = 250) {
+  if (!vin || vin.length !== 17) throw new Error('Valid VIN required');
+  if (!postal) throw new Error('Dealer postal code required (set it in Settings)');
+  const url = `${API_BASE}/api/market/${vin}?postal=${encodeURIComponent(postal)}&radius=${radius}`;
+  const res = await fetch(url);
+  const data = await res.json();
+  if (!res.ok || data.error) throw new Error(data.error || 'Market lookup failed');
+  return data; // {found, marketLow/Mid/High, activeComps, meta:{...}} or {found:false}
 }
 
 // Mock Carfax — replace with real API when credentials available
@@ -998,7 +1003,22 @@ function AppraisalForm({initial,onSave,onBack,showToast,onConvert,onFinalize,onU
   }
 
   async function decode(){if(a.vin.length!==17){showToast('Enter a valid 17-character VIN','error');return;}setVl(true);try{const d=await decodeVIN(a.vin.toUpperCase());setA(p=>{const next={...p,...d,updatedAt:new Date().toISOString()};aRef.current=next;return next;});setIsDirty(true);showToast(`Decoded: ${d.year} ${d.make} ${d.model}`,'success');}catch{showToast('Could not decode — enter manually','error');}finally{setVl(false);}}
-  async function fetchMkt(){if(a.vin.length!==17){showToast('Decode VIN first','error');return;}setMl(true);try{const m=await fetchMarketData();setA(p=>{const next=withLog({...p,...m,updatedAt:new Date().toISOString()},[logEvent('Market Data',`Refreshed · mid ${fmt(m.marketMid)}`,user)]);aRef.current=next;return next;});setIsDirty(true);showToast('Market data loaded','success');}catch{showToast('Market data unavailable','error');}finally{setMl(false);}}
+  async function fetchMkt(){
+    if(a.vin.length!==17){showToast('Decode VIN first','error');return;}
+    const dealer=onGetDealer?onGetDealer():null;
+    const postal=dealer?.postal;
+    if(!postal){showToast('Set your dealer postal code in Settings first','error');return;}
+    setMl(true);
+    try{
+      const m=await fetchMarketData(a.vin,postal);
+      if(!m.found){showToast(m.message||'No Canadian comps found for this vehicle','warning');setMl(false);return;}
+      const note=`${m.meta.comps} comps · ${m.meta.matchMode==='trim'?'trim match':'model match'}${m.meta.widened?' (widened)':''}`;
+      setA(p=>{const next=withLog({...p,marketLow:m.marketLow,marketMid:m.marketMid,marketHigh:m.marketHigh,marketAvgPrice:m.marketAvgPrice,activeComps:m.activeComps,marketDaysSupply:m.marketDaysSupply,marketDataFetched:m.marketDataFetched,_marketMeta:m.meta,_medianCompMileage:m.medianCompMileage,updatedAt:new Date().toISOString()},[logEvent('Market Data',`mid ${fmt(m.marketMid)} · ${note}`,user)]);aRef.current=next;return next;});
+      setIsDirty(true);
+      showToast(`Market: ${note}`,'success');
+    }catch(e){showToast(e.message||'Market data unavailable','error');}
+    finally{setMl(false);}
+  }
   async function pullCarfax(){if(!a.vin||a.vin.length!==17){showToast('Valid VIN required','error');return;}setCl(true);try{const c=await fetchCarfax(a.vin);setA(p=>{const next=withLog({...p,carfax:c,updatedAt:new Date().toISOString()},[logEvent('Carfax Report',c.clean?'Clean':'Issues Found',user,'Not Pulled')]);aRef.current=next;return next;});setIsDirty(true);showToast('Carfax report retrieved','success');}catch{showToast('Carfax unavailable','error');}finally{setCl(false);}}
   function photo(e){if(locked){showToast('Appraisal is finalized — unlock to edit','warning');e.target.value='';return;}Array.from(e.target.files).forEach(f=>{const r=new FileReader();r.onload=ev=>setA(p=>{const next={...p,photos:[...p.photos,{id:Date.now().toString()+Math.random(),dataUrl:ev.target.result,category:'Misc',name:f.name}]};aRef.current=next;return next;});r.readAsDataURL(f);});setIsDirty(true);e.target.value='';}
   function printConsumerOffer(){
@@ -1176,17 +1196,31 @@ function AppraisalForm({initial,onSave,onBack,showToast,onConvert,onFinalize,onU
                 </div>
               ))}
             </div>
+            {/* Data quality banner — comp count, match mode, thin-data warning */}
+            {a._marketMeta&&(()=>{
+              const meta=a._marketMeta;
+              const thin=meta.comps<5;
+              const bg=thin?C.orangeBg:C.greenBg, fg=thin?C.orange:C.green;
+              return (
+                <div style={{display:'flex',alignItems:'center',gap:8,background:bg,border:`1px solid ${fg}`,borderRadius:7,padding:'8px 12px',marginBottom:10,fontSize:12}}>
+                  {thin?<AlertTriangle size={14} color={fg}/>:<CheckCircle size={14} color={fg}/>}
+                  <span style={{color:fg,fontWeight:700}}>{meta.comps} comparable{meta.comps===1?'':'s'}</span>
+                  <span style={{color:C.textMid}}>· {meta.matchMode==='trim'?'matched on trim':'matched on model'}{meta.widened?' (widened from trim)':''} · {meta.radius} km · Canada</span>
+                  {thin&&<span style={{color:fg,marginLeft:'auto',fontWeight:600}}>Thin data — treat as directional</span>}
+                </div>
+              );
+            })()}
             {/* Key metrics */}
             <div style={{display:'grid',gridTemplateColumns:'repeat(2,1fr)',gap:8,marginBottom:10}}>
               {[
-                {l:'Days Supply',v:a.marketDaysSupply},
-                {l:'Like Mine',v:a.likeMineSupply},
-                {l:'Avg Days to Sell',v:a.avgDaysToSell?`${a.avgDaysToSell}d`:null},
-                {l:'Avg Market KM',v:a.marketAvgOdometer?fmtN(a.marketAvgOdometer)+' km':null},
+                {l:'Comps Used',v:a._marketMeta?a._marketMeta.comps:a.activeComps},
+                {l:'Median Days Listed',v:a.marketDaysSupply?`${a.marketDaysSupply}d`:null},
+                {l:'Active Now',v:a.activeComps},
+                {l:'Median Comp KM',v:a._medianCompMileage?fmtN(a._medianCompMileage)+' km':null},
               ].map(s=>(
                 <div key={s.l} style={{background:C.navyMuted,borderRadius:7,padding:'8px 12px',display:'flex',justifyContent:'space-between',alignItems:'center'}}>
                   <span style={{fontSize:11,color:C.textLight,fontWeight:600}}>{s.l}</span>
-                  <span style={{fontSize:13,fontWeight:700,color:C.navy,fontFamily:'monospace'}}>{s.v||'—'}</span>
+                  <span style={{fontSize:13,fontWeight:700,color:C.navy,fontFamily:'monospace'}}>{s.v||s.v===0?s.v:'—'}</span>
                 </div>
               ))}
             </div>
@@ -1478,7 +1512,21 @@ function VehicleDetail({vehicle:iv,onSave,onBack,showToast,onShowSticker=()=>{},
 
   async function decode(){if(v.vin.length!==17){showToast('Valid 17-char VIN required','error');return;}setVl(true);try{const d=await decodeVIN(v.vin.toUpperCase());up(d);showToast(`Decoded: ${d.year} ${d.make} ${d.model}`,'success');}catch{showToast('Could not decode','error');}finally{setVl(false);}}
   async function genDesc(){setDl(true);try{const d=await generateDescription(v);up({description:d});showToast('Description generated','success');}catch{showToast('Generation failed','error');}finally{setDl(false);}}
-  async function refMkt(){setMl(true);try{const m=await fetchMarketData();up(withLog({...vRef.current,...m},[logEvent('Market Data',`Refreshed · mid ${fmt(m.marketMid)}`,user)]));showToast('Market data refreshed','success');}catch{showToast('Market data unavailable','error');}finally{setMl(false);}}
+  async function refMkt(){
+    if(!v.vin||v.vin.length!==17){showToast('Valid VIN required','error');return;}
+    const dealer=onGetDealer?onGetDealer():null;
+    const postal=dealer?.postal;
+    if(!postal){showToast('Set your dealer postal code in Settings first','error');return;}
+    setMl(true);
+    try{
+      const m=await fetchMarketData(v.vin,postal);
+      if(!m.found){showToast(m.message||'No Canadian comps found','warning');setMl(false);return;}
+      const note=`${m.meta.comps} comps · ${m.meta.matchMode==='trim'?'trim match':'model match'}${m.meta.widened?' (widened)':''}`;
+      up(withLog({...vRef.current,marketLow:m.marketLow,marketMid:m.marketMid,marketHigh:m.marketHigh,marketAvgPrice:m.marketAvgPrice,activeComps:m.activeComps,marketDaysSupply:m.marketDaysSupply,marketDataFetched:m.marketDataFetched,_marketMeta:m.meta,_medianCompMileage:m.medianCompMileage},[logEvent('Market Data',`mid ${fmt(m.marketMid)} · ${note}`,user)]));
+      showToast(`Market: ${note}`,'success');
+    }catch(e){showToast(e.message||'Market data unavailable','error');}
+    finally{setMl(false);}
+  }
   async function pullCfx(){if(!v.vin||v.vin.length!==17){showToast('Valid VIN required','error');return;}setCl(true);try{const c=await fetchCarfax(v.vin);up(withLog({...vRef.current,carfax:c},[logEvent('Carfax Report',c.clean?'Clean':'Issues Found',user,'Not Pulled')]));showToast('Carfax report retrieved','success');}catch{showToast('Carfax unavailable','error');}finally{setCl(false);}}
   function photo(e){Array.from(e.target.files).forEach(f=>{const r=new FileReader();r.onload=ev=>up({photos:[...v.photos,{id:Date.now().toString()+Math.random(),dataUrl:ev.target.result,category:'Misc',name:f.name}]});r.readAsDataURL(f);});e.target.value='';}
   const comps=[{rank:1,price:Math.round((v.marketMid||50000)*.93),odo:Math.round((Number(v.odometer)||50000)*.9),days:28,dist:39,dealer:"Budds' Imported Cars",city:'Oakville, ON'},{rank:2,price:Math.round((v.marketMid||50000)*.97),odo:Math.round((Number(v.odometer)||50000)*1.05),days:66,dist:2,dealer:'Northline Motors',city:'Vaughan, ON'},{rank:3,price:Math.round((v.marketMid||50000)*1.03),odo:Math.round((Number(v.odometer)||50000)*.95),days:24,dist:16,dealer:'City Auto Group',city:'Brampton, ON'},{rank:4,price:Math.round((v.marketMid||50000)*1.09),odo:Math.round((Number(v.odometer)||50000)*.85),days:14,dist:11,dealer:'Premium Motors',city:'Thornhill, ON'}];
