@@ -1,0 +1,25 @@
+# Dependencies
+node_modules/
+
+# Build output
+dist/
+dist-ssr/
+
+# Local env files (never commit secrets)
+.env
+.env.local
+.env.*.local
+
+# Editor / OS
+.DS_Store
+*.local
+.vscode/
+.idea/
+
+# Logs
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+
+# Backend secret (local only — set the key via env var in production)
+config.json
