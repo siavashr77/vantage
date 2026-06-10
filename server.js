@@ -166,6 +166,44 @@ async function fetchListings({ vin, match, status, postal, radius, historyDays }
 
 const MIN_COMPS = 5  // below this, widen match strictness
 
+// Map a raw VinAudit listing into a clean competitive-set row for the UI.
+function mapComp(l) {
+  const price = Number(l.listing_price)
+  return {
+    id: l.id || l.listing_vdp_url || `${l.name || ''}|${l.listing_price || ''}`,
+    price: Number.isFinite(price) ? price : null,
+    mileage: Number(l.listing_mileage) || null,
+    days: Number(l.days_seen) || null,
+    certified: !!l.certified_flag,
+    status: l.listing_status || '',
+    dealer: l.name || 'Dealer',
+    sellerType: l.seller_type || '',
+    city: l.city || '',
+    region: l.region || '',
+    title: l.listing_title || '',
+    year: l.vehicle_year || '',
+    make: l.vehicle_make || '',
+    model: l.vehicle_model || '',
+    trim: l.vehicle_trim || '',
+    url: l.listing_vdp_url || '',
+  }
+}
+
+// Build a deduped, price-sorted competitive set (capped to keep payload small).
+function buildComps(listings, limit = 30) {
+  const seen = new Set()
+  return listings
+    .filter(l => {
+      const k = l.id || `${l.listing_vdp_url || ''}|${l.listing_price || ''}`
+      if (seen.has(k)) return false
+      seen.add(k); return true
+    })
+    .map(mapComp)
+    .filter(c => c.price && c.price >= 1000)
+    .sort((a, b) => a.price - b.price)
+    .slice(0, limit)
+}
+
 app.get('/api/market/:vin', async (req, res) => {
   const vin = req.params.vin.toUpperCase().trim()
   const postal = (req.query.postal || '').toString().trim()
@@ -228,6 +266,7 @@ app.get('/api/market/:vin', async (req, res) => {
       medianCompMileage: stats.medianCompMileage,
       certifiedShare: stats.certifiedShare,
       marketDataFetched: new Date().toISOString(),
+      comps: buildComps(blended),
       meta: {
         matchMode: match,         // 'trim' = strict, 'model' = widened
         widened,                  // true if we had to loosen matching
