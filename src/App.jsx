@@ -234,42 +234,56 @@ async function fetchCarfax(vin) {
 }
 
 // Live competitive set — renders real VinAudit listings with clickable links.
-function CompSet({ comps, myPrice, myKm, myDays, title = 'Competitive Set · Live Listings' }) {
+function CompSet({ comps, myPrice, myKm, myDays }) {
   if (!comps || comps.length === 0) return null;
   const mp = Number(myPrice) || null;
-  const myRank = mp ? comps.filter(c => c.price < mp).length + 1 : null;
-  return (
-    <div style={{background:'#fff',border:`1px solid ${C.border}`,borderRadius:10,overflow:'hidden'}}>
+  const sold = comps.filter(c => c.status === 'dropped');
+  const active = comps.filter(c => c.status !== 'dropped');
+  const myRank = mp ? active.filter(c => c.price < mp).length + 1 : null;
+  const soldAgo = (s) => { if(!s) return null; const d=new Date(s); if(isNaN(d.getTime())) return null; return Math.max(0,Math.round((Date.now()-d.getTime())/86400000)); };
+  const cell = {padding:'7px 12px'};
+  const block = (heading, rows, mode, showMine, badge) => (
+    <div style={{background:'#fff',border:`1px solid ${C.border}`,borderRadius:10,overflow:'hidden',marginBottom:10}}>
       <div style={{padding:'10px 14px',borderBottom:`1px solid ${C.border}`,display:'flex',alignItems:'center',justifyContent:'space-between',gap:8,flexWrap:'wrap'}}>
-        <div style={{fontWeight:700,fontSize:13,color:C.navy}}>{title}</div>
-        {myRank&&<span style={{fontSize:11,fontFamily:'monospace',color:C.teal,background:C.tealMuted,padding:'2px 10px',borderRadius:12}}>Your price ranks #{myRank} of {comps.length+1}</span>}
+        <div style={{fontWeight:700,fontSize:13,color:C.navy}}>{heading} <span style={{color:C.textLight,fontWeight:500}}>({rows.length})</span></div>
+        {badge}
       </div>
       <div style={{overflowX:'auto'}}>
         <table style={{width:'100%',borderCollapse:'collapse',fontSize:12}}>
-          <thead><tr style={{background:C.navyMuted}}>{['Price','KM','Days','Location','Dealer',''].map((h,i)=>(
+          <thead><tr style={{background:C.navyMuted}}>{['Price','KM',mode==='sold'?'Sold':'Days','Location','Dealer',''].map((h,i)=>(
             <th key={i} style={{padding:'7px 12px',textAlign:'left',fontSize:10,fontWeight:600,color:C.textLight,borderBottom:`1px solid ${C.border}`,whiteSpace:'nowrap'}}>{h}</th>
           ))}</tr></thead>
           <tbody>
-            {mp&&<tr style={{background:C.tealMuted}}>
-              <td style={{padding:'8px 12px',fontFamily:'monospace',fontWeight:700,color:C.teal}}>{fmt(mp)}</td>
-              <td style={{padding:'8px 12px',fontFamily:'monospace',color:C.teal}}>{myKm?fmtN(myKm):'—'}</td>
-              <td style={{padding:'8px 12px',color:C.teal}}>{myDays?`${myDays}d`:'—'}</td>
-              <td style={{padding:'8px 12px',color:C.teal}}>—</td>
-              <td style={{padding:'8px 12px',fontWeight:700,color:C.teal}} colSpan={2}>Your Vehicle</td>
+            {showMine&&mp&&<tr style={{background:C.tealMuted}}>
+              <td style={{...cell,fontFamily:'monospace',fontWeight:700,color:C.teal}}>{fmt(mp)}</td>
+              <td style={{...cell,fontFamily:'monospace',color:C.teal}}>{myKm?fmtN(myKm):'—'}</td>
+              <td style={{...cell,color:C.teal}}>{myDays?`${myDays}d`:'—'}</td>
+              <td style={{...cell,color:C.teal}}>—</td>
+              <td style={{...cell,fontWeight:700,color:C.teal}} colSpan={2}>Your Vehicle</td>
             </tr>}
-            {comps.map((c,i)=>(
+            {rows.map((c,i)=>{
+              const ago=mode==='sold'?soldAgo(c.dropDate):null;
+              return (
               <tr key={c.id||i} style={{borderTop:`1px solid ${C.border}`}}>
-                <td style={{padding:'7px 12px',fontFamily:'monospace',fontWeight:600,color:C.textDark,whiteSpace:'nowrap'}}>{fmt(c.price)}{c.certified&&<span style={{marginLeft:6,fontSize:9,fontWeight:700,color:C.green,background:C.greenBg,padding:'1px 5px',borderRadius:8}}>CPO</span>}</td>
-                <td style={{padding:'7px 12px',fontFamily:'monospace',color:C.textMid,whiteSpace:'nowrap'}}>{c.mileage?fmtN(c.mileage):'—'}</td>
-                <td style={{padding:'7px 12px',whiteSpace:'nowrap',color:c.days>45?C.orange:C.textMid}}>{c.days?`${c.days}d`:'—'}{c.status==='dropped'&&<span style={{marginLeft:4,fontSize:9,color:C.textLight}} title="No longer listed — likely sold">·sold?</span>}</td>
-                <td style={{padding:'7px 12px',color:C.textLight,whiteSpace:'nowrap'}}>{[c.city,c.region].filter(Boolean).join(', ')||'—'}</td>
-                <td style={{padding:'7px 12px',color:C.textDark}}>{c.dealer}</td>
-                <td style={{padding:'7px 12px',whiteSpace:'nowrap'}}>{c.url?<a href={c.url} target="_blank" rel="noopener noreferrer" style={{display:'inline-flex',alignItems:'center',gap:3,color:C.navy,fontSize:11,fontWeight:600,textDecoration:'none'}}><ExternalLink size={12}/>View</a>:<span style={{fontSize:10,color:C.textLight}}>—</span>}</td>
+                <td style={{...cell,fontFamily:'monospace',fontWeight:600,color:C.textDark,whiteSpace:'nowrap'}}>{fmt(c.price)}{c.certified&&<span style={{marginLeft:6,fontSize:9,fontWeight:700,color:C.green,background:C.greenBg,padding:'1px 5px',borderRadius:8}}>CPO</span>}</td>
+                <td style={{...cell,fontFamily:'monospace',color:C.textMid,whiteSpace:'nowrap'}}>{c.mileage?fmtN(c.mileage):'—'}</td>
+                {mode==='sold'
+                  ? <td style={{...cell,whiteSpace:'nowrap',fontWeight:600,color:ago!=null&&ago<=14?C.green:C.textMid}}>{ago!=null?`${ago}d ago`:'—'}</td>
+                  : <td style={{...cell,whiteSpace:'nowrap',color:c.days>45?C.orange:C.textMid}}>{c.days?`${c.days}d`:'—'}</td>}
+                <td style={{...cell,color:C.textLight,whiteSpace:'nowrap'}}>{[c.city,c.region].filter(Boolean).join(', ')||'—'}</td>
+                <td style={{...cell,color:C.textDark}}>{c.dealer}</td>
+                <td style={{...cell,whiteSpace:'nowrap'}}>{c.url?<a href={c.url} target="_blank" rel="noopener noreferrer" style={{display:'inline-flex',alignItems:'center',gap:3,color:C.navy,fontSize:11,fontWeight:600,textDecoration:'none'}}><ExternalLink size={12}/>View</a>:<span style={{fontSize:10,color:C.textLight}}>—</span>}</td>
               </tr>
-            ))}
+            );})}
           </tbody>
         </table>
       </div>
+    </div>
+  );
+  return (
+    <div>
+      {active.length>0&&block('Currently Listed', active, 'listed', true, myRank&&<span style={{fontSize:11,fontFamily:'monospace',color:C.teal,background:C.tealMuted,padding:'2px 10px',borderRadius:12}}>Your price ranks #{myRank} of {active.length+1}</span>)}
+      {sold.length>0&&block('Recently Sold · likely', sold, 'sold', false, <span style={{fontSize:10,color:C.textLight}} title="Listing dropped off the market — usually sold, not guaranteed">last 45 days</span>)}
     </div>
   );
 }
