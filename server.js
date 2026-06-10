@@ -2,6 +2,7 @@ import express from 'express'
 import cors from 'cors'
 import fetch from 'node-fetch'
 import { readFileSync } from 'fs'
+import pg from 'pg'
 
 const app = express()
 // Railway (and most hosts) inject PORT; fall back to 3001 for local dev.
@@ -12,6 +13,67 @@ const PORT = process.env.PORT || 3001
 const ALLOWED_ORIGIN = process.env.ALLOWED_ORIGIN || ''
 app.use(cors(ALLOWED_ORIGIN ? { origin: ALLOWED_ORIGIN } : {}))
 app.use(express.json())
+
+// ── Postgres dealer-fee ledger ───────────────────────────────────────
+// Railway injects DATABASE_URL when a Postgres service is attached.
+// Internal Railway connections (*.railway.internal) don't use SSL; public do.
+const { Pool } = pg
+const DATABASE_URL = process.env.DATABASE_URL || ''
+let pool = null
+if (DATABASE_URL) {
+  const useSSL = !/railway\.internal/.test(DATABASE_URL)
+  pool = new Pool({ connectionString: DATABASE_URL, ssl: useSSL ? { rejectUnauthorized: false } : false })
+  pool.query(`CREATE TABLE IF NOT EXISTS dealer_fees (
+    id SERIAL PRIMARY KEY,
+    dealer_key TEXT NOT NULL,
+    dealer_name TEXT,
+    source TEXT,
+    fee_total INTEGER,
+    fee_detail JSONB,
+    vin TEXT,
+    url TEXT,
+    checked_by TEXT,
+    checked_at TIMESTAMPTZ DEFAULT now()
+  )`).then(() => console.log('   Dealer-fee ledger: Postgres ready ✅'))
+    .catch(e => console.error('DB init error:', e.message))
+} else {
+  console.log('   Dealer-fee ledger: no DATABASE_URL — fee history disabled')
+}
+
+// Normalize a dealer name into a stable key for matching across listings.
+function dealerKey(name) {
+  return (name || '').toLowerCase().replace(/[^a-z0-9]+/g, ' ').trim()
+}
+
+// Record a positive fee check so this dealer can be flagged in future.
+async function recordFee({ dealer, source, feeTotal, feeDetail, vin, url, user }) {
+  if (!pool) return
+  try {
+    await pool.query(
+      `INSERT INTO dealer_fees(dealer_key,dealer_name,source,fee_total,fee_detail,vin,url,checked_by)
+       VALUES($1,$2,$3,$4,$5,$6,$7,$8)`,
+      [dealerKey(dealer), dealer || '', source || '', feeTotal || 0,
+       JSON.stringify(feeDetail || []), vin || '', url || '', user || '']
+    )
+  } catch (e) { console.error('recordFee error:', e.message) }
+}
+
+// Build a map of dealers we've previously caught charging fees.
+async function getKnownFeeDealers() {
+  if (!pool) return {}
+  try {
+    const r = await pool.query(
+      `SELECT dealer_key, max(dealer_name) AS dealer_name, round(avg(fee_total))::int AS avg_fee,
+              max(fee_total) AS max_fee, count(*)::int AS n, max(checked_at) AS last_seen
+       FROM dealer_fees WHERE fee_total > 0 GROUP BY dealer_key`
+    )
+    const map = {}
+    for (const row of r.rows) {
+      map[row.dealer_key] = { name: row.dealer_name, avgFee: row.avg_fee, maxFee: row.max_fee, count: row.n }
+    }
+    return map
+  } catch (e) { console.error('getKnownFeeDealers error:', e.message); return {} }
+}
 
 // API key: prefer environment variable (set this in Railway), fall back to
 // config.json for local development. Never commit a real key to git.
@@ -166,11 +228,30 @@ async function fetchListings({ vin, match, status, postal, radius, historyDays }
 
 const MIN_COMPS = 5  // below this, widen match strictness
 
+// Identify where a listing lives from its URL, so the appraiser sees the
+// source before clicking (and knows which comps Check Fees can likely read).
+function sourceFromUrl(url) {
+  if (!url) return ''
+  try {
+    const h = new URL(url).hostname.replace(/^www\./, '').toLowerCase()
+    if (h.includes('autotrader')) return 'AutoTrader'
+    if (h.includes('cargurus')) return 'CarGurus'
+    if (h.includes('clutch')) return 'Clutch'
+    if (h.includes('kijiji')) return 'Kijiji'
+    if (h.includes('carpages')) return 'CarPages'
+    if (h.includes('carfax')) return 'Carfax'
+    if (h.includes('facebook')) return 'Facebook'
+    return h  // dealer's own site — show the domain (e.g. rockcliffauto.ca)
+  } catch (e) { return '' }
+}
+
 // Map a raw VinAudit listing into a clean competitive-set row for the UI.
 function mapComp(l) {
   const price = Number(l.listing_price)
   return {
     id: l.id || l.listing_vdp_url || `${l.name || ''}|${l.listing_price || ''}`,
+    vin: (l.vin || '').toUpperCase().trim(),
+    source: sourceFromUrl(l.listing_vdp_url),
     price: Number.isFinite(price) ? price : null,
     mileage: Number(l.listing_mileage) || null,
     days: Number(l.days_seen) || null,
@@ -203,6 +284,54 @@ function buildComps(listings, limit = 30) {
     .filter(c => c.price && c.price >= 1000)
     .sort((a, b) => a.price - b.price)
     .slice(0, limit)
+}
+
+// Collapse the same physical car (same VIN) into ONE listing.
+// A car cross-posted by several dealers, or relisted, should count once.
+// Rule: if ANY instance is still active, the car is currently listed (not sold);
+// only if every instance has dropped do we treat it as recently sold.
+// Listings with no/short VIN can't be matched this way, so they pass through.
+function dedupeByVin(listings) {
+  const byVin = new Map()
+  const noVin = []
+  for (const l of listings) {
+    const vin = (l.vin || '').toUpperCase().trim()
+    if (!vin || vin.length < 11) { noVin.push(l); continue }
+    const existing = byVin.get(vin)
+    if (!existing) { byVin.set(vin, l); continue }
+    const exActive = existing.listing_status !== 'dropped'
+    const newActive = l.listing_status !== 'dropped'
+    if (newActive && !exActive) { byVin.set(vin, l); continue }
+    if (newActive === exActive) {
+      // same status — prefer one with a real listing page, then the lower price
+      const exUrl = !!existing.listing_vdp_url, newUrl = !!l.listing_vdp_url
+      if (newUrl && !exUrl) byVin.set(vin, l)
+      else if (newUrl === exUrl && Number(l.listing_price) < Number(existing.listing_price)) byVin.set(vin, l)
+    }
+  }
+  return [...byVin.values(), ...noVin]
+}
+
+// Strip a listing page down to readable text for fee extraction.
+function htmlToText(html) {
+  return html
+    .replace(/<script[\s\S]*?<\/script>/gi, ' ')
+    .replace(/<style[\s\S]*?<\/style>/gi, ' ')
+    .replace(/<[^>]+>/g, ' ')
+    .replace(/&nbsp;/g, ' ').replace(/&amp;/g, '&').replace(/&#\d+;/g, ' ')
+    .replace(/\s+/g, ' ').trim()
+}
+
+// Focus the text on fee-relevant passages so the model sees the fine print.
+function relevantText(text) {
+  const head = text.slice(0, 6000)
+  const kw = /(fee|admin|documentation|\bdoc\b|reconditioning|freight|pdi|etch|nitrogen|certification|surcharge|does not include|all prices|additional|plus applicable|plus hst)/gi
+  const windows = []
+  let m
+  while ((m = kw.exec(text)) && windows.length < 12) {
+    windows.push(text.slice(Math.max(0, m.index - 200), Math.min(text.length, m.index + 300)))
+  }
+  return (head + '\n...\n' + windows.join('\n...\n')).slice(0, 12000)
 }
 
 app.get('/api/market/:vin', async (req, res) => {
@@ -241,18 +370,30 @@ app.get('/api/market/:vin', async (req, res) => {
       ])
     }
 
-    // Blend: dropped (closer to transacted) + active (current asking).
+    // Blend: dropped (closer to transacted) + active (current asking),
+    // then collapse duplicate VINs so stats and comps count UNIQUE cars.
     const blended = [...dropped, ...active]
-    const stats = computeMarket(blended)
+    const deduped = dedupeByVin(blended)
+    const dedupActive = deduped.filter(l => l.listing_status !== 'dropped').length
+    const dedupDropped = deduped.filter(l => l.listing_status === 'dropped').length
+    const stats = computeMarket(deduped)
 
     if (!stats) {
       return res.json({
         success: true,
         found: false,
         message: 'No Canadian comparable listings found for this vehicle.',
-        meta: { matchMode: match, widened, radius, activeCount: active.length, droppedCount: dropped.length },
+        meta: { matchMode: match, widened, radius, activeCount: dedupActive, droppedCount: dedupDropped },
       })
     }
+
+    // Flag comps whose dealer we've previously caught charging fees.
+    const known = await getKnownFeeDealers()
+    const comps = buildComps(deduped).map(c => {
+      const k = dealerKey(c.dealer)
+      if (known[k]) c.feeWarning = { avgFee: known[k].avgFee, count: known[k].count }
+      return c
+    })
 
     res.json({
       success: true,
@@ -262,18 +403,19 @@ app.get('/api/market/:vin', async (req, res) => {
       marketMid: stats.mid,
       marketHigh: stats.high,
       marketAvgPrice: stats.avg,
-      activeComps: active.length,
+      activeComps: dedupActive,
       marketDaysSupply: stats.medianDaysSeen,
       medianCompMileage: stats.medianCompMileage,
       certifiedShare: stats.certifiedShare,
       marketDataFetched: new Date().toISOString(),
-      comps: buildComps(blended),
+      comps,
       meta: {
         matchMode: match,         // 'trim' = strict, 'model' = widened
         widened,                  // true if we had to loosen matching
         comps: stats.comps,       // total listings the estimate rests on
-        activeCount: active.length,
-        droppedCount: dropped.length,
+        activeCount: dedupActive,
+        droppedCount: dedupDropped,
+        deduped: blended.length - deduped.length,  // duplicate VINs removed
         radius,
         country: 'canada',
       },
@@ -281,6 +423,71 @@ app.get('/api/market/:vin', async (req, res) => {
   } catch (err) {
     console.error('VinAudit market error:', err.message)
     res.status(500).json({ error: 'Market data failed: ' + err.message })
+  }
+})
+
+// ── Check Fees ───────────────────────────────────────────────────────
+// Fetch ONE listing page on demand, extract fees ADDED on top of the
+// advertised price, and record positives so the dealer can be flagged later.
+app.post('/api/fees', async (req, res) => {
+  const { url, dealer, vin, source, user } = req.body || {}
+  if (!url) return res.status(400).json({ error: 'listing url required' })
+  if (!ANTHROPIC_KEY || ANTHROPIC_KEY === 'YOUR_ANTHROPIC_API_KEY_HERE') {
+    return res.status(400).json({ error: 'AI key not configured' })
+  }
+
+  // 1) Fetch the listing page (browser UA, 12s timeout via AbortController —
+  //    node-fetch v3 has no timeout option). Many big portals will block us;
+  //    fail soft so the UI can say "couldn't read this listing".
+  let pageText = ''
+  try {
+    const ctrl = new AbortController()
+    const t = setTimeout(() => ctrl.abort(), 12000)
+    const r = await fetch(url, {
+      redirect: 'follow',
+      signal: ctrl.signal,
+      headers: {
+        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0 Safari/537.36',
+        'Accept': 'text/html,application/xhtml+xml',
+      },
+    })
+    clearTimeout(t)
+    if (!r.ok) return res.json({ success: true, readable: false, reason: `page returned ${r.status}` })
+    const html = await r.text()
+    pageText = relevantText(htmlToText(html))
+  } catch (e) {
+    return res.json({ success: true, readable: false, reason: 'could not fetch page' })
+  }
+  if (!pageText || pageText.length < 40) {
+    return res.json({ success: true, readable: false, reason: 'no readable text on page' })
+  }
+
+  // 2) Extract fees with the LLM (strict JSON; exclude HST & licensing).
+  try {
+    const prompt = `You are analyzing a Canadian used-car listing page. Extract ONLY fees or charges that are ADDED ON TOP of the advertised vehicle price and are NOT already included in it — e.g. admin fee, documentation/doc fee, dealer fee, reconditioning, freight/PDI, etching, nitrogen, certification fee, surcharges. Do NOT include HST/tax or government licensing/registration. If a fee's inclusion is ambiguous, leave it out. Respond with STRICT JSON only, no prose, no markdown: {"fees":[{"name":"...","amount":NUMBER}],"note":"short note or empty string"}. If none are clearly found, return {"fees":[],"note":"..."}.
+
+LISTING PAGE TEXT:
+${pageText}`
+    const ar = await fetch('https://api.anthropic.com/v1/messages', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'x-api-key': ANTHROPIC_KEY, 'anthropic-version': '2023-06-01' },
+      body: JSON.stringify({ model: 'claude-3-5-haiku-20241022', max_tokens: 400, messages: [{ role: 'user', content: prompt }] }),
+    })
+    const ad = await ar.json()
+    if (ad.error) return res.status(502).json({ error: 'AI error: ' + (ad.error.message || 'unknown') })
+    let txt = (ad.content && ad.content[0] && ad.content[0].text) || ''
+    txt = txt.replace(/```json|```/g, '').trim()
+    let parsed
+    try { parsed = JSON.parse(txt) } catch (e) { parsed = { fees: [], note: 'could not parse model output' } }
+    const fees = Array.isArray(parsed.fees)
+      ? parsed.fees.filter(f => f && Number(f.amount) > 0)
+                   .map(f => ({ name: String(f.name || 'fee').slice(0, 40), amount: Math.round(Number(f.amount)) }))
+      : []
+    const feeTotal = fees.reduce((s, f) => s + f.amount, 0)
+    if (feeTotal > 0) recordFee({ dealer, source, feeTotal, feeDetail: fees, vin, url, user })
+    res.json({ success: true, readable: true, fees, feeTotal, note: parsed.note || '' })
+  } catch (e) {
+    res.status(500).json({ error: 'fee extraction failed: ' + e.message })
   }
 })
 
