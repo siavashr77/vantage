@@ -176,6 +176,7 @@ function mapComp(l) {
     days: Number(l.days_seen) || null,
     certified: !!l.certified_flag,
     status: l.listing_status || '',
+    dropDate: l.listing_drop_date || l.date_max || '',
     dealer: l.name || 'Dealer',
     sellerType: l.seller_type || '',
     city: l.city || '',
