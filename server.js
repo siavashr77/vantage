@@ -291,6 +291,17 @@ function buildComps(listings, limit = 30) {
 // Rule: if ANY instance is still active, the car is currently listed (not sold);
 // only if every instance has dropped do we treat it as recently sold.
 // Listings with no/short VIN can't be matched this way, so they pass through.
+// Rank a listing's URL by how recognizable / credible its marketplace is, so
+// dedup surfaces AutoTrader/CarGurus ads over an obscure dealer page for the
+// same car. Higher = preferred; no listing page ranks lowest.
+function portalRank(url) {
+  const h = (url || '').toLowerCase()
+  if (!h) return -1
+  if (h.includes('autotrader')) return 3
+  if (h.includes('cargurus')) return 3
+  return 0
+}
+
 function dedupeByVin(listings) {
   const byVin = new Map()
   const noVin = []
@@ -303,10 +314,13 @@ function dedupeByVin(listings) {
     const newActive = l.listing_status !== 'dropped'
     if (newActive && !exActive) { byVin.set(vin, l); continue }
     if (newActive === exActive) {
-      // same status — prefer one with a real listing page, then the lower price
-      const exUrl = !!existing.listing_vdp_url, newUrl = !!l.listing_vdp_url
-      if (newUrl && !exUrl) byVin.set(vin, l)
-      else if (newUrl === exUrl && Number(l.listing_price) < Number(existing.listing_price)) byVin.set(vin, l)
+      // Same status. Prefer a recognizable portal (AutoTrader/CarGurus) so those
+      // ads get surfaced; then any real listing page; then the lower price.
+      const exRank = portalRank(existing.listing_vdp_url)
+      const newRank = portalRank(l.listing_vdp_url)
+      if (newRank > exRank) { byVin.set(vin, l); continue }
+      if (newRank < exRank) continue
+      if (Number(l.listing_price) < Number(existing.listing_price)) byVin.set(vin, l)
     }
   }
   return [...byVin.values(), ...noVin]
@@ -338,7 +352,7 @@ app.get('/api/market/:vin', async (req, res) => {
   const vin = req.params.vin.toUpperCase().trim()
   const postal = (req.query.postal || '').toString().trim()
   const radius = Math.min(Number(req.query.radius) || 250, 500)
-  const historyDays = Number(req.query.history_days) || 45
+  let historyDays = Number(req.query.history_days) || 60
 
   if (vin.length !== 17) return res.status(400).json({ error: 'VIN must be 17 characters' })
   if (!postal) return res.status(400).json({ error: 'postal code required' })
@@ -370,10 +384,48 @@ app.get('/api/market/:vin', async (req, res) => {
       ])
     }
 
+    // History widening (fallback only): keep archived/sold comps to the last
+    // 60 days when recent data is sufficient; reach further back ONLY if the set
+    // is still too sparse — so we never surface year-old sales unnecessarily.
+    let historyWidened = false
+    for (const step of [180, 365]) {
+      if (active.length + dropped.length >= MIN_COMPS) break
+      if (step <= historyDays) continue
+      historyDays = step
+      historyWidened = true
+      dropped = await fetchListings({ vin, match, status: 'dropped', postal, radius, historyDays })
+    }
+
     // Blend: dropped (closer to transacted) + active (current asking),
     // then collapse duplicate VINs so stats and comps count UNIQUE cars.
     const blended = [...dropped, ...active]
     const deduped = dedupeByVin(blended)
+
+    // DEBUG (gated by ?debug=hosts): raw pre-dedup tally, so we can see whether
+    // recognizable portals (AutoTrader/CarGurus) appear before dedup, and whether
+    // they are live ads (active) or archived (dropped).
+    let rawHostsDebug = null
+    if (req.query.debug === 'hosts') {
+      const tally = {}
+      let none = 0, portalActive = 0, portalDropped = 0
+      const portalRe = /autotrader|cargurus/i
+      for (const l of blended) {
+        const u = l.listing_vdp_url || ''
+        if (!u) { none++; continue }
+        let h = ''
+        try { h = new URL(u).hostname.replace(/^www\./, '') } catch { h = '(bad)' }
+        tally[h] = (tally[h] || 0) + 1
+        if (portalRe.test(h)) { (l.listing_status === 'dropped' ? portalDropped++ : portalActive++) }
+      }
+      rawHostsDebug = {
+        rawTotal: blended.length,
+        noUrl: none,
+        portalsActive: portalActive,
+        portalsDropped: portalDropped,
+        namedMarketplaces: Object.entries(tally).filter(([h]) => /autotrader|cargurus|kijiji|carpages|clutch/i.test(h)),
+        hosts: Object.entries(tally).sort((a, b) => b[1] - a[1]),
+      }
+    }
     const dedupActive = deduped.filter(l => l.listing_status !== 'dropped').length
     const dedupDropped = deduped.filter(l => l.listing_status === 'dropped').length
     const stats = computeMarket(deduped)
@@ -417,7 +469,10 @@ app.get('/api/market/:vin', async (req, res) => {
         droppedCount: dedupDropped,
         deduped: blended.length - deduped.length,  // duplicate VINs removed
         radius,
+        historyDays,              // archived window actually used (60 unless widened)
+        historyWidened,           // true if we reached past 60 days for more comps
         country: 'canada',
+        ...(rawHostsDebug ? { rawHostsDebug } : {}),
       },
     })
   } catch (err) {
