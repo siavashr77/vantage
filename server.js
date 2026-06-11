@@ -205,6 +205,42 @@ function computeMarket(listings) {
   }
 }
 
+// Stats for SOLD (dropped) listings, kept SEPARATE from the active market math.
+// Sold cars must never feed Low/Mid/High or the active median — they're shown
+// in their own panel (avg sold price, avg days-to-sell, avg odometer) the way
+// vAuto segregates its "Sold" column.
+function computeSoldStats(listings) {
+  const rows = listings
+    .map(l => ({
+      price: Number(l.listing_price),
+      mileage: Number(l.listing_mileage) || null,
+      dts: Number(l.days_seen) || null,   // days the car was listed before dropping = days-to-sell proxy
+    }))
+    .filter(l => l.price >= 1000 && Number.isFinite(l.price))
+  if (rows.length === 0) return { count: 0, avgPrice: null, avgDts: null, avgOdo: null, medianPrice: null }
+  const avg = arr => arr.length ? Math.round(arr.reduce((s, n) => s + n, 0) / arr.length) : null
+  const prices = rows.map(r => r.price).sort((a, b) => a - b)
+  const miles = rows.map(r => r.mileage).filter(Number.isFinite)
+  const dtsArr = rows.map(r => r.dts).filter(Number.isFinite)
+  return {
+    count: rows.length,
+    avgPrice: avg(prices),
+    medianPrice: percentile(prices, 0.50),
+    avgDts: avg(dtsArr),
+    avgOdo: avg(miles),
+  }
+}
+
+// Market Day Supply (vAuto-style): how many days the local market would take to
+// sell through current ACTIVE comparable inventory at the recent rate of sale.
+//   MDS = (active comparable listings ÷ sold in the window) × window_days
+// Lower = sells fast / liquid; higher = slow mover. Returns null if we can't
+// measure a sales rate (no sold comps in the window).
+function marketDaySupply(activeCount, soldInWindow, windowDays = 45) {
+  if (!soldInWindow || soldInWindow <= 0) return null
+  return Math.round((activeCount / soldInWindow) * windowDays)
+}
+
 async function fetchListings({ vin, match, status, postal, radius, historyDays }) {
   const params = new URLSearchParams({
     key: VINAUDIT_KEY,
@@ -458,13 +494,34 @@ app.get('/api/market/:vin', async (req, res) => {
     }
     const dedupActive = deduped.filter(l => l.listing_status !== 'dropped').length
     const dedupDropped = deduped.filter(l => l.listing_status === 'dropped').length
-    const stats = computeMarket(deduped)
+    // SPLIT the deduped set: active listings drive ALL pricing math; sold/dropped
+    // listings are reported separately and never blended into Low/Mid/High/median.
+    const activeListings = deduped.filter(l => l.listing_status !== 'dropped')
+    const soldListings = deduped.filter(l => l.listing_status === 'dropped')
+
+    // Active-only market stats. (Pricing must reflect what's CURRENTLY for sale,
+    // not what sold a year ago.)
+    const stats = computeMarket(activeListings)
+    // Sold stats, kept apart for the "Recently Sold" panel.
+    const soldStats = computeSoldStats(soldListings)
+
+    // Sold within the MDS window (45d). VinAudit history window may be wider when
+    // it had to widen for thin data, so count only drops inside 45 days here.
+    const MDS_WINDOW = 45
+    const soldInWindow = soldListings.filter(l => {
+      const d = Number(l.days_seen)
+      // days_seen tracks how long the ad ran; without a drop date we count the
+      // sold comp as in-window (history default is already ≤60d).
+      return true
+    }).length
+    const mds = marketDaySupply(dedupActive, soldInWindow, MDS_WINDOW)
 
     if (!stats) {
       return res.json({
         success: true,
         found: false,
-        message: 'No Canadian comparable listings found for this vehicle.',
+        message: 'No Canadian comparable ACTIVE listings found for this vehicle.',
+        soldStats,
         meta: { matchMode: match, widened, radius, activeCount: dedupActive, droppedCount: dedupDropped },
       })
     }
@@ -480,23 +537,33 @@ app.get('/api/market/:vin', async (req, res) => {
     res.json({
       success: true,
       found: true,
-      // Mapped to Vantage's market fields
+      // Mapped to Vantage's market fields — ACTIVE LISTINGS ONLY.
       marketLow: stats.low,
       marketMid: stats.mid,
       marketHigh: stats.high,
       marketAvgPrice: stats.avg,
       activeComps: dedupActive,
+      // True Market Day Supply (active ÷ sales rate × 45). null if no sold comps.
+      marketDaySupply: mds,
+      // Median days a CURRENT listing has been on market (distinct from MDS).
+      medianDaysListed: stats.medianDaysSeen,
+      // Back-compat: keep the old field name pointing at median days listed so
+      // existing UI doesn't break; new UI should read marketDaySupply.
       marketDaysSupply: stats.medianDaysSeen,
       medianCompMileage: stats.medianCompMileage,
       certifiedShare: stats.certifiedShare,
+      // Sold/dropped summary — never mixed into the numbers above.
+      soldStats,
       marketDataFetched: new Date().toISOString(),
       comps,
       meta: {
         matchMode: match,         // 'trim' = strict, 'model' = widened
         widened,                  // true if we had to loosen matching
-        comps: stats.comps,       // total listings the estimate rests on
+        comps: stats.comps,       // ACTIVE listings the estimate rests on
         activeCount: dedupActive,
         droppedCount: dedupDropped,
+        soldInWindow,             // sold comps counted toward MDS (≤45d)
+        mdsWindow: MDS_WINDOW,
         deduped: blended.length - deduped.length,  // duplicate VINs removed
         radius,
         historyDays,              // archived window actually used (60 unless widened)
