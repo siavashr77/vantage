@@ -424,6 +424,8 @@ app.get('/api/market/:vin', async (req, res) => {
         portalsDropped: portalDropped,
         namedMarketplaces: Object.entries(tally).filter(([h]) => /autotrader|cargurus|kijiji|carpages|clutch/i.test(h)),
         hosts: Object.entries(tally).sort((a, b) => b[1] - a[1]),
+        sampleKeys: blended[0] ? Object.keys(blended[0]) : [],
+        sample: blended.slice(0, 3),
       }
     }
     const dedupActive = deduped.filter(l => l.listing_status !== 'dropped').length
