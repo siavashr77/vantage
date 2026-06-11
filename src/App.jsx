@@ -235,13 +235,33 @@ async function fetchCarfax(vin) {
 
 // Live competitive set — renders real VinAudit listings with clickable links.
 function CompSet({ comps, myPrice, myKm, myDays }) {
+  const [feeState, setFeeState] = useState({});
   if (!comps || comps.length === 0) return null;
   const mp = Number(myPrice) || null;
   const sold = comps.filter(c => c.status === 'dropped');
   const active = comps.filter(c => c.status !== 'dropped');
   const myRank = mp ? active.filter(c => c.price < mp).length + 1 : null;
   const soldAgo = (s) => { if(!s) return null; const d=new Date(s); if(isNaN(d.getTime())) return null; return Math.max(0,Math.round((Date.now()-d.getTime())/86400000)); };
+  const checkFees = async (c) => {
+    if(!c.url) return;
+    setFeeState(s=>({...s,[c.id]:{status:'loading'}}));
+    try{
+      const r = await fetch(`${API_BASE}/api/fees`,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({url:c.url,dealer:c.dealer,vin:c.vin,source:c.source})});
+      const d = await r.json();
+      if(d.readable===false){ setFeeState(s=>({...s,[c.id]:{status:'unreadable',reason:d.reason}})); return; }
+      setFeeState(s=>({...s,[c.id]:{status:'done',fees:d.fees||[],feeTotal:d.feeTotal||0}}));
+    }catch(e){ setFeeState(s=>({...s,[c.id]:{status:'error'}})); }
+  };
   const cell = {padding:'7px 12px'};
+  const feeCell = (c) => {
+    const fs = feeState[c.id];
+    if(!fs) return c.url?<button onClick={()=>checkFees(c)} style={{fontSize:10,fontWeight:600,color:C.navy,background:C.navyMuted,border:'none',borderRadius:6,padding:'3px 8px',cursor:'pointer',whiteSpace:'nowrap'}}>Check fees</button>:<span style={{fontSize:10,color:C.textLight}}>—</span>;
+    if(fs.status==='loading') return <span style={{fontSize:10,color:C.textLight}}>checking…</span>;
+    if(fs.status==='unreadable') return <span style={{fontSize:10,color:C.textLight,cursor:'help'}} title={fs.reason||'could not read listing'}>couldn't read</span>;
+    if(fs.status==='error') return <button onClick={()=>checkFees(c)} style={{fontSize:10,color:C.red,background:'none',border:'none',cursor:'pointer'}}>retry</button>;
+    if(fs.feeTotal>0) return <span style={{fontSize:10,fontWeight:700,color:C.orange,whiteSpace:'nowrap'}} title={fs.fees.map(f=>`${f.name} ${fmt(f.amount)}`).join(' + ')}>+{fmt(fs.feeTotal)} → {fmt((c.price||0)+fs.feeTotal)}</span>;
+    return <span style={{fontSize:10,fontWeight:600,color:C.green,whiteSpace:'nowrap'}}>no added fees</span>;
+  };
   const block = (heading, rows, mode, showMine, badge) => (
     <div style={{background:'#fff',border:`1px solid ${C.border}`,borderRadius:10,overflow:'hidden',marginBottom:10}}>
       <div style={{padding:'10px 14px',borderBottom:`1px solid ${C.border}`,display:'flex',alignItems:'center',justifyContent:'space-between',gap:8,flexWrap:'wrap'}}>
@@ -250,7 +270,7 @@ function CompSet({ comps, myPrice, myKm, myDays }) {
       </div>
       <div style={{overflowX:'auto'}}>
         <table style={{width:'100%',borderCollapse:'collapse',fontSize:12}}>
-          <thead><tr style={{background:C.navyMuted}}>{['Price','KM',mode==='sold'?'Sold':'Days','Location','Dealer',''].map((h,i)=>(
+          <thead><tr style={{background:C.navyMuted}}>{['Price','KM',mode==='sold'?'Sold':'Days','Location','Dealer','Fees',''].map((h,i)=>(
             <th key={i} style={{padding:'7px 12px',textAlign:'left',fontSize:10,fontWeight:600,color:C.textLight,borderBottom:`1px solid ${C.border}`,whiteSpace:'nowrap'}}>{h}</th>
           ))}</tr></thead>
           <tbody>
@@ -259,7 +279,7 @@ function CompSet({ comps, myPrice, myKm, myDays }) {
               <td style={{...cell,fontFamily:'monospace',color:C.teal}}>{myKm?fmtN(myKm):'—'}</td>
               <td style={{...cell,color:C.teal}}>{myDays?`${myDays}d`:'—'}</td>
               <td style={{...cell,color:C.teal}}>—</td>
-              <td style={{...cell,fontWeight:700,color:C.teal}} colSpan={2}>Your Vehicle</td>
+              <td style={{...cell,fontWeight:700,color:C.teal}} colSpan={3}>Your Vehicle</td>
             </tr>}
             {rows.map((c,i)=>{
               const ago=mode==='sold'?soldAgo(c.dropDate):null;
@@ -271,7 +291,14 @@ function CompSet({ comps, myPrice, myKm, myDays }) {
                   ? <td style={{...cell,whiteSpace:'nowrap',fontWeight:600,color:ago!=null&&ago<=14?C.green:C.textMid}}>{ago!=null?`${ago}d ago`:'—'}</td>
                   : <td style={{...cell,whiteSpace:'nowrap',color:c.days>45?C.orange:C.textMid}}>{c.days?`${c.days}d`:'—'}</td>}
                 <td style={{...cell,color:C.textLight,whiteSpace:'nowrap'}}>{[c.city,c.region].filter(Boolean).join(', ')||'—'}</td>
-                <td style={{...cell,color:C.textDark}}>{c.dealer}</td>
+                <td style={{...cell,color:C.textDark}}>
+                  <div>{c.dealer}</div>
+                  <div style={{marginTop:2,display:'flex',gap:5,alignItems:'center',flexWrap:'wrap'}}>
+                    {c.source&&<span style={{fontSize:9,color:C.textLight,background:C.navyMuted,padding:'1px 6px',borderRadius:8,whiteSpace:'nowrap'}}>{c.source}</span>}
+                    {c.feeWarning&&<span title={`Caught adding fees on ${c.feeWarning.count} prior check${c.feeWarning.count>1?'s':''}`} style={{fontSize:9,fontWeight:700,color:C.orange,background:C.orangeBg,padding:'1px 6px',borderRadius:8,whiteSpace:'nowrap'}}>⚠ adds fees ~{fmt(c.feeWarning.avgFee)}</span>}
+                  </div>
+                </td>
+                <td style={{...cell,whiteSpace:'nowrap'}}>{feeCell(c)}</td>
                 <td style={{...cell,whiteSpace:'nowrap'}}>{c.url?<a href={c.url} target="_blank" rel="noopener noreferrer" style={{display:'inline-flex',alignItems:'center',gap:3,color:C.navy,fontSize:11,fontWeight:600,textDecoration:'none'}}><ExternalLink size={12}/>View</a>:<span style={{fontSize:10,color:C.textLight}}>—</span>}</td>
               </tr>
             );})}
