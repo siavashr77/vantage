@@ -245,6 +245,35 @@ function sourceFromUrl(url) {
   } catch (e) { return '' }
 }
 
+
+// Pull recognized consumer-portal links (AutoTrader, CarGurus, etc.) out of
+// VinAudit's listing_portal_urls field, ranked by recognizability.
+function parsePortals(raw) {
+  if (!raw) return []
+  const urls = Array.isArray(raw) ? raw : String(raw).split(',').join(' ').split(' ').filter(Boolean)
+  const rank = { AutoTrader: 0, CarGurus: 1, CarPages: 2, Kijiji: 3, Facebook: 4 }
+  const seen = new Set()
+  const out = []
+  for (const u of urls) {
+    if (!u.toLowerCase().startsWith('http')) continue
+    let host = ''
+    try { host = new URL(u).hostname.toLowerCase() } catch (e) { continue }
+    if (host.startsWith('www.')) host = host.slice(4)
+    let name = null
+    if (host.includes('autotrader')) name = 'AutoTrader'
+    else if (host.includes('cargurus')) name = 'CarGurus'
+    else if (host.includes('carpages')) name = 'CarPages'
+    else if (host.includes('kijiji')) name = 'Kijiji'
+    else if (host.includes('facebook')) name = 'Facebook'
+    else continue
+    if (seen.has(name)) continue
+    seen.add(name)
+    out.push({ name, url: u })
+  }
+  out.sort(function (a, b) { return (rank[a.name] === undefined ? 9 : rank[a.name]) - (rank[b.name] === undefined ? 9 : rank[b.name]) })
+  return out
+}
+
 // Map a raw VinAudit listing into a clean competitive-set row for the UI.
 function mapComp(l) {
   const price = Number(l.listing_price)
@@ -252,6 +281,7 @@ function mapComp(l) {
     id: l.id || l.listing_vdp_url || `${l.name || ''}|${l.listing_price || ''}`,
     vin: (l.vin || '').toUpperCase().trim(),
     source: sourceFromUrl(l.listing_vdp_url),
+    portals: parsePortals(l.listing_portal_urls),
     price: Number.isFinite(price) ? price : null,
     mileage: Number(l.listing_mileage) || null,
     days: Number(l.days_seen) || null,
@@ -424,8 +454,6 @@ app.get('/api/market/:vin', async (req, res) => {
         portalsDropped: portalDropped,
         namedMarketplaces: Object.entries(tally).filter(([h]) => /autotrader|cargurus|kijiji|carpages|clutch/i.test(h)),
         hosts: Object.entries(tally).sort((a, b) => b[1] - a[1]),
-        sampleKeys: blended[0] ? Object.keys(blended[0]) : [],
-        sample: blended.slice(0, 3),
       }
     }
     const dedupActive = deduped.filter(l => l.listing_status !== 'dropped').length
