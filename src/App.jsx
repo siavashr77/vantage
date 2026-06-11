@@ -294,7 +294,7 @@ function CompSet({ comps, myPrice, myKm, myDays }) {
                 <td style={{...cell,color:C.textDark}}>
                   <div>{c.dealer}</div>
                   <div style={{marginTop:2,display:'flex',gap:5,alignItems:'center',flexWrap:'wrap'}}>
-                    {c.source&&<span style={{fontSize:9,color:C.textLight,background:C.navyMuted,padding:'1px 6px',borderRadius:8,whiteSpace:'nowrap'}}>{c.source}</span>}
+                    {c.source&&<span style={{fontSize:9,color:C.textLight,background:C.navyMuted,padding:'1px 6px',borderRadius:8,whiteSpace:'nowrap'}}>{c.source}</span>}{Array.isArray(c.portals)&&c.portals.map(p=><a key={p.name} href={p.url} target="_blank" rel="noopener noreferrer" style={{display:'inline-block',fontSize:9,fontWeight:600,color:C.teal,background:C.tealMuted,padding:'1px 6px',borderRadius:8,whiteSpace:'nowrap',textDecoration:'none',marginRight:4,marginTop:2}}>{p.name}</a>)}
                     {c.feeWarning&&<span title={`Caught adding fees on ${c.feeWarning.count} prior check${c.feeWarning.count>1?'s':''}`} style={{fontSize:9,fontWeight:700,color:C.orange,background:C.orangeBg,padding:'1px 6px',borderRadius:8,whiteSpace:'nowrap'}}>⚠ adds fees ~{fmt(c.feeWarning.avgFee)}</span>}
                   </div>
                 </td>
