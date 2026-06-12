@@ -10,6 +10,7 @@ import {
   FileSearch, Mail, ExternalLink, ScanLine, Edit3, Share2, Info, Copy, Check
 } from "lucide-react";
 import VINScanner from './VINScanner.jsx'
+import * as XLSX from 'xlsx'
 
 
 // ─── VANTAGE PALETTE (ClickDocs family) ──────────────────────────────
@@ -1703,14 +1704,288 @@ function AppraisalList({appraisals,onNew,onEdit}) {
 }
 
 // ─── INVENTORY LIST ───────────────────────────────────────────────────
-function InventoryList({vehicles,onAdd,onEdit}) {
+// ─── BULK IMPORT / INVENTORY SYNC ─────────────────────────────────────
+// Reads an .xlsx/.xls/.csv with arbitrary column layouts, fuzzy-maps headers
+// to our fields, diffs against existing inventory by VIN, and applies:
+//   • new VINs  → add (queued for one VinAudit fetch each)
+//   • existing  → auto-apply changed fields from the sheet
+//   • missing   → 3-sync grace period, then prompt to verify gone
+// Designed so a Gmail Apps Script can later feed the same engine automatically.
+
+// Canonical fields and the header aliases we recognize (lowercased, stripped).
+const IMPORT_FIELDS = [
+  { key:'vin',        label:'VIN',        required:true,  aliases:['vin','vinnumber','vin#','vinno','vehicleidentificationnumber','serialnumber'] },
+  { key:'odometer',   label:'Odometer',   required:true,  aliases:['odometer','odo','mileage','miles','km','kms','kilometers','kilometres','mileagekm'] },
+  { key:'stockNumber',label:'Stock #',    required:false, aliases:['stock','stock#','stockno','stocknumber','stk','stk#','unit','unit#'] },
+  { key:'year',       label:'Year',       required:false, aliases:['year','yr','modelyear','my'] },
+  { key:'make',       label:'Make',       required:false, aliases:['make','manufacturer','brand'] },
+  { key:'model',      label:'Model',      required:false, aliases:['model','modelname'] },
+  { key:'series',     label:'Trim',       required:false, aliases:['trim','series','grade','style','submodel','trimlevel'] },
+  { key:'bodyType',   label:'Body',       required:false, aliases:['body','bodytype','bodystyle','type'] },
+  { key:'extColour',  label:'Ext. Colour',required:false, aliases:['color','colour','extcolor','extcolour','exteriorcolor','exteriorcolour','extcolor'] },
+  { key:'intColour',  label:'Int. Colour',required:false, aliases:['interior','intcolor','intcolour','interiorcolor','interiorcolour'] },
+  { key:'engine',     label:'Engine',     required:false, aliases:['engine','enginedescription','motor'] },
+  { key:'transmission',label:'Transmission',required:false,aliases:['transmission','trans','gearbox'] },
+  { key:'drivetrain', label:'Drivetrain', required:false, aliases:['drivetrain','drive','drivetype','driveline'] },
+  { key:'listPrice',  label:'List Price', required:false, aliases:['price','listprice','retailprice','askingprice','internetprice','advertisedprice','msrp','saleprice'] },
+  { key:'unitCost',   label:'Unit Cost',  required:false, aliases:['cost','unitcost','acv','bookvalue','wholesale','purchaseprice','acquisitioncost'] },
+]
+
+const normHeader = s => String(s||'').toLowerCase().replace(/[^a-z0-9]/g,'')
+
+// Some sheets bundle year/make/model/trim into one column (e.g. "2025 Hyundai
+// Elantra Luxury"). Detect that column and split it as a fallback — VIN decode
+// remains authoritative and overrides these once enrichment runs.
+const VEHICLE_DESC_ALIASES=['vehicle','vehicledescription','description','yearmakemodel','ymm','unitdescription']
+function findDescColumn(headers){
+  const norm=headers.map(normHeader)
+  for(const a of VEHICLE_DESC_ALIASES){ const i=norm.indexOf(a); if(i!==-1) return i }
+  return -1
+}
+function parseVehicleDesc(s){
+  s=String(s||'').trim()
+  const m=s.match(/\b(19|20)\d{2}\b/)
+  const year=m?m[0]:''
+  let rest=year?s.replace(year,'').trim():s
+  const parts=rest.split(/\s+/).filter(Boolean)
+  return { year, make:parts[0]||'', model:parts[1]||'', series:parts.slice(2).join(' ')||'' }
+}
+
+// Auto-map sheet headers → our fields. Returns { fieldKey: columnIndex|null }
+function autoMapColumns(headers){
+  const norm = headers.map(normHeader)
+  const map = {}
+  for(const f of IMPORT_FIELDS){
+    let idx = -1
+    // exact alias match first
+    for(const a of f.aliases){ const i=norm.indexOf(a); if(i!==-1){ idx=i; break; } }
+    // then "contains" match (e.g. "Mileage (km)")
+    if(idx===-1){ idx = norm.findIndex(h=> f.aliases.some(a=> h.includes(a) || a.includes(h)&&h.length>2 )) }
+    map[f.key] = idx===-1 ? null : idx
+  }
+  return map
+}
+
+// Normalize a raw cell for a given field (VIN upper, numbers stripped of $/commas).
+function normCell(field, raw){
+  let s = raw==null ? '' : String(raw).trim()
+  if(field==='vin') return s.toUpperCase().replace(/[^A-Z0-9]/g,'').slice(0,17)
+  if(['odometer','listPrice','unitCost','year'].includes(field)) return s.replace(/[^0-9.]/g,'')
+  return s
+}
+
+function BulkImport({ existingVehicles, onClose, onApply, dealer }){
+  const [stage,setStage]=useState('upload')   // upload | map | diff | done
+  const [fileName,setFileName]=useState('')
+  const [headers,setHeaders]=useState([])
+  const [rows,setRows]=useState([])           // array of raw cell arrays
+  const [colMap,setColMap]=useState({})
+  const [descCol,setDescCol]=useState(-1)
+  const [error,setError]=useState('')
+  const [diff,setDiff]=useState(null)         // {added:[], updated:[], missing:[]}
+
+  function handleFile(e){
+    const file=e.target.files?.[0]; if(!file) return
+    setFileName(file.name); setError('')
+    const reader=new FileReader()
+    reader.onload=ev=>{
+      try{
+        const wb=XLSX.read(ev.target.result,{type:'array'})
+        const ws=wb.Sheets[wb.SheetNames[0]]
+        const aoa=XLSX.utils.sheet_to_json(ws,{header:1,blankrows:false,defval:''})
+        if(!aoa.length){ setError('That sheet looks empty.'); return }
+        // Find the header row: first row with >=2 non-empty cells that look like labels
+        let hIdx=0
+        for(let i=0;i<Math.min(aoa.length,10);i++){ if(aoa[i].filter(c=>String(c).trim()).length>=2){ hIdx=i; break } }
+        const hdrs=aoa[hIdx].map(h=>String(h).trim())
+        const dataRows=aoa.slice(hIdx+1).filter(r=>r.some(c=>String(c).trim()))
+        setHeaders(hdrs); setRows(dataRows); setColMap(autoMapColumns(hdrs)); setDescCol(findDescColumn(hdrs)); setStage('map')
+      }catch(err){ setError('Could not read that file. Make sure it is a valid .xlsx, .xls, or .csv.') }
+    }
+    reader.onerror=()=>setError('Could not read that file.')
+    reader.readAsArrayBuffer(file)
+  }
+
+  // Build parsed records from rows using the (possibly user-corrected) colMap
+  function parseRecords(){
+    return rows.map(r=>{
+      const rec={}
+      for(const f of IMPORT_FIELDS){
+        const ci=colMap[f.key]
+        if(ci!=null && ci>=0) rec[f.key]=normCell(f.key, r[ci])
+      }
+      // If year/make/model weren't directly mapped, fall back to parsing a
+      // combined "Vehicle" description column (decode later overrides these).
+      if(descCol>=0 && (!rec.year||!rec.make||!rec.model)){
+        const p=parseVehicleDesc(r[descCol])
+        if(!rec.year) rec.year=p.year
+        if(!rec.make) rec.make=p.make
+        if(!rec.model) rec.model=p.model
+        if(!rec.series) rec.series=p.series
+      }
+      return rec
+    }).filter(rec=> (rec.vin||'').length===17)   // must have a valid VIN length
+  }
+
+  function computeDiff(){
+    const records=parseRecords()
+    const byVin={}; existingVehicles.forEach(v=>{ if(v.vin) byVin[v.vin.toUpperCase()]=v })
+    const sheetVins=new Set(records.map(r=>r.vin))
+    const added=[], updated=[]
+    for(const rec of records){
+      const ex=byVin[rec.vin]
+      if(!ex){ added.push(rec); continue }
+      // figure out which fields changed
+      const changes={}
+      for(const f of IMPORT_FIELDS){
+        if(f.key==='vin') continue
+        const nv=rec[f.key]
+        if(nv!=null && nv!=='' && String(ex[f.key]??'')!==String(nv)){ changes[f.key]={from:ex[f.key]??'',to:nv} }
+      }
+      if(Object.keys(changes).length) updated.push({vehicle:ex, changes, rec})
+    }
+    // missing: in system, not in sheet → bump missingCount; flag at >=3
+    const missing=[]
+    existingVehicles.forEach(v=>{
+      if(v.status==='sold') return
+      if(v.vin && !sheetVins.has(v.vin.toUpperCase())){
+        const count=(v._missingCount||0)+1
+        missing.push({vehicle:v, count})
+      }
+    })
+    setDiff({added,updated,missing}); setStage('diff')
+  }
+
+  function applyAll(target){
+    onApply({ diff, target, dealer })
+    setStage('done')
+  }
+
+  const required=IMPORT_FIELDS.filter(f=>f.required)
+  const mapReady=required.every(f=>colMap[f.key]!=null && colMap[f.key]>=0)
+  const validCount=rows.filter(r=>{ const ci=colMap.vin; return ci!=null&&String(r[ci]||'').replace(/[^A-Za-z0-9]/g,'').length===17 }).length
+
+  return (
+    <div style={{position:'fixed',inset:0,background:'rgba(15,23,42,0.55)',zIndex:9998,display:'flex',alignItems:'flex-start',justifyContent:'center',padding:'4vh 16px',overflowY:'auto'}} onClick={onClose}>
+      <div onClick={e=>e.stopPropagation()} style={{background:'#fff',borderRadius:14,maxWidth:760,width:'100%',boxShadow:'0 20px 60px rgba(0,0,0,0.3)',overflow:'hidden'}}>
+        <div style={{padding:'16px 20px',borderBottom:`1px solid ${C.border}`,display:'flex',alignItems:'center',gap:10}}>
+          <div style={{width:34,height:34,borderRadius:8,background:C.navyMuted,display:'flex',alignItems:'center',justifyContent:'center'}}><Upload size={17} color={C.navy}/></div>
+          <div style={{flex:1}}><div style={{fontWeight:800,fontSize:16,color:C.navy}}>Bulk Import / Sync</div><div style={{fontSize:12,color:C.textLight}}>{stage==='upload'?'Upload an inventory spreadsheet (any layout)':stage==='map'?'Confirm column mapping':stage==='diff'?'Review changes before applying':'Done'}</div></div>
+          <button onClick={onClose} style={{background:'none',border:'none',cursor:'pointer',color:C.textLight}}><X size={20}/></button>
+        </div>
+
+        <div style={{padding:20,maxHeight:'70vh',overflowY:'auto'}}>
+          {error&&<div style={{background:C.redBg,border:`1px solid ${C.red}`,borderRadius:8,padding:'10px 12px',fontSize:13,color:C.red,marginBottom:14}}>{error}</div>}
+
+          {stage==='upload'&&(
+            <div>
+              <label style={{display:'block',border:`2px dashed ${C.navyBorder}`,borderRadius:12,padding:'40px 20px',textAlign:'center',cursor:'pointer',background:C.navyMuted}}>
+                <Upload size={28} color={C.navy} style={{marginBottom:10}}/>
+                <div style={{fontSize:14,fontWeight:700,color:C.navy,marginBottom:4}}>Choose a spreadsheet</div>
+                <div style={{fontSize:12,color:C.textLight}}>.xlsx, .xls, or .csv — columns can be in any order</div>
+                <input type="file" accept=".xlsx,.xls,.csv" style={{display:'none'}} onChange={handleFile}/>
+              </label>
+              <div style={{fontSize:12,color:C.textLight,marginTop:14,lineHeight:1.6}}>
+                <strong>Required columns:</strong> VIN and Odometer. Everything else (price, stock #, year/make/model, colours, etc.) is auto-detected if present. New VINs are added; existing VINs are updated from the sheet; cars missing for 3 syncs are flagged for review.
+              </div>
+            </div>
+          )}
+
+          {stage==='map'&&(
+            <div>
+              <div style={{fontSize:13,color:C.textMid,marginBottom:14}}>We read <strong>{fileName}</strong> — {rows.length} rows, {headers.length} columns. We auto-matched the columns below. Fix any that look wrong, then continue.</div>
+              {descCol>=0&&(!colMap.year||!colMap.make||!colMap.model)&&<div style={{background:C.navyMuted,borderRadius:8,padding:'8px 12px',fontSize:12,color:C.textMid,marginBottom:14}}>Detected a combined <strong>"{headers[descCol]}"</strong> column — we'll split year/make/model/trim from it. VIN decode will confirm and fill the rest.</div>}
+              <div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:10,marginBottom:16}}>
+                {IMPORT_FIELDS.map(f=>(
+                  <div key={f.key} style={{display:'flex',alignItems:'center',gap:8}}>
+                    <span style={{fontSize:12,fontWeight:600,color:f.required?C.navy:C.textMid,minWidth:90}}>{f.label}{f.required&&<span style={{color:C.red}}> *</span>}</span>
+                    <select value={colMap[f.key]==null?'':colMap[f.key]} onChange={e=>setColMap(m=>({...m,[f.key]:e.target.value===''?null:Number(e.target.value)}))} style={{flex:1,padding:'6px 8px',border:`1px solid ${colMap[f.key]==null&&f.required?C.red:C.borderStr}`,borderRadius:6,fontSize:12,fontFamily:'inherit',background:'#fff'}}>
+                      <option value="">— not mapped —</option>
+                      {headers.map((h,i)=><option key={i} value={i}>{h||`Column ${i+1}`}</option>)}
+                    </select>
+                  </div>
+                ))}
+              </div>
+              <div style={{display:'flex',alignItems:'center',justifyContent:'space-between',gap:10,flexWrap:'wrap'}}>
+                <div style={{fontSize:12,color:validCount>0?C.green:C.orange,fontWeight:600}}>{validCount} of {rows.length} rows have a valid 17-char VIN</div>
+                <div style={{display:'flex',gap:8}}>
+                  <Btn variant="ghost" size="sm" onClick={()=>setStage('upload')}>Back</Btn>
+                  <Btn size="sm" disabled={!mapReady||validCount===0} onClick={computeDiff}>Review Changes →</Btn>
+                </div>
+              </div>
+              {!mapReady&&<div style={{fontSize:11,color:C.red,marginTop:8}}>Map the required fields (VIN, Odometer) to continue.</div>}
+            </div>
+          )}
+
+          {stage==='diff'&&diff&&(
+            <div>
+              <div style={{display:'grid',gridTemplateColumns:'repeat(3,1fr)',gap:10,marginBottom:16}}>
+                <div style={{background:C.greenBg,borderRadius:8,padding:'12px',textAlign:'center'}}><div style={{fontSize:22,fontWeight:800,color:C.green}}>{diff.added.length}</div><div style={{fontSize:11,color:C.textMid,fontWeight:600}}>New cars</div></div>
+                <div style={{background:C.navyMuted,borderRadius:8,padding:'12px',textAlign:'center'}}><div style={{fontSize:22,fontWeight:800,color:C.navy}}>{diff.updated.length}</div><div style={{fontSize:11,color:C.textMid,fontWeight:600}}>Updated</div></div>
+                <div style={{background:C.orangeBg,borderRadius:8,padding:'12px',textAlign:'center'}}><div style={{fontSize:22,fontWeight:800,color:C.orange}}>{diff.missing.filter(m=>m.count>=3).length}</div><div style={{fontSize:11,color:C.textMid,fontWeight:600}}>Missing 3+ syncs</div></div>
+              </div>
+
+              {diff.added.length>0&&<div style={{marginBottom:14}}>
+                <div style={{fontSize:12,fontWeight:700,color:C.green,marginBottom:6}}>New cars to add ({diff.added.length}) — each uses one market-data lookup</div>
+                <div style={{border:`1px solid ${C.border}`,borderRadius:8,overflow:'hidden',maxHeight:160,overflowY:'auto'}}>
+                  {diff.added.map((r,i)=><div key={i} style={{padding:'7px 12px',borderBottom:i<diff.added.length-1?`1px solid ${C.border}`:'none',fontSize:12,display:'flex',justifyContent:'space-between',gap:8}}><span style={{fontFamily:'monospace',color:C.textDark}}>{r.vin}</span><span style={{color:C.textLight}}>{[r.year,r.make,r.model].filter(Boolean).join(' ')||'—'} · {r.odometer?Number(r.odometer).toLocaleString():'—'} km</span></div>)}
+                </div>
+              </div>}
+
+              {diff.updated.length>0&&<div style={{marginBottom:14}}>
+                <div style={{fontSize:12,fontWeight:700,color:C.navy,marginBottom:6}}>Updated cars ({diff.updated.length}) — changes auto-applied from sheet</div>
+                <div style={{border:`1px solid ${C.border}`,borderRadius:8,overflow:'hidden',maxHeight:180,overflowY:'auto'}}>
+                  {diff.updated.map((u,i)=><div key={i} style={{padding:'7px 12px',borderBottom:i<diff.updated.length-1?`1px solid ${C.border}`:'none',fontSize:12}}>
+                    <div style={{fontFamily:'monospace',color:C.textDark,marginBottom:2}}>{u.vehicle.vin} <span style={{color:C.textLight,fontFamily:'inherit'}}>#{u.vehicle.stockNumber}</span></div>
+                    <div style={{display:'flex',gap:6,flexWrap:'wrap'}}>{Object.entries(u.changes).map(([k,c])=><span key={k} style={{fontSize:10,background:C.navyMuted,borderRadius:6,padding:'2px 7px',color:C.textMid}}>{IMPORT_FIELDS.find(f=>f.key===k)?.label||k}: {String(c.from)||'—'} → <strong>{String(c.to)}</strong></span>)}</div>
+                  </div>)}
+                </div>
+              </div>}
+
+              {diff.missing.filter(m=>m.count>=3).length>0&&<div style={{marginBottom:14}}>
+                <div style={{fontSize:12,fontWeight:700,color:C.orange,marginBottom:6}}>Missing 3+ syncs — verify these are gone</div>
+                <div style={{border:`1px solid ${C.orange}`,borderRadius:8,overflow:'hidden',maxHeight:140,overflowY:'auto'}}>
+                  {diff.missing.filter(m=>m.count>=3).map((m,i)=><div key={i} style={{padding:'7px 12px',fontSize:12,display:'flex',justifyContent:'space-between',gap:8,background:C.orangeBg}}><span>{[m.vehicle.year,m.vehicle.make,m.vehicle.model].filter(Boolean).join(' ')} <span style={{fontFamily:'monospace',color:C.textLight}}>#{m.vehicle.stockNumber}</span></span><span style={{color:C.orange,fontWeight:600}}>absent {m.count} syncs</span></div>)}
+                </div>
+              </div>}
+
+              <div style={{background:C.navyMuted,borderRadius:8,padding:'10px 12px',fontSize:11,color:C.textMid,marginBottom:14}}>
+                New cars will be decoded (free) and queued for one market-data lookup each. Existing cars get the sheet's changes applied immediately. Missing cars are only flagged — nothing is deleted automatically.
+              </div>
+
+              <div style={{display:'flex',gap:8,justifyContent:'flex-end',flexWrap:'wrap'}}>
+                <Btn variant="ghost" size="sm" onClick={()=>setStage('map')}>Back</Btn>
+                <Btn size="sm" onClick={()=>applyAll('inventory')}>Apply to Inventory</Btn>
+                <Btn size="sm" variant="teal" onClick={()=>applyAll('appraisals')}>Create Appraisals</Btn>
+              </div>
+            </div>
+          )}
+
+          {stage==='done'&&(
+            <div style={{textAlign:'center',padding:'24px 0'}}>
+              <CheckCircle size={40} color={C.green} style={{marginBottom:12}}/>
+              <div style={{fontSize:16,fontWeight:800,color:C.navy,marginBottom:4}}>Import applied</div>
+              <div style={{fontSize:13,color:C.textMid,marginBottom:18}}>New cars are being decoded and queued for market data. You can close this window.</div>
+              <Btn onClick={onClose}>Done</Btn>
+            </div>
+          )}
+        </div>
+      </div>
+    </div>
+  )
+}
+
+function InventoryList({vehicles,onAdd,onImport,onEdit}) {
   const [q,setQ]=useState('');const [fs,setFs]=useState('');const [sort,setSort]=useState('newest');
   const filtered=vehicles.filter(v=>(!q||[v.vin,v.make,v.model,v.year,v.stockNumber].some(x=>(x||'').toLowerCase().includes(q.toLowerCase())))&&(!fs||v.status===fs)).sort((a,b)=>sort==='newest'?new Date(b.createdAt)-new Date(a.createdAt):sort==='price_high'?Number(b.listPrice||0)-Number(a.listPrice||0):sort==='price_low'?Number(a.listPrice||0)-Number(b.listPrice||0):daysAgo(b.createdAt)-daysAgo(a.createdAt));
   return (
     <div>
       <div style={{display:'flex',alignItems:'center',justifyContent:'space-between',marginBottom:20,flexWrap:'wrap',gap:10}}>
         <div><h2 style={{fontSize:18,fontWeight:800,color:C.navy}}>Inventory</h2><p style={{fontSize:13,color:C.textLight}}>{vehicles.filter(v=>v.status==='available').length} available · {vehicles.length} total</p></div>
-        <Btn onClick={onAdd}><Plus size={13}/>Add Vehicle</Btn>
+        <div style={{display:'flex',gap:8}}>
+          <Btn onClick={onImport} variant="outline"><Upload size={13}/>Import / Sync</Btn>
+          <Btn onClick={onAdd}><Plus size={13}/>Add Vehicle</Btn>
+        </div>
       </div>
       <div style={{display:'grid',gridTemplateColumns:'repeat(4,1fr)',gap:10,marginBottom:14}} className='stat-grid-4'>
         {[{l:'Available',v:vehicles.filter(v=>v.status==='available').length,c:C.green},{l:'In Recon',v:vehicles.filter(v=>v.status==='in_recon').length,c:C.orange},{l:'Sold',v:vehicles.filter(v=>v.status==='sold').length,c:C.purple},{l:'Aging 30d+',v:vehicles.filter(v=>daysAgo(v.createdAt)>=30&&v.status==='available').length,c:C.red}].map(s=><div key={s.l} style={{background:C.card,borderRadius:7,padding:'10px 14px',border:`1px solid ${C.border}`}}><div style={{fontSize:10,color:C.textLight,fontWeight:600,marginBottom:3}}>{s.l}</div><div style={{fontSize:20,fontWeight:800,color:s.c,fontFamily:'monospace'}}>{s.v}</div></div>)}
@@ -2200,6 +2475,7 @@ export default function Vantage() {
   const [appraisals,setAppraisals]=useState([]);
   const [dealer,setDealer]=useState(DEFAULT_DEALER);
   const [activeV,setActiveV]=useState(null);
+  const [showBulkImport,setShowBulkImport]=useState(false);
   const [activeA,setActiveA]=useState(null);
   const [toast,setToast]=useState(null);
   const [showScanner,setShowScanner]=useState(false);
@@ -2294,6 +2570,68 @@ export default function Vantage() {
     setActiveV(nv);setPage('vehicle_detail');
     showToast(`${[a.year,a.make,a.model].filter(Boolean).join(' ')} moved to inventory`,'success');
   }
+  // ── Bulk import / sync apply ──
+  async function applyBulkImport({diff,target,dealer}){
+    const postal=dealer?.postal;
+    if(target==='appraisals'){
+      // Create appraisals for new cars; existing-VIN updates don't apply to appraisals.
+      const newAppraisals=diff.added.map(rec=>{
+        const a=blankAppraisal();
+        return {...a, vin:rec.vin, odometer:rec.odometer||'', year:rec.year||'', make:rec.make||'', model:rec.model||'', series:rec.series||'', bodyType:rec.bodyType||'', engine:rec.engine||'', transmission:rec.transmission||'', drivetrain:rec.drivetrain||'', extColour:rec.extColour||'', intColour:rec.intColour||'', source:'Bulk import'};
+      });
+      if(newAppraisals.length){ setAppraisals(prev=>{const n=[...newAppraisals,...prev];saveA(n);return n;}); }
+      showToast(`${newAppraisals.length} appraisals created from import`,'success');
+      // decode + market fetch in background for the new ones
+      bulkEnrich(newAppraisals, postal, 'appraisal');
+      return;
+    }
+    // target === 'inventory'
+    setVehicles(prev=>{
+      let n=[...prev];
+      // 1) updates: auto-apply changed fields to existing
+      diff.updated.forEach(u=>{
+        n=n.map(x=>x.id===u.vehicle.id?{...x,...u.rec,updatedAt:new Date().toISOString(),_missingCount:0}:x);
+      });
+      // 2) missing counters: bump for absent, reset handled above when present
+      const sheetVins=new Set([...diff.added.map(r=>r.vin),...diff.updated.map(u=>u.vehicle.vin?.toUpperCase())]);
+      // also count unchanged-but-present cars as present (reset their counter)
+      n=n.map(x=>{
+        if(!x.vin) return x;
+        const inSheet=sheetVins.has(x.vin.toUpperCase())|| diff.missing.every(m=>m.vehicle.id!==x.id);
+        if(diff.missing.find(m=>m.vehicle.id===x.id)){ return {...x,_missingCount:(x._missingCount||0)+1}; }
+        return {...x,_missingCount:0};
+      });
+      // 3) new cars
+      const newVehicles=diff.added.map(rec=>{
+        const v=blankVehicle();
+        return {...v, vin:rec.vin, odometer:rec.odometer||'', year:rec.year||'', make:rec.make||'', model:rec.model||'', series:rec.series||'', bodyType:rec.bodyType||'', engine:rec.engine||'', transmission:rec.transmission||'', drivetrain:rec.drivetrain||'', extColour:rec.extColour||'', intColour:rec.intColour||'', listPrice:rec.listPrice||'', unitCost:rec.unitCost||'', status:'pending', _missingCount:0, log:[logEvent('VehicleCreated','Added via bulk import',actingUser)]};
+      });
+      n=[...newVehicles,...n];
+      saveV(n);
+      // enrich new vehicles in background
+      bulkEnrich(newVehicles, postal, 'vehicle');
+      return n;
+    });
+    const flagged=diff.missing.filter(m=>m.count>=3).length;
+    showToast(`${diff.added.length} added · ${diff.updated.length} updated${flagged?` · ${flagged} flagged missing`:''}`,'success');
+  }
+
+  // Decode (free) + market fetch (VinAudit) for freshly-imported records, paced.
+  async function bulkEnrich(items, postal, kind){
+    for(const it of items){
+      try{
+        const d=await decodeVIN(it.vin)
+        const patch={...d}
+        if(postal){
+          try{ const m=await fetchMarketData(it.vin,postal); if(m&&m.found){ Object.assign(patch,{marketLow:m.marketLow,marketMid:m.marketMid,marketHigh:m.marketHigh,marketAvgPrice:m.marketAvgPrice,activeComps:m.activeComps,marketDaySupply:m.marketDaySupply,medianDaysListed:m.medianDaysListed,_soldStats:m.soldStats,_comps:m.comps,_marketMeta:m.meta,_medianCompMileage:m.medianCompMileage,marketDataFetched:m.marketDataFetched||new Date().toISOString()}); } }catch{}
+        }
+        if(kind==='vehicle'){ setVehicles(prev=>{const n=prev.map(x=>x.id===it.id?{...x,...patch}:x);saveV(n);return n;}); }
+        else { setAppraisals(prev=>{const n=prev.map(x=>x.id===it.id?{...x,...patch}:x);saveA(n);return n;}); }
+      }catch{ /* skip cars that fail to decode */ }
+      await new Promise(r=>setTimeout(r, 1200))  // pace VinAudit calls
+    }
+  }
+
   function saveVehicle(v,silent=false){
     setVehicles(prev=>{
       const e=prev.find(x=>x.id===v.id);
@@ -2377,7 +2715,7 @@ export default function Vantage() {
         {page==='dashboard'&&<Dashboard vehicles={vehicles} appraisals={appraisals} dealer={dealer} onNav={nav} onOpenVehicle={v=>{setActiveV({...v});setPage('vehicle_detail');}} onOpenAppraisal={a=>{setActiveA({...a});setPage('appraisal_form');}}/>}
         {page==='appraisals'&&<AppraisalList appraisals={appraisals} onNew={()=>nav('new_appraisal')} onEdit={a=>{setActiveA({...a});setPage('appraisal_form');}}/>}
         {page==='appraisal_form'&&activeA&&<AppraisalForm initial={activeA} user={actingUser} onSave={(a,silent=false)=>saveAppraisal(a,silent)} onBack={()=>setPage('appraisals')} showToast={showToast} onConvert={convertToInventory} onFinalize={finalizeAppraisal} onUnlock={unlockAppraisal} onGetDealer={()=>dealer}/>}
-        {page==='inventory'&&<InventoryList vehicles={vehicles} onAdd={()=>nav('new_vehicle')} onEdit={v=>{setActiveV({...v});setPage('vehicle_detail');}}/>}
+        {page==='inventory'&&<InventoryList vehicles={vehicles} onAdd={()=>nav('new_vehicle')} onImport={()=>setShowBulkImport(true)} onEdit={v=>{setActiveV({...v});setPage('vehicle_detail');}}/>}
         {page==='vehicle_detail'&&activeV&&<VehicleDetail vehicle={activeV} user={actingUser} onSave={saveVehicle} onBack={()=>setPage('inventory')} showToast={showToast} onShowSticker={v=>{setActiveV(v);setPage('sticker_detail');}} onGetDealer={()=>dealer}/>}
         {page==='stickers'&&<StickerGenerator vehicles={vehicles} dealer={dealer}/>}
         {page==='sticker_detail'&&activeV&&<div style={{maxWidth:700,margin:'0 auto'}}><StickerGenerator vehicles={vehicles} dealer={dealer} preselected={activeV.id} onBack={()=>setPage('vehicle_detail')}/></div>}
@@ -2386,6 +2724,7 @@ export default function Vantage() {
       </div>
 
       {toast&&<Toast message={toast.message} type={toast.type} onClose={()=>setToast(null)}/>}
+      {showBulkImport&&<BulkImport existingVehicles={vehicles} dealer={dealer} onClose={()=>setShowBulkImport(false)} onApply={applyBulkImport}/>}
 
       {/* VIN Scanner Modal */}
       {showScanner&&<VINScanner onVINDetected={handleScanVIN} onClose={()=>setShowScanner(false)}/>}
