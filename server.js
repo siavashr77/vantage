@@ -180,6 +180,42 @@ function percentile(sorted, p) {
   return Math.round(sorted[lo] + (sorted[hi] - sorted[lo]) * (idx - lo))
 }
 
+// Compute the market band from MAPPED comp objects (price/mileage/days) — i.e.
+// the exact comps shown to the user, so the numbers always match the table.
+function computeMarketFromComps(comps) {
+  const priced = comps.filter(c => Number.isFinite(c.price) && c.price >= 1000)
+  if (priced.length === 0) return null
+  const prices = priced.map(c => c.price).sort((a, b) => a - b)
+  const miles = priced.map(c => c.mileage).filter(Number.isFinite).sort((a, b) => a - b)
+  const daysArr = priced.map(c => c.days).filter(Number.isFinite).sort((a, b) => a - b)
+  return {
+    comps: priced.length,
+    low: percentile(prices, 0.10),
+    mid: percentile(prices, 0.50),
+    high: percentile(prices, 0.90),
+    avg: Math.round(prices.reduce((s, p) => s + p, 0) / prices.length),
+    medianCompMileage: miles.length ? percentile(miles, 0.50) : null,
+    medianDaysSeen: daysArr.length ? percentile(daysArr, 0.50) : null,
+    certifiedShare: Math.round(priced.filter(c => c.certified).length / priced.length * 100),
+  }
+}
+
+function computeSoldStatsFromComps(comps) {
+  const priced = comps.filter(c => Number.isFinite(c.price) && c.price >= 1000)
+  if (priced.length === 0) return { count: 0, avgPrice: null, medianPrice: null, avgDts: null, avgOdo: null }
+  const prices = priced.map(c => c.price).sort((a, b) => a - b)
+  const dts = priced.map(c => c.days).filter(Number.isFinite)
+  const odos = priced.map(c => c.mileage).filter(Number.isFinite)
+  const avg = a => a.length ? Math.round(a.reduce((s, n) => s + n, 0) / a.length) : null
+  return {
+    count: priced.length,
+    avgPrice: avg(prices),
+    medianPrice: percentile(prices, 0.50),
+    avgDts: avg(dts),
+    avgOdo: avg(odos),
+  }
+}
+
 function computeMarket(listings) {
   const priced = listings
     .map(l => ({
@@ -338,9 +374,9 @@ function mapComp(l) {
 }
 
 // Build a deduped, price-sorted competitive set (capped to keep payload small).
-function buildComps(listings, limit = 30) {
+function buildComps(listings, limit = null) {
   const seen = new Set()
-  return listings
+  const out = listings
     .filter(l => {
       const k = l.id || `${l.listing_vdp_url || ''}|${l.listing_price || ''}`
       if (seen.has(k)) return false
@@ -349,7 +385,7 @@ function buildComps(listings, limit = 30) {
     .map(mapComp)
     .filter(c => c.price && c.price >= 1000)
     .sort((a, b) => a.price - b.price)
-    .slice(0, limit)
+  return limit ? out.slice(0, limit) : out
 }
 
 // Collapse the same physical car (same VIN) into ONE listing.
@@ -417,7 +453,9 @@ function relevantText(text) {
 app.get('/api/market/:vin', async (req, res) => {
   const vin = req.params.vin.toUpperCase().trim()
   const postal = (req.query.postal || '').toString().trim()
-  const radius = Math.min(Number(req.query.radius) || 250, 500)
+  // Radius up to national coverage (Canada ~5500km wide) so rare cars can pull
+  // comps from anywhere. VinAudit may still cap internally, but we don't clamp.
+  const radius = Math.min(Number(req.query.radius) || 250, 6000)
   let historyDays = Number(req.query.history_days) || 60
 
   if (vin.length !== 17) return res.status(400).json({ error: 'VIN must be 17 characters' })
@@ -494,27 +532,31 @@ app.get('/api/market/:vin', async (req, res) => {
     }
     const dedupActive = deduped.filter(l => l.listing_status !== 'dropped').length
     const dedupDropped = deduped.filter(l => l.listing_status === 'dropped').length
-    // SPLIT the deduped set: active listings drive ALL pricing math; sold/dropped
-    // listings are reported separately and never blended into Low/Mid/High/median.
-    const activeListings = deduped.filter(l => l.listing_status !== 'dropped')
-    const soldListings = deduped.filter(l => l.listing_status === 'dropped')
 
-    // Active-only market stats. (Pricing must reflect what's CURRENTLY for sale,
-    // not what sold a year ago.)
-    const stats = computeMarket(activeListings)
-    // Sold stats, kept apart for the "Recently Sold" panel.
-    const soldStats = computeSoldStats(soldListings)
+    // Build the displayed comps FIRST, then compute every number from this exact
+    // same set — so Low/Mid/High always match the cars shown on screen.
+    // No display cap: show the whole active market. Sold cars older than 30 days
+    // are dropped entirely (only recent sold comps are relevant).
+    const known = await getKnownFeeDealers()
+    const SOLD_MAX_AGE_DAYS = 30
+    const allComps = buildComps(deduped).map(c => {
+      const k = dealerKey(c.dealer)
+      if (known[k]) c.feeWarning = { avgFee: known[k].avgFee, count: known[k].count }
+      return c
+    })
+    // Split the displayed set: active drives pricing; sold shown separately and
+    // filtered to the last 30 days.
+    const activeComps = allComps.filter(c => c.status !== 'dropped')
+    const soldComps = allComps.filter(c => c.status === 'dropped' && (c.days == null || c.days <= SOLD_MAX_AGE_DAYS))
+    const comps = [...activeComps, ...soldComps]
 
-    // Sold within the MDS window (45d). VinAudit history window may be wider when
-    // it had to widen for thin data, so count only drops inside 45 days here.
+    // Pricing band computed on the EXACT active comps displayed (deduped, ≥$1000).
+    const stats = computeMarketFromComps(activeComps)
+    const soldStats = computeSoldStatsFromComps(soldComps)
+
     const MDS_WINDOW = 45
-    const soldInWindow = soldListings.filter(l => {
-      const d = Number(l.days_seen)
-      // days_seen tracks how long the ad ran; without a drop date we count the
-      // sold comp as in-window (history default is already ≤60d).
-      return true
-    }).length
-    const mds = marketDaySupply(dedupActive, soldInWindow, MDS_WINDOW)
+    const soldInWindow = soldComps.length
+    const mds = marketDaySupply(activeComps.length, soldInWindow, MDS_WINDOW)
 
     if (!stats) {
       return res.json({
@@ -522,17 +564,9 @@ app.get('/api/market/:vin', async (req, res) => {
         found: false,
         message: 'No Canadian comparable ACTIVE listings found for this vehicle.',
         soldStats,
-        meta: { matchMode: match, widened, radius, activeCount: dedupActive, droppedCount: dedupDropped },
+        meta: { matchMode: match, widened, radius, activeCount: activeComps.length, droppedCount: soldComps.length },
       })
     }
-
-    // Flag comps whose dealer we've previously caught charging fees.
-    const known = await getKnownFeeDealers()
-    const comps = buildComps(deduped).map(c => {
-      const k = dealerKey(c.dealer)
-      if (known[k]) c.feeWarning = { avgFee: known[k].avgFee, count: known[k].count }
-      return c
-    })
 
     res.json({
       success: true,
@@ -542,7 +576,7 @@ app.get('/api/market/:vin', async (req, res) => {
       marketMid: stats.mid,
       marketHigh: stats.high,
       marketAvgPrice: stats.avg,
-      activeComps: dedupActive,
+      activeComps: activeComps.length,
       // True Market Day Supply (active ÷ sales rate × 45). null if no sold comps.
       marketDaySupply: mds,
       // Median days a CURRENT listing has been on market (distinct from MDS).
@@ -560,8 +594,8 @@ app.get('/api/market/:vin', async (req, res) => {
         matchMode: match,         // 'trim' = strict, 'model' = widened
         widened,                  // true if we had to loosen matching
         comps: stats.comps,       // ACTIVE listings the estimate rests on
-        activeCount: dedupActive,
-        droppedCount: dedupDropped,
+        activeCount: activeComps.length,
+        droppedCount: soldComps.length,
         soldInWindow,             // sold comps counted toward MDS (≤45d)
         mdsWindow: MDS_WINDOW,
         deduped: blended.length - deduped.length,  // duplicate VINs removed
