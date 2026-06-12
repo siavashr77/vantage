@@ -7,7 +7,7 @@ import {
   Activity, Sparkles, Globe, AlertCircle, LayoutDashboard,
   ClipboardList, Package, Settings, Bell, ChevronRight,
   Printer, Image, Building2, ShieldCheck, Zap,
-  FileSearch, Mail, ExternalLink, ScanLine, Edit3, Share2, Info
+  FileSearch, Mail, ExternalLink, ScanLine, Edit3, Share2, Info, Copy, Check
 } from "lucide-react";
 import VINScanner from './VINScanner.jsx'
 
@@ -160,52 +160,55 @@ const DEFAULT_DEALER = {name:'Your Dealership',logo:null,address:'123 Main Stree
 const API_BASE = (import.meta.env.VITE_API_URL || 'http://localhost:3001').replace(/\/$/, '');
 
 async function decodeVIN(vin) {
-  // Calls NHTSA directly from browser — free, no backend needed, CORS allowed
-  const res = await fetch(
-    `https://vpic.nhtsa.dot.gov/api/vehicles/decodevinvalues/${vin.toUpperCase()}?format=json`
-  )
+  const V = vin.toUpperCase();
+  const res = await fetch(`https://vpic.nhtsa.dot.gov/api/vehicles/decodevinvalues/${V}?format=json`)
   if (!res.ok) throw new Error('Network error')
   const data = await res.json()
-  const r = data.Results?.[0]
-  if (!r || r.ErrorCode === '8' || r.ErrorCode === '11') {
-    throw new Error('VIN not found')
+  let r = data.Results?.[0] || {}
+  const codes = String(r.ErrorCode || '').split(',').map(s => s.trim());
+  const noMatch = codes.includes('8') || codes.includes('11');
+  const pick = (obj) => {
+    const engineParts = [
+      obj.DisplacementL ? `${parseFloat(obj.DisplacementL).toFixed(1)}L` : '',
+      obj.EngineCylinders ? `${obj.EngineCylinders}-Cylinder` : '',
+    ].filter(Boolean)
+    const rawMake = obj.Make || ''
+    return {
+      year: obj.ModelYear || '', make: rawMake ? rawMake.charAt(0).toUpperCase() + rawMake.slice(1).toLowerCase() : '',
+      model: obj.Model || '', series: obj.Series || obj.Trim || obj.Series2 || '',
+      bodyType: obj.BodyClass || '', engine: engineParts.join(' '),
+      transmission: obj.TransmissionStyle || '', drivetrain: obj.DriveType || '',
+      extColour: '', intColour: '',
+    }
   }
-  const engineParts = [
-    r.DisplacementL ? `${parseFloat(r.DisplacementL).toFixed(1)}L` : '',
-    r.EngineCylinders ? `${r.EngineCylinders}-Cylinder` : '',
-  ].filter(Boolean)
-  const rawMake = r.Make || ''
-  const make = rawMake.charAt(0).toUpperCase() + rawMake.slice(1).toLowerCase()
-  let model = r.Model || ''
-  let series = r.Series || r.Trim || ''
-  // NHTSA's flat endpoint sometimes returns Make+Year but a BLANK Model.
-  // Fall back to the verbose decoder, which resolves Model/Series more reliably.
-  if (!model) {
+  let out = pick(r);
+  if (noMatch || !out.make || !out.model) {
     try {
-      const res2 = await fetch(`https://vpic.nhtsa.dot.gov/api/vehicles/decodevin/${vin.toUpperCase()}?format=json`)
+      const res2 = await fetch(`https://vpic.nhtsa.dot.gov/api/vehicles/decodevin/${V}?format=json`)
       if (res2.ok) {
         const d2 = await res2.json()
         const byVar = {}
         for (const row of (d2.Results || [])) {
-          if (row.Value != null && row.Value !== '') byVar[row.Variable] = row.Value
+          if (row.Value != null && row.Value !== '' && row.Value !== 'Not Applicable') byVar[row.Variable] = row.Value
         }
-        model = model || byVar['Model'] || ''
-        series = series || byVar['Series'] || byVar['Trim'] || byVar['Series2'] || ''
+        const v2 = pick({
+          ModelYear: byVar['Model Year'], Make: byVar['Make'], Model: byVar['Model'],
+          Series: byVar['Series'] || byVar['Trim'], Series2: byVar['Series2'],
+          BodyClass: byVar['Body Class'], DisplacementL: byVar['Displacement (L)'],
+          EngineCylinders: byVar['Engine Number of Cylinders'],
+          TransmissionStyle: byVar['Transmission Style'], DriveType: byVar['Drive Type'],
+        })
+        out = {
+          year: out.year || v2.year, make: out.make || v2.make, model: out.model || v2.model,
+          series: out.series || v2.series, bodyType: out.bodyType || v2.bodyType,
+          engine: out.engine || v2.engine, transmission: out.transmission || v2.transmission,
+          drivetrain: out.drivetrain || v2.drivetrain, extColour: '', intColour: '',
+        }
       }
-    } catch { /* fallback best-effort; leave model blank if it also fails */ }
+    } catch { /* best-effort */ }
   }
-  return {
-    year:         r.ModelYear || '',
-    make:         make,
-    model:        model,
-    series:       series,
-    bodyType:     r.BodyClass || '',
-    engine:       engineParts.join(' '),
-    transmission: r.TransmissionStyle || '',
-    drivetrain:   r.DriveType || '',
-    extColour:    '',
-    intColour:    '',
-  }
+  if (!out.year && !out.make && !out.model) throw new Error('VIN not found')
+  return out
 }
 
 async function generateDescription(v) {
@@ -229,7 +232,11 @@ async function fetchMarketData(vin, postal, radius = 250) {
     }
   }
   const data = await res.json();
-  if (!res.ok || data.error) throw new Error(data.error || 'Market lookup failed');
+  if (!res.ok || data.error) {
+    const e = String(data.error || 'Market lookup failed');
+    if (/spec_vin|invalid vin|not found/i.test(e)) throw new Error("This VIN isn't recognized by the market database — check the VIN or enter comps manually.");
+    throw new Error(e);
+  }
   return data; // {found, marketLow/Mid/High, comps:[...], meta:{...}} or {found:false}
 }
 
@@ -311,7 +318,7 @@ function CompSet({ comps, myPrice, myKm, myDays }) {
   const [feeState, setFeeState] = useState({});
   const [sort, setSort] = useState({ key: 'price', dir: 'asc' });
   // Both comp sections collapsed by default so they don't fill the page.
-  const [openSec, setOpenSec] = useState({ listed: false, sold: false });
+  const [openSec, setOpenSec] = useState({ listed: true, sold: false });
   if (!comps || comps.length === 0) return null;
   const mp = Number(myPrice) || null;
   const sold = comps.filter(c => c.status === 'dropped');
@@ -385,14 +392,21 @@ function CompSet({ comps, myPrice, myKm, myDays }) {
             </th>
           ))}</tr></thead>
           <tbody>
-            {showMine&&mp&&<tr style={{background:C.tealMuted}}>
-              <td style={{...cell,fontFamily:'monospace',fontWeight:700,color:C.teal}}>{fmt(mp)}</td>
-              <td style={{...cell,fontFamily:'monospace',color:C.teal}}>{myKm?fmtN(myKm):'—'}</td>
-              <td style={{...cell,color:C.teal}}>{myDays?myDays:'—'}</td>
-              <td style={{...cell,color:C.teal}}>—</td>
-              <td style={{...cell,fontWeight:700,color:C.teal}} colSpan={3}>Your Vehicle</td>
-            </tr>}
-            {sortRows(rows,mode).map((c,i)=>{
+            {(()=>{
+              const mine = (showMine && mode==='listed') ? {__mine:true,price:mp||null,mileage:myKm?Number(myKm):null,days:myDays?Number(myDays):null,id:'__myvehicle'} : null;
+              const merged = mine ? [...rows, mine] : rows;
+              return sortRows(merged,mode).map((c,i)=>{
+              if(c.__mine){
+                return (
+                  <tr key="__myvehicle" style={{background:C.tealMuted,outline:`2px solid ${C.teal}`,outlineOffset:'-2px'}}>
+                    <td style={{...cell,fontFamily:'monospace',fontWeight:800,color:C.teal,whiteSpace:'nowrap'}}>{mp?fmt(mp):'No price'}</td>
+                    <td style={{...cell,fontFamily:'monospace',fontWeight:700,color:C.teal}}>{myKm?fmtN(myKm):'—'}</td>
+                    <td style={{...cell,fontWeight:700,color:C.teal}}>{myDays?myDays:'—'}</td>
+                    <td style={{...cell,color:C.teal}}>—</td>
+                    <td style={{...cell,fontWeight:800,color:C.teal}} colSpan={3}>★ Your Vehicle</td>
+                  </tr>
+                );
+              }
               const ago=mode==='sold'?soldAgo(c.dropDate):null;
               return (
               <tr key={c.id||i} style={{borderTop:`1px solid ${C.border}`}}>
@@ -412,7 +426,7 @@ function CompSet({ comps, myPrice, myKm, myDays }) {
                 <td style={{...cell,whiteSpace:'nowrap'}}>{feeCell(c)}</td>
                 <td style={{...cell,whiteSpace:'nowrap'}}>{c.url?<a href={c.url} target="_blank" rel="noopener noreferrer" style={{display:'inline-flex',alignItems:'center',gap:3,color:C.navy,fontSize:11,fontWeight:600,textDecoration:'none'}}><ExternalLink size={12}/>View</a>:<span style={{fontSize:10,color:C.textLight}}>—</span>}</td>
               </tr>
-            );})}
+            );});})()}
           </tbody>
         </table>
       </div>}
@@ -421,8 +435,8 @@ function CompSet({ comps, myPrice, myKm, myDays }) {
   };
   return (
     <div>
-      {sold.length>0&&block('Recently Sold · likely', sold, 'sold', false, <span style={{fontSize:10,color:C.textLight}} title="Listing dropped off the market — usually sold, not guaranteed">last 45 days</span>, 'sold')}
       {active.length>0&&block('Currently Listed', active, 'listed', true, myRank&&<span style={{fontSize:11,fontFamily:'monospace',color:C.teal,background:C.tealMuted,padding:'2px 10px',borderRadius:12}}>Your price ranks #{myRank} of {active.length+1}</span>, 'listed')}
+      {sold.length>0&&block('Recently Sold · likely', sold, 'sold', false, <span style={{fontSize:10,color:C.textLight}} title="Listing dropped off the market — usually sold, not guaranteed">last 45 days</span>, 'sold')}
     </div>
   );
 }
@@ -813,39 +827,129 @@ function DealerSettings({dealer,onSave,showToast}) {
 }
 
 // ─── DASHBOARD ────────────────────────────────────────────────────────
-function Dashboard({vehicles,appraisals,dealer,onNav}) {
+function Dashboard({vehicles,appraisals,dealer,onNav,onOpenVehicle,onOpenAppraisal}) {
   const avail=vehicles.filter(v=>v.status==='available').length;
   const recon=vehicles.filter(v=>v.status==='in_recon').length;
-  const aging=vehicles.filter(v=>daysAgo(v.createdAt)>=30&&v.status==='available').length;
   const inProg=appraisals.filter(a=>a.status==='in_progress').length;
-  const tiles=[
-    {label:'New Appraisal',    icon:ClipboardList, action:'new_appraisal', desc:'Start a trade-in or acquisition appraisal'},
-    {label:'Add Vehicle',      icon:Car,           action:'new_vehicle',   desc:'Add a vehicle to inventory manually'},
-    {label:'View Inventory',   icon:Package,       action:'inventory',     desc:'Browse and manage all stock'},
-    {label:'Appraisal History',icon:FileText,      action:'appraisals',    desc:'View all past and active appraisals'},
-  ];
+
+  // Is a vehicle advertised anywhere? (feeds toggled on)
+  const isAdvertised=(v)=>v.feeds&&Object.values(v.feeds).some(f=>f&&f.active);
+  // Build the attention list: each item = {id,type,title,issues[],advertised,onClick,priority}
+  const items=[];
+  vehicles.filter(v=>v.status==='available'||v.status==='in_recon').forEach(v=>{
+    const issues=[];
+    if(!(v.photos&&v.photos.length>0)) issues.push('No photos');
+    if(!v.description||!v.description.trim()) issues.push('No description');
+    if(!(v.features&&v.features.length>0)) issues.push('No options listed');
+    // Price flag: compare list price to fetched market band
+    if(v.listPrice&&v.marketLow&&v.marketHigh){
+      const lp=Number(v.listPrice);
+      if(lp>Number(v.marketHigh)) issues.push('Priced above market');
+      else if(lp<Number(v.marketLow)) issues.push('Priced below market');
+    }
+    if(issues.length>0){
+      const adv=isAdvertised(v);
+      items.push({
+        key:'v_'+v.id, type:'vehicle', advertised:adv,
+        title:[v.year,v.make,v.model,v.series].filter(Boolean).join(' ')||('Stock #'+v.stockNumber),
+        sub:'Stock #'+v.stockNumber, issues,
+        onClick:()=>onOpenVehicle(v),
+        // advertised cars with issues are most urgent; then by issue count
+        priority:(adv?100:0)+issues.length,
+      });
+    }
+  });
+  // sort: advertised+most issues first
+  items.sort((a,b)=>b.priority-a.priority);
+
+  const advertisedWithIssues=items.filter(i=>i.advertised).length;
+
   return (
     <div>
       {dealer.logo&&<div style={{marginBottom:16}}><img src={dealer.logo} style={{maxHeight:48,objectFit:'contain'}} alt={dealer.name}/></div>}
-      <div style={{marginBottom:22}}><h1 style={{fontSize:22,fontWeight:800,color:C.navy,letterSpacing:-0.5}}>{dealer.name}</h1><p style={{fontSize:13,color:C.textLight}}>Vantage by ClickDocs · Dealer Command Centre</p></div>
-      <div className='dash-stats' style={{display:'grid',gridTemplateColumns:'repeat(4,1fr)',gap:12,marginBottom:28}}>
-        {[{l:'Available',v:avail,c:C.green,Icon:CheckCircle},{l:'In Recon',v:recon,c:C.orange,Icon:AlertTriangle},{l:'Active Appraisals',v:inProg,c:C.navy,Icon:ClipboardList},{l:'Needs Attention',v:aging,c:aging>0?C.red:C.textLight,Icon:AlertCircle}].map(s=>(
-          <Card key={s.l} style={{padding:'14px 16px',display:'flex',alignItems:'center',gap:10}}>
+      <div style={{marginBottom:18}}><h1 style={{fontSize:22,fontWeight:800,color:C.navy,letterSpacing:-0.5}}>{dealer.name}</h1><p style={{fontSize:13,color:C.textLight}}>Vantage by ClickDocs · Dealer Command Centre</p></div>
+
+      {/* Compact stat strip */}
+      <div className='dash-stats' style={{display:'grid',gridTemplateColumns:'repeat(4,1fr)',gap:12,marginBottom:22}}>
+        {[{l:'Available',v:avail,c:C.green,Icon:CheckCircle,go:'inventory'},{l:'In Recon',v:recon,c:C.orange,Icon:AlertTriangle,go:'inventory'},{l:'Active Appraisals',v:inProg,c:C.navy,Icon:ClipboardList,go:'appraisals'},{l:'Needs Attention',v:items.length,c:items.length>0?C.red:C.textLight,Icon:AlertCircle,go:null}].map(s=>(
+          <Card key={s.l} onClick={s.go?()=>onNav(s.go):undefined} style={{padding:'14px 16px',display:'flex',alignItems:'center',gap:10,cursor:s.go?'pointer':'default'}}>
             <div style={{width:38,height:38,borderRadius:8,background:C.navyMuted,display:'flex',alignItems:'center',justifyContent:'center',flexShrink:0}}><s.Icon size={17} color={C.navy}/></div>
             <div><div style={{fontSize:11,color:C.textLight,fontWeight:500,marginBottom:2}}>{s.l}</div><div style={{fontSize:22,fontWeight:800,color:s.c,fontFamily:'monospace'}}>{s.v}</div></div>
           </Card>
         ))}
       </div>
-      <div className='dash-tiles' style={{display:'grid',gridTemplateColumns:'repeat(2,1fr)',gap:16,maxWidth:700,margin:'0 auto 28px'}}>
-        {tiles.map(t=>(
-          <button key={t.action} onClick={()=>onNav(t.action)} style={{background:C.card,border:`1px solid ${C.border}`,borderRadius:10,padding:'32px 20px',display:'flex',flexDirection:'column',alignItems:'center',gap:12,cursor:'pointer',transition:'all 0.2s',boxShadow:'0 1px 4px rgba(0,0,0,0.06)',textAlign:'center'}} onMouseEnter={e=>{e.currentTarget.style.boxShadow='0 6px 24px rgba(28,45,94,0.12)';e.currentTarget.style.borderColor=C.navy;e.currentTarget.style.transform='translateY(-2px)';}} onMouseLeave={e=>{e.currentTarget.style.boxShadow='0 1px 4px rgba(0,0,0,0.06)';e.currentTarget.style.borderColor=C.border;e.currentTarget.style.transform='none';}}>
-            <div style={{width:58,height:58,background:C.navyMuted,borderRadius:12,display:'flex',alignItems:'center',justifyContent:'center'}}><t.icon size={26} color={C.navy}/></div>
-            <div><div style={{fontWeight:700,fontSize:14,color:C.navy,marginBottom:3}}>{t.label}</div><div style={{fontSize:12,color:C.textLight}}>{t.desc}</div></div>
+
+      {/* ── ACTION CENTER ── */}
+      <div style={{marginBottom:22}}>
+        <div style={{display:'flex',alignItems:'center',gap:8,marginBottom:10}}>
+          <AlertCircle size={17} color={items.length>0?C.orange:C.green}/>
+          <h2 style={{fontSize:16,fontWeight:800,color:C.navy}}>Needs Attention</h2>
+          {items.length>0&&<span style={{background:C.orangeBg,color:C.orange,borderRadius:12,padding:'2px 10px',fontSize:12,fontWeight:700}}>{items.length}</span>}
+          {advertisedWithIssues>0&&<span style={{background:C.redBg,color:C.red,borderRadius:12,padding:'2px 10px',fontSize:11,fontWeight:700,marginLeft:'auto'}}>⚠ {advertisedWithIssues} advertised with issues</span>}
+        </div>
+
+        {items.length===0?(
+          <Card style={{padding:'28px',textAlign:'center'}}>
+            <CheckCircle size={28} color={C.green} style={{marginBottom:8}}/>
+            <div style={{fontSize:14,fontWeight:700,color:C.textMid}}>Everything looks good</div>
+            <div style={{fontSize:12,color:C.textLight,marginTop:3}}>No inventory is missing photos, descriptions, options, or has a price flag.</div>
+          </Card>
+        ):(
+          <Card style={{overflow:'hidden'}}>
+            {items.map((it,i)=>(
+              <div key={it.key} onClick={it.onClick} style={{padding:'12px 14px',borderBottom:i<items.length-1?`1px solid ${C.border}`:'none',display:'flex',alignItems:'center',gap:12,cursor:'pointer',transition:'background 0.15s'}} onMouseEnter={e=>e.currentTarget.style.background=C.navyMuted} onMouseLeave={e=>e.currentTarget.style.background='transparent'}>
+                <div style={{width:36,height:36,background:it.advertised?C.redBg:C.navyMuted,borderRadius:8,display:'flex',alignItems:'center',justifyContent:'center',flexShrink:0}}><Car size={16} color={it.advertised?C.red:C.navy}/></div>
+                <div style={{flex:1,minWidth:0}}>
+                  <div style={{display:'flex',alignItems:'center',gap:8}}>
+                    <span style={{fontWeight:700,fontSize:13,color:C.navy}}>{it.title}</span>
+                    {it.advertised&&<span style={{fontSize:9,fontWeight:700,color:C.red,background:C.redBg,padding:'1px 6px',borderRadius:8,whiteSpace:'nowrap'}}>ADVERTISED</span>}
+                  </div>
+                  <div style={{fontSize:11,color:C.textLight,marginTop:1}}>{it.sub}</div>
+                  <div style={{display:'flex',gap:5,flexWrap:'wrap',marginTop:5}}>
+                    {it.issues.map(iss=><span key={iss} style={{fontSize:10,fontWeight:600,color:C.orange,background:C.orangeBg,padding:'2px 7px',borderRadius:8,whiteSpace:'nowrap'}}>{iss}</span>)}
+                  </div>
+                </div>
+                <ChevronRight size={15} color={C.textLight}/>
+              </div>
+            ))}
+          </Card>
+        )}
+      </div>
+
+      {/* Active appraisals quick list */}
+      {appraisals.filter(a=>a.status==='in_progress').length>0&&(
+        <div style={{marginBottom:16}}>
+          <div style={{display:'flex',alignItems:'center',justifyContent:'space-between',marginBottom:10}}>
+            <h3 style={{fontSize:14,fontWeight:700,color:C.navy}}>Active Appraisals</h3>
+            <button onClick={()=>onNav('appraisals')} style={{fontSize:12,color:C.teal,background:'none',border:'none',cursor:'pointer',fontWeight:600}}>View all →</button>
+          </div>
+          <Card style={{overflow:'hidden'}}>
+            {appraisals.filter(a=>a.status==='in_progress').slice(0,5).map((a,i,arr)=>(
+              <div key={a.id} onClick={()=>onOpenAppraisal(a)} style={{padding:'10px 14px',borderBottom:i<arr.length-1?`1px solid ${C.border}`:'none',display:'flex',alignItems:'center',gap:12,cursor:'pointer'}} onMouseEnter={e=>e.currentTarget.style.background=C.navyMuted} onMouseLeave={e=>e.currentTarget.style.background='transparent'}>
+                <Car size={16} color={C.navy}/>
+                <div style={{flex:1}}><div style={{fontWeight:600,fontSize:13,color:C.textDark}}>{[a.year,a.make,a.model].filter(Boolean).join(' ')||'Untitled'}</div><div style={{fontSize:11,color:C.textLight}}>{new Date(a.createdAt).toLocaleDateString('en-CA')}</div></div>
+                <ABadge status={a.status}/>{a.appraisedValue&&<div style={{fontSize:13,fontWeight:700,color:C.navy,fontFamily:'monospace'}}>{fmt(a.appraisedValue)}</div>}
+                <ChevronRight size={13} color={C.textLight}/>
+              </div>
+            ))}
+          </Card>
+        </div>
+      )}
+
+      {/* Quick actions */}
+      <div className='dash-tiles' style={{display:'grid',gridTemplateColumns:'repeat(4,1fr)',gap:12}}>
+        {[
+          {label:'New Appraisal',icon:ClipboardList,action:'new_appraisal'},
+          {label:'Add Vehicle',icon:Car,action:'new_vehicle'},
+          {label:'Inventory',icon:Package,action:'inventory'},
+          {label:'Reports',icon:BarChart2,action:'reports'},
+        ].map(t=>(
+          <button key={t.action} onClick={()=>onNav(t.action)} style={{background:C.card,border:`1px solid ${C.border}`,borderRadius:10,padding:'18px 12px',display:'flex',flexDirection:'column',alignItems:'center',gap:8,cursor:'pointer',transition:'all 0.2s',boxShadow:'0 1px 4px rgba(0,0,0,0.06)'}} onMouseEnter={e=>{e.currentTarget.style.borderColor=C.navy;e.currentTarget.style.transform='translateY(-2px)';}} onMouseLeave={e=>{e.currentTarget.style.borderColor=C.border;e.currentTarget.style.transform='none';}}>
+            <div style={{width:42,height:42,background:C.navyMuted,borderRadius:10,display:'flex',alignItems:'center',justifyContent:'center'}}><t.icon size={20} color={C.navy}/></div>
+            <div style={{fontWeight:700,fontSize:12,color:C.navy}}>{t.label}</div>
           </button>
         ))}
       </div>
-      {aging>0&&<div style={{background:C.redBg,border:`1px solid ${C.red}`,borderRadius:8,padding:'12px 16px',display:'flex',alignItems:'center',gap:10,marginBottom:16}}><AlertCircle size={15} color={C.red}/><div style={{fontSize:13,color:C.red,fontWeight:600}}>{aging} vehicle{aging!==1?'s':''} on lot 30+ days — price review needed</div><button onClick={()=>onNav('inventory')} style={{marginLeft:'auto',background:C.red,color:'#fff',border:'none',borderRadius:5,padding:'5px 12px',fontSize:12,fontWeight:600,cursor:'pointer'}}>Review</button></div>}
-      {appraisals.length>0&&<div><div style={{display:'flex',alignItems:'center',justifyContent:'space-between',marginBottom:10}}><h3 style={{fontSize:14,fontWeight:700,color:C.navy}}>Recent Appraisals</h3><button onClick={()=>onNav('appraisals')} style={{fontSize:12,color:C.teal,background:'none',border:'none',cursor:'pointer',fontWeight:600}}>View all →</button></div><Card style={{overflow:'hidden'}}>{appraisals.slice(0,4).map((a,i)=><div key={a.id} style={{padding:'10px 14px',borderBottom:i<Math.min(3,appraisals.length-1)?`1px solid ${C.border}`:'none',display:'flex',alignItems:'center',gap:12}}><Car size={16} color={C.navy}/><div style={{flex:1}}><div style={{fontWeight:600,fontSize:13,color:C.textDark}}>{[a.year,a.make,a.model].filter(Boolean).join(' ')||'Untitled'}</div><div style={{fontSize:11,color:C.textLight}}>{new Date(a.createdAt).toLocaleDateString('en-CA')}</div></div><ABadge status={a.status}/>{a.appraisedValue&&<div style={{fontSize:13,fontWeight:700,color:C.navy,fontFamily:'monospace'}}>{fmt(a.appraisedValue)}</div>}</div>)}</Card></div>}
     </div>
   );
 }
@@ -873,17 +977,16 @@ function CopyVIN({vin}){
     })
   }
   return(
-    <button onClick={copy} title="Copy VIN" style={{
+    <button onClick={copy} title={copied?'Copied!':'Copy VIN'} style={{
       background:copied?C.greenBg:'rgba(28,45,94,0.06)',
       border:`1px solid ${copied?C.green:C.navyBorder}`,
-      borderRadius:5,padding:'2px 8px',
-      fontSize:10,fontWeight:600,
+      borderRadius:5,padding:'4px 7px',
       color:copied?C.green:C.navy,
-      cursor:'pointer',fontFamily:'monospace',
-      display:'inline-flex',alignItems:'center',gap:4,
+      cursor:'pointer',
+      display:'inline-flex',alignItems:'center',justifyContent:'center',
       transition:'all 0.2s',flexShrink:0,
     }}>
-      {copied?'✓ Copied':'Copy'}
+      {copied?<Check size={13}/>:<Copy size={13}/>}
     </button>
   )
 }
@@ -1131,25 +1234,6 @@ function VehicleSummary({data,onEdit}){
             </div>
           )}
 
-          {/* Photos strip — inline */}
-          {data.photos&&data.photos.length>0&&(
-            <div style={{borderTop:`1px solid ${C.navyBorder}`,padding:'10px 14px'}}>
-              <div style={{fontSize:10,fontWeight:600,color:C.textLight,textTransform:'uppercase',letterSpacing:1,marginBottom:6}}>
-                Photos ({data.photos.length})
-              </div>
-              <div style={{display:'flex',gap:8,overflowX:'auto',paddingBottom:4}}>
-                {data.photos.map((p,i)=>(
-                  <img key={p.id||i} src={p.dataUrl} alt={p.category||'photo'}
-                    style={{width:72,height:54,objectFit:'cover',borderRadius:5,flexShrink:0,border:`1px solid ${C.navyBorder}`,cursor:'pointer'}}
-                    onClick={()=>{
-                      const w=window.open('','_blank')
-                      w.document.write(`<html><body style="margin:0;background:#000;display:flex;align-items:center;justify-content:center;min-height:100vh"><img src="${p.dataUrl}" style="max-width:100%;max-height:100vh;object-fit:contain"/></body></html>`)
-                    }}
-                  />
-                ))}
-              </div>
-            </div>
-          )}
         </div>
       ):(
         <div style={{padding:'14px',color:C.textLight,fontSize:13,textAlign:'center'}}>
@@ -1198,7 +1282,7 @@ function AppraisalForm({initial,onSave,onBack,showToast,onConvert,onFinalize,onU
     showToast('Saved','success');
   }
 
-  async function decode(){if(a.vin.length!==17){showToast('Enter a valid 17-character VIN','error');return;}setVl(true);try{const d=await decodeVIN(a.vin.toUpperCase());setA(p=>{const next={...p,...d,updatedAt:new Date().toISOString()};aRef.current=next;return next;});setIsDirty(true);showToast(`Decoded: ${d.year} ${d.make} ${d.model}`,'success');}catch{showToast('Could not decode — enter manually','error');}finally{setVl(false);}}
+  async function decode(){if(a.vin.length!==17){showToast('Enter a valid 17-character VIN','error');return;}setVl(true);try{const d=await decodeVIN(a.vin.toUpperCase());setA(p=>{const next={...p,...d,updatedAt:new Date().toISOString()};aRef.current=next;return next;});setIsDirty(true);setVehExpanded(true);showToast(`Decoded: ${[d.year,d.make,d.model].filter(Boolean).join(' ')||'partial — review fields'}`,'success');}catch{showToast('Could not decode — enter manually','error');}finally{setVl(false);}}
   async function fetchMkt(){
     if(a.vin.length!==17){showToast('Decode VIN first','error');return;}
     const dealer=onGetDealer?onGetDealer():null;
@@ -1362,18 +1446,6 @@ function AppraisalForm({initial,onSave,onBack,showToast,onConvert,onFinalize,onU
           </div>
         )}
       </Sec>
-      {/* Moved into floating panel: Photos, Notes, Offer & Pricing */}
-      <Sec title="Photos" icon={Camera} badge={a.photos.length>0?`${a.photos.length}`:'None'}>
-        <div style={{display:'flex',gap:8,marginBottom:12,flexWrap:'wrap'}}>
-          <label className="cap-only" style={{display:'inline-flex',alignItems:'center',gap:6,padding:'8px 16px',background:C.navy,color:'#fff',borderRadius:6,fontSize:13,fontWeight:600,cursor:'pointer'}}><Camera size={13}/>Take Photo<input type="file" accept="image/*" capture="environment" style={{display:'none'}} onChange={photo} multiple/></label>
-          <label style={{display:'inline-flex',alignItems:'center',gap:6,padding:'8px 16px',background:'#fff',color:C.textMid,border:`1px solid ${C.borderStr}`,borderRadius:6,fontSize:13,fontWeight:600,cursor:'pointer'}}><Upload size={13}/>Upload<input type="file" accept="image/*" style={{display:'none'}} onChange={photo} multiple/></label>
-        </div>
-        {a.photos.length>0?<div style={{display:'grid',gridTemplateColumns:'repeat(auto-fill,minmax(110px,1fr))',gap:8}}>{(a.photos||[]).map(p=><div key={p.id} style={{position:'relative',borderRadius:7,overflow:'hidden',border:`1px solid ${C.border}`}}><img src={p.dataUrl} style={{width:'100%',height:80,objectFit:'cover',display:'block'}} alt=""/><div style={{padding:'3px 5px',background:'#fff'}}><select value={p.category} onChange={e=>setA(prev=>({...prev,photos:prev.photos.map(ph=>ph.id===p.id?{...ph,category:e.target.value}:ph)}))} style={{width:'100%',fontSize:10,border:'none',background:'none',fontFamily:'inherit'}}>{['Front','Rear','Driver Side','Pass. Side','Interior','Odometer','Engine','Damage','Misc'].map(c=><option key={c}>{c}</option>)}</select></div><button onClick={()=>setA(prev=>({...prev,photos:prev.photos.filter(ph=>ph.id!==p.id)}))} style={{position:'absolute',top:3,right:3,background:'rgba(0,0,0,0.6)',border:'none',borderRadius:'50%',width:20,height:20,display:'flex',alignItems:'center',justifyContent:'center',cursor:'pointer'}}><X size={10} color="white"/></button></div>)}</div>:<div style={{padding:'20px',background:C.navyMuted,borderRadius:7,textAlign:'center',border:`1.5px dashed ${C.navyBorder}`}}><div style={{fontSize:12,color:C.textLight}}>No photos yet</div></div>}
-      </Sec>
-
-      <Sec title="Notes" icon={FileText}>
-        <textarea value={a.notes} onChange={e=>set('notes',e.target.value)} placeholder="Recon items, special options, condition observations..." rows={4} style={{width:'100%',padding:'10px 12px',background:'#fff',border:`1px solid ${C.borderStr}`,borderRadius:7,fontSize:13,fontFamily:'inherit',resize:'vertical',outline:'none',boxSizing:'border-box',lineHeight:1.6,color:C.textDark}}/>
-      </Sec>
 
       <Sec title="Offer & Pricing" icon={DollarSign} accent>
         <div style={{display:'flex',gap:10,flexWrap:'wrap',marginBottom:12}}>
@@ -1445,7 +1517,7 @@ function AppraisalForm({initial,onSave,onBack,showToast,onConvert,onFinalize,onU
           <div style={{fontSize:10,color:'rgba(255,255,255,0.5)',fontWeight:600,marginBottom:8,textTransform:'uppercase',letterSpacing:0.5}}>Lien Information</div>
           <div style={{display:'flex',gap:8,flexWrap:'wrap'}}>
             <div style={{flex:1,minWidth:120}}>
-              <label style={{display:'block',fontSize:10,fontWeight:600,color:'rgba(255,255,255,0.5)',marginBottom:4}}>Lien Holder</label>
+              <label style={{display:'block',fontSize:10,fontWeight:600,color:'rgba(255,255,255,0.5)',marginBottom:4}}>Lienholder (who the customer still owes)</label>
               <input value={a.lienHolder||''} onChange={e=>set('lienHolder',e.target.value)} placeholder="Bank / Finance Co."
                 style={{width:'100%',padding:'7px 10px',background:'rgba(255,255,255,0.1)',border:'1px solid rgba(255,255,255,0.2)',borderRadius:6,fontSize:12,color:'#fff',fontFamily:'inherit',outline:'none',boxSizing:'border-box'}}/>
             </div>
@@ -1457,6 +1529,19 @@ function AppraisalForm({initial,onSave,onBack,showToast,onConvert,onFinalize,onU
           </div>
         </div>
       </Sec>
+
+      <Sec title="Photos" icon={Camera} badge={a.photos.length>0?`${a.photos.length}`:'None'}>
+        <div style={{display:'flex',gap:8,marginBottom:12,flexWrap:'wrap'}}>
+          <label className="cap-only" style={{display:'inline-flex',alignItems:'center',gap:6,padding:'8px 16px',background:C.navy,color:'#fff',borderRadius:6,fontSize:13,fontWeight:600,cursor:'pointer'}}><Camera size={13}/>Take Photo<input type="file" accept="image/*" capture="environment" style={{display:'none'}} onChange={photo} multiple/></label>
+          <label style={{display:'inline-flex',alignItems:'center',gap:6,padding:'8px 16px',background:'#fff',color:C.textMid,border:`1px solid ${C.borderStr}`,borderRadius:6,fontSize:13,fontWeight:600,cursor:'pointer'}}><Upload size={13}/>Upload<input type="file" accept="image/*" style={{display:'none'}} onChange={photo} multiple/></label>
+        </div>
+        {a.photos.length>0?<div style={{display:'grid',gridTemplateColumns:'repeat(auto-fill,minmax(110px,1fr))',gap:8}}>{(a.photos||[]).map(p=><div key={p.id} style={{position:'relative',borderRadius:7,overflow:'hidden',border:`1px solid ${C.border}`}}><img src={p.dataUrl} style={{width:'100%',height:80,objectFit:'cover',display:'block'}} alt=""/><div style={{padding:'3px 5px',background:'#fff'}}><select value={p.category} onChange={e=>setA(prev=>({...prev,photos:prev.photos.map(ph=>ph.id===p.id?{...ph,category:e.target.value}:ph)}))} style={{width:'100%',fontSize:10,border:'none',background:'none',fontFamily:'inherit'}}>{['Front','Rear','Driver Side','Pass. Side','Interior','Odometer','Engine','Damage','Misc'].map(c=><option key={c}>{c}</option>)}</select></div><button onClick={()=>setA(prev=>({...prev,photos:prev.photos.filter(ph=>ph.id!==p.id)}))} style={{position:'absolute',top:3,right:3,background:'rgba(0,0,0,0.6)',border:'none',borderRadius:'50%',width:20,height:20,display:'flex',alignItems:'center',justifyContent:'center',cursor:'pointer'}}><X size={10} color="white"/></button></div>)}</div>:<div style={{padding:'20px',background:C.navyMuted,borderRadius:7,textAlign:'center',border:`1.5px dashed ${C.navyBorder}`}}><div style={{fontSize:12,color:C.textLight}}>No photos yet</div></div>}
+      </Sec>
+
+      <Sec title="Notes" icon={FileText} open={false}>
+        <textarea value={a.notes} onChange={e=>set('notes',e.target.value)} placeholder="Recon items, special options, condition observations..." rows={4} style={{width:'100%',padding:'10px 12px',background:'#fff',border:`1px solid ${C.borderStr}`,borderRadius:7,fontSize:13,fontFamily:'inherit',resize:'vertical',outline:'none',boxSizing:'border-box',lineHeight:1.6,color:C.textDark}}/>
+      </Sec>
+      {/* Moved into floating panel: Photos, Notes, Offer & Pricing */}
 
         </div>{/* end LEFT RAIL */}
 
@@ -1489,17 +1574,6 @@ function AppraisalForm({initial,onSave,onBack,showToast,onConvert,onFinalize,onU
               <input type="number" value={a.odoTo||''} onChange={e=>recompute({odoTo:e.target.value})} placeholder="To"
                 style={{width:70,padding:'7px 8px',background:'#fff',border:`1px solid ${C.borderStr}`,borderRadius:6,fontSize:11,fontFamily:'inherit',outline:'none'}}/>
               <span style={{fontSize:10,color:C.textLight}}>km</span>
-            </div>
-          </div>
-          <div style={{minWidth:0}}>
-            <label style={{display:'block',fontSize:10,fontWeight:600,color:C.textMid,marginBottom:4}}>Market Mode</label>
-            <div style={{display:'flex',gap:8,alignItems:'center',padding:'7px 0'}}>
-              {['Recent','Active'].map(m=>(
-                <label key={m} style={{display:'flex',alignItems:'center',gap:4,cursor:'pointer',fontSize:12,color:C.textDark}}>
-                  <input type="radio" name={`mmode_${a.id}`} checked={(a.marketMode||'Recent')===m} onChange={()=>set('marketMode',m)}
-                    style={{accentColor:C.navy}}/>{m}
-                </label>
-              ))}
             </div>
           </div>
           <Btn onClick={fetchMkt} disabled={ml||a.vin.length!==17} size="sm">
@@ -1627,7 +1701,7 @@ function AppraisalForm({initial,onSave,onBack,showToast,onConvert,onFinalize,onU
 
       <div style={{display:'flex',justifyContent:'space-between',alignItems:'center',flexWrap:'wrap',gap:8,padding:'4px 4px 8px',fontSize:11,color:C.textLight}}>
         <span>Created {new Date(a.createdAt).toLocaleString('en-CA',{dateStyle:'medium',timeStyle:'short'})}</span>
-        <span>Last updated {new Date(a.updatedAt).toLocaleString('en-CA',{dateStyle:'medium',timeStyle:'short'})}</span>
+        <span>Last saved {savedAt?new Date(savedAt).toLocaleString('en-CA',{dateStyle:'medium',timeStyle:'short'}):'—'}</span>
       </div>
     </div>
   );
@@ -1930,17 +2004,6 @@ function VehicleDetail({vehicle:iv,onSave,onBack,showToast,onShowSticker=()=>{},
                       style={{width:70,padding:'6px 8px',background:'#fff',border:`1px solid ${C.borderStr}`,borderRadius:6,fontSize:11,fontFamily:'inherit',outline:'none'}}/>
                   </div>
                 </div>
-                <div>
-                  <label style={{display:'block',fontSize:10,fontWeight:600,color:C.textMid,marginBottom:4}}>Mode</label>
-                  <div style={{display:'flex',gap:8,alignItems:'center',padding:'6px 0'}}>
-                    {['Recent','Active'].map(m=>(
-                      <label key={m} style={{display:'flex',alignItems:'center',gap:4,cursor:'pointer',fontSize:12,color:C.textDark}}>
-                        <input type="radio" name={`vmode_${v.id}`} checked={(v.marketMode||'Recent')===m} onChange={()=>up({marketMode:m})}
-                          style={{accentColor:C.navy}}/>{m}
-                      </label>
-                    ))}
-                  </div>
-                </div>
               </div>
               {!v.marketMid?<div style={{textAlign:'center',padding:'12px 0'}}><Btn onClick={refMkt} disabled={ml}><TrendingUp size={13}/>{ml?'Loading...':'Fetch Market Data'}</Btn></div>:(
                 <div>
@@ -2037,7 +2100,7 @@ function VehicleDetail({vehicle:iv,onSave,onBack,showToast,onShowSticker=()=>{},
       </Card>
       <div style={{display:'flex',justifyContent:'space-between',alignItems:'center',flexWrap:'wrap',gap:8,padding:'4px 4px 8px',fontSize:11,color:C.textLight}}>
         <span>Stock #{v.stockNumber} · Created {new Date(v.createdAt).toLocaleString('en-CA',{dateStyle:'medium',timeStyle:'short'})}</span>
-        <span>Last updated {new Date(v.updatedAt).toLocaleString('en-CA',{dateStyle:'medium',timeStyle:'short'})}</span>
+        <span>Last saved {savedAt?new Date(savedAt).toLocaleString('en-CA',{dateStyle:'medium',timeStyle:'short'}):'—'}</span>
       </div>
     </div>
   );
@@ -2253,6 +2316,45 @@ export default function Vantage() {
   const saveV=useCallback(l=>{try{localStorage.setItem('vantage_vehicles',JSON.stringify(l));}catch{}},[]);
   const saveA=useCallback(l=>{try{localStorage.setItem('vantage_appraisals',JSON.stringify(l));}catch{}},[]);
   const saveD=useCallback(d=>{try{localStorage.setItem('vantage_dealer',JSON.stringify(d));}catch{}},[]);
+
+  // ── Daily market-data refresh for active inventory ──
+  // Refetches any ACTIVE unit whose market data is >24h old, once on app load,
+  // sequentially (gentle on the VinAudit API). To switch to manual-only later,
+  // set AUTO_DAILY_REFRESH = false (the "Refresh" button on each car still works).
+  const AUTO_DAILY_REFRESH = true;
+  const refreshRan = useRef(false);
+  useEffect(()=>{
+    if(!AUTO_DAILY_REFRESH || refreshRan.current) return;
+    refreshRan.current = true;
+    const postal = dealer?.postal;
+    if(!postal) return; // need dealer postal to fetch local comps
+    const DAY = 24*60*60*1000;
+    const stale = vehicles.filter(v =>
+      (v.status==='available'||v.status==='in_recon') &&
+      v.vin && v.vin.length===17 &&
+      (!v.marketDataFetched || (Date.now()-new Date(v.marketDataFetched).getTime()) > DAY)
+    );
+    if(stale.length===0) return;
+    let cancelled=false;
+    (async()=>{
+      for(const v of stale){
+        if(cancelled) break;
+        try{
+          const m=await fetchMarketData(v.vin, postal);
+          if(m && m.found){
+            setVehicles(prev=>{
+              const n=prev.map(x=>x.id===v.id?{...x,marketLow:m.marketLow,marketMid:m.marketMid,marketHigh:m.marketHigh,marketAvgPrice:m.marketAvgPrice,activeComps:m.activeComps,marketDaySupply:m.marketDaySupply,medianDaysListed:m.medianDaysListed,_soldStats:m.soldStats,_comps:m.comps,_marketMeta:m.meta,_medianCompMileage:m.medianCompMileage,marketDataFetched:m.marketDataFetched||new Date().toISOString()}:x);
+              saveV(n);return n;
+            });
+          }
+        }catch{ /* skip cars that fail (e.g. invalid VIN); don't block the rest */ }
+        await new Promise(r=>setTimeout(r, 1200)); // pace requests
+      }
+    })();
+    return ()=>{cancelled=true;};
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  },[dealer]);
+
   function pickUser(u){setCurrentUser(u);setShowUserMenu(false);try{localStorage.setItem('vantage_user',u);}catch{}}
 
   function nav(action) {
@@ -2358,7 +2460,7 @@ export default function Vantage() {
 
       {/* CONTENT */}
       <div className='content-pad' style={{maxWidth:1200,margin:'0 auto',padding:'24px 24px 60px'}}>
-        {page==='dashboard'&&<Dashboard vehicles={vehicles} appraisals={appraisals} dealer={dealer} onNav={nav}/>}
+        {page==='dashboard'&&<Dashboard vehicles={vehicles} appraisals={appraisals} dealer={dealer} onNav={nav} onOpenVehicle={v=>{setActiveV({...v});setPage('vehicle_detail');}} onOpenAppraisal={a=>{setActiveA({...a});setPage('appraisal_form');}}/>}
         {page==='appraisals'&&<AppraisalList appraisals={appraisals} onNew={()=>nav('new_appraisal')} onEdit={a=>{setActiveA({...a});setPage('appraisal_form');}}/>}
         {page==='appraisal_form'&&activeA&&<AppraisalForm initial={activeA} user={actingUser} onSave={(a,silent=false)=>saveAppraisal(a,silent)} onBack={()=>setPage('appraisals')} showToast={showToast} onConvert={convertToInventory} onFinalize={finalizeAppraisal} onUnlock={unlockAppraisal} onGetDealer={()=>dealer}/>}
         {page==='inventory'&&<InventoryList vehicles={vehicles} onAdd={()=>nav('new_vehicle')} onEdit={v=>{setActiveV({...v});setPage('vehicle_detail');}}/>}
