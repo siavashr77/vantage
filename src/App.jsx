@@ -83,6 +83,11 @@ function mockHistoricalData(make, model){
 const fmtN = n => n?Number(n).toLocaleString('en-CA'):'—';
 const daysAgo = d => Math.floor((Date.now()-new Date(d))/86400000);
 const stockNum = () => 'V'+Math.floor(10000+Math.random()*90000);
+// Guaranteed-unique id even when many are created in the same millisecond
+// (e.g. bulk import). Date.now() alone collides in tight loops → React key
+// clashes that make rows render/update as one. Add a counter + randomness.
+let _idCounter = 0;
+const uid = () => `${Date.now().toString(36)}${(_idCounter++).toString(36)}${Math.random().toString(36).slice(2,7)}`;
 const pct = (a,b) => (!a||!b)?null:Math.round((Number(a)/Number(b))*100);
 const gaugeColor = p => !p?C.textLight:p<85?C.green:p<102?C.teal:p<112?C.orange:C.red;
 const gaugeLabel = p => !p?'':p<85?'Below Market':p<102?'Competitive':p<112?'Above Market':'Overpriced';
@@ -142,8 +147,8 @@ const logEvent = (field,newVal,user='Staff',old='') =>
   ({ts:new Date().toISOString(),field,old,new:newVal,user});
 
 // ─── BLANK TEMPLATES ──────────────────────────────────────────────────
-const blankAppraisal = () => ({id:Date.now().toString(),createdAt:new Date().toISOString(),updatedAt:new Date().toISOString(),status:'in_progress',disposition:'retail',source:'',appraiser:'',salesperson:'',vin:'',year:'',make:'',model:'',series:'',bodyType:'',engine:'',transmission:'',drivetrain:'',extColour:'',intColour:'',odometer:'',marketLow:null,marketMid:null,marketHigh:null,marketAvgPrice:null,marketDaysSupply:null,likeMineSupply:null,marketDataFetched:null,activeComps:null,avgDaysToSell:null,tires:'',paint:'',interior:'',mechanical:'',accidentVisible:false,reconCost:'',appraisedValue:'',profitObjective:'',photos:[],notes:'',firstName:'',lastName:'',phone:'',email:'',address:'',postal:'',province:'',lienHolder:'',lienPayoff:'',comments:[],carfax:null,certCost:'',pack:'',finalizedAt:null,finalizedBy:null,log:[{ts:new Date().toISOString(),field:'AppraisalCreated',old:'',new:'In Progress',user:'System'}]});
-const blankVehicle = (a=null) => ({id:Date.now().toString(),stockNumber:stockNum(),createdAt:new Date().toISOString(),updatedAt:new Date().toISOString(),status:'pending',disposition:'retail',fromAppraisalId:a?.id||null,vin:a?.vin||'',year:a?.year||'',make:a?.make||'',model:a?.model||'',series:a?.series||'',bodyType:a?.bodyType||'',engine:a?.engine||'',transmission:a?.transmission||'',drivetrain:a?.drivetrain||'',extColour:a?.extColour||'',intColour:a?.intColour||'',odometer:a?.odometer||'',listPrice:'',unitCost:a?.appraisedValue||'',reconCost:a?.reconCost||'',marketLow:a?.marketLow||null,marketMid:a?.marketMid||null,marketHigh:a?.marketHigh||null,marketAvgPrice:a?.marketAvgPrice||null,marketDaysSupply:a?.marketDaysSupply||null,likeMineSupply:a?.likeMineSupply||null,marketDataFetched:a?.marketDataFetched||null,activeComps:a?.activeComps||null,avgDaysToSell:a?.avgDaysToSell||null,description:'',features:[...(a?.features||[])],photos:[...(a?.photos||[])],feeds:{autotrader:{active:false},cargurus:{active:false},website:{active:false},auction:{active:false}},log:[{ts:new Date().toISOString(),field:'VehicleCreated',old:'',new:a?'Created from appraisal':'Manual entry',user:'System'}],notes:a?.notes||'',carfax:a?.carfax||null});
+const blankAppraisal = () => ({id:uid(),createdAt:new Date().toISOString(),updatedAt:new Date().toISOString(),status:'in_progress',disposition:'retail',source:'',appraiser:'',salesperson:'',vin:'',year:'',make:'',model:'',series:'',bodyType:'',engine:'',transmission:'',drivetrain:'',extColour:'',intColour:'',odometer:'',marketLow:null,marketMid:null,marketHigh:null,marketAvgPrice:null,marketDaysSupply:null,likeMineSupply:null,marketDataFetched:null,activeComps:null,avgDaysToSell:null,tires:'',paint:'',interior:'',mechanical:'',accidentVisible:false,reconCost:'',appraisedValue:'',profitObjective:'',photos:[],notes:'',firstName:'',lastName:'',phone:'',email:'',address:'',postal:'',province:'',lienHolder:'',lienPayoff:'',comments:[],carfax:null,certCost:'',pack:'',finalizedAt:null,finalizedBy:null,log:[{ts:new Date().toISOString(),field:'AppraisalCreated',old:'',new:'In Progress',user:'System'}]});
+const blankVehicle = (a=null) => ({id:uid(),stockNumber:stockNum(),createdAt:new Date().toISOString(),updatedAt:new Date().toISOString(),status:'pending',disposition:'retail',fromAppraisalId:a?.id||null,vin:a?.vin||'',year:a?.year||'',make:a?.make||'',model:a?.model||'',series:a?.series||'',bodyType:a?.bodyType||'',engine:a?.engine||'',transmission:a?.transmission||'',drivetrain:a?.drivetrain||'',extColour:a?.extColour||'',intColour:a?.intColour||'',odometer:a?.odometer||'',listPrice:'',unitCost:a?.appraisedValue||'',reconCost:a?.reconCost||'',marketLow:a?.marketLow||null,marketMid:a?.marketMid||null,marketHigh:a?.marketHigh||null,marketAvgPrice:a?.marketAvgPrice||null,marketDaysSupply:a?.marketDaysSupply||null,likeMineSupply:a?.likeMineSupply||null,marketDataFetched:a?.marketDataFetched||null,activeComps:a?.activeComps||null,avgDaysToSell:a?.avgDaysToSell||null,description:'',features:[...(a?.features||[])],photos:[...(a?.photos||[])],feeds:{autotrader:{active:false},cargurus:{active:false},website:{active:false},auction:{active:false}},log:[{ts:new Date().toISOString(),field:'VehicleCreated',old:'',new:a?'Created from appraisal':'Manual entry',user:'System'}],notes:a?.notes||'',carfax:a?.carfax||null});
 
 // ─── SEED DATA ────────────────────────────────────────────────────────
 const SEED = [
@@ -2575,9 +2580,9 @@ export default function Vantage() {
     const postal=dealer?.postal;
     if(target==='appraisals'){
       // Create appraisals for new cars; existing-VIN updates don't apply to appraisals.
-      const newAppraisals=diff.added.map(rec=>{
+      const newAppraisals=diff.added.map((rec,i)=>{
         const a=blankAppraisal();
-        return {...a, vin:rec.vin, odometer:rec.odometer||'', year:rec.year||'', make:rec.make||'', model:rec.model||'', series:rec.series||'', bodyType:rec.bodyType||'', engine:rec.engine||'', transmission:rec.transmission||'', drivetrain:rec.drivetrain||'', extColour:rec.extColour||'', intColour:rec.intColour||'', source:'Bulk import'};
+        return {...a, id:uid(), vin:rec.vin, odometer:rec.odometer||'', year:rec.year||'', make:rec.make||'', model:rec.model||'', series:rec.series||'', bodyType:rec.bodyType||'', engine:rec.engine||'', transmission:rec.transmission||'', drivetrain:rec.drivetrain||'', extColour:rec.extColour||'', intColour:rec.intColour||'', source:'Bulk import'};
       });
       if(newAppraisals.length){ setAppraisals(prev=>{const n=[...newAppraisals,...prev];saveA(n);return n;}); }
       showToast(`${newAppraisals.length} appraisals created from import`,'success');
@@ -2602,9 +2607,9 @@ export default function Vantage() {
         return {...x,_missingCount:0};
       });
       // 3) new cars
-      const newVehicles=diff.added.map(rec=>{
+      const newVehicles=diff.added.map((rec,i)=>{
         const v=blankVehicle();
-        return {...v, vin:rec.vin, odometer:rec.odometer||'', year:rec.year||'', make:rec.make||'', model:rec.model||'', series:rec.series||'', bodyType:rec.bodyType||'', engine:rec.engine||'', transmission:rec.transmission||'', drivetrain:rec.drivetrain||'', extColour:rec.extColour||'', intColour:rec.intColour||'', listPrice:rec.listPrice||'', unitCost:rec.unitCost||'', status:'pending', _missingCount:0, log:[logEvent('VehicleCreated','Added via bulk import',actingUser)]};
+        return {...v, id:uid(), stockNumber:rec.stockNumber||v.stockNumber, vin:rec.vin, odometer:rec.odometer||'', year:rec.year||'', make:rec.make||'', model:rec.model||'', series:rec.series||'', bodyType:rec.bodyType||'', engine:rec.engine||'', transmission:rec.transmission||'', drivetrain:rec.drivetrain||'', extColour:rec.extColour||'', intColour:rec.intColour||'', listPrice:rec.listPrice||'', unitCost:rec.unitCost||'', status:'pending', _missingCount:0, log:[logEvent('VehicleCreated','Added via bulk import',actingUser)]};
       });
       n=[...newVehicles,...n];
       saveV(n);
