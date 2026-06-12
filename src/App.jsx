@@ -1757,7 +1757,7 @@ function InventoryList({vehicles,onAdd,onEdit}) {
 
 // ─── VEHICLE DETAIL ───────────────────────────────────────────────────
 function VehicleDetail({vehicle:iv,onSave,onBack,showToast,onShowSticker=()=>{},onGetDealer,user='Staff'}) {
-  const [v,setV]=useState(iv);const [tab,setTab]=useState('info');
+  const [v,setV]=useState(iv);
   const [dl,setDl]=useState(false);const [ml,setMl]=useState(false);const [vl,setVl]=useState(false);const [cl,setCl]=useState(false);
   const [vehExpandedDetail,setVehExpandedDetail]=useState(!iv?.year);
   const [showVINScannerDetail,setShowVINScannerDetail]=useState(false);
@@ -1810,82 +1810,46 @@ function VehicleDetail({vehicle:iv,onSave,onBack,showToast,onShowSticker=()=>{},
   function photo(e){Array.from(e.target.files).forEach(f=>{const r=new FileReader();r.onload=ev=>up({photos:[...v.photos,{id:Date.now().toString()+Math.random(),dataUrl:ev.target.result,category:'Misc',name:f.name}]});r.readAsDataURL(f);});e.target.value='';}
   const comps=v._comps||[];
   const myRank=(v.listPrice&&comps.length)?comps.filter(c=>c.price<Number(v.listPrice)).length+1:null;
-  const tabs=[{k:'info',l:'Vehicle Info',I:Car},{k:'pricing',l:'PriceIQ',I:BarChart2,alert:days>=30},{k:'carfax',l:'Carfax',I:ShieldCheck,alert:!v.carfax},{k:'photos',l:'Photos',I:Camera,alert:!(v.photos?.length>0)},{k:'feeds',l:'Feeds',I:Radio},{k:'log',l:'Vehicle Log',I:Activity}];
   return (
     <div>
       {showVINScannerDetail&&<VINScanner onVINDetected={val=>{up({vin:val});setVehExpandedDetail(true);}} onClose={()=>setShowVINScannerDetail(false)}/>}
-      <Card style={{padding:'14px 18px',marginBottom:12}}>
-        <div style={{display:'flex',alignItems:'flex-start',gap:12,flexWrap:'wrap'}}>
-          <div style={{flex:1,minWidth:0}}>
-            <div style={{display:'flex',alignItems:'center',gap:8,marginBottom:3,flexWrap:'wrap'}}>
-              <span style={{fontSize:11,fontFamily:'monospace',color:C.textLight}}>#{v.stockNumber}</span>
-              <span style={{fontSize:11,color:C.textLight}}>·</span>
-              <span style={{fontSize:11,color:ageColor(days),fontFamily:'monospace'}}>{days} days on lot</span>
-            </div>
-            <div style={{fontSize:18,fontWeight:800,color:C.navy,marginBottom:4}}>{[v.year,v.make,v.model,v.series].filter(Boolean).join(' ')||'New Vehicle'}</div>
-            {/* Mileage prominent in header */}
-            {v.odometer&&<div style={{fontSize:16,fontWeight:700,color:C.navy,fontFamily:'monospace'}}>{Number(v.odometer).toLocaleString('en-CA')} <span style={{fontSize:12,fontWeight:400,color:C.textLight}}>km</span></div>}
-            {/* VIN with copy */}
-            {v.vin&&<div style={{display:'flex',alignItems:'center',gap:6,marginTop:4}}>
-              <span style={{fontSize:10,fontFamily:'monospace',color:C.textLight}}>{v.vin}</span>
-              <CopyVIN vin={v.vin}/>
-            </div>}
-            {/* Carfax tags */}
-            <CarfaxTags carfax={v.carfax} odometer={v.odometer} marketAvgOdometer={v.marketAvgOdometer}/>
-          </div>
-          <div style={{display:'flex',flexDirection:'column',alignItems:'flex-end',gap:8,flexShrink:0}}>
-            <select value={v.status} onChange={e=>up({status:e.target.value})} style={{padding:'6px 10px',border:`1px solid ${C.borderStr}`,borderRadius:6,fontSize:12,fontFamily:'inherit',background:'#fff'}}>
-              {Object.entries(VS).map(([k,s])=><option key={k} value={k}>{s.label}</option>)}
-            </select>
-            <div style={{textAlign:'right'}}>
-              <div style={{fontSize:17,fontWeight:900,color:C.navy,fontFamily:'monospace'}}>{fmt(v.listPrice)||'—'}</div>
-              <GaugeSmall price={v.listPrice} mid={v.marketMid}/>
-            </div>
-            {/* Share button — prominent, always visible */}
-            <button onClick={async()=>{
-              const r=await shareVehicle(v,onGetDealer?onGetDealer():null)
-              if(r.copied) showToast('Vehicle info copied to clipboard — paste into text or email','success')
-              else if(r.success) showToast('Shared!','success')
-              else if(r.reason!=='cancelled') showToast('Tap again or check browser permissions','error')
-            }} style={{
-              background:C.teal,color:'#fff',border:'none',borderRadius:8,
-              padding:'8px 16px',fontSize:13,fontWeight:700,
-              cursor:'pointer',display:'flex',alignItems:'center',gap:6,
-              boxShadow:'0 2px 8px rgba(0,180,166,0.3)',
-            }}>
-              <Share2 size={15}/>Share Vehicle
-            </button>
-          </div>
-        </div>
-        {/* Top action bar — replaces floating save bar */}
-        <div style={{display:'flex',alignItems:'center',gap:8,flexWrap:'wrap',marginTop:14,paddingTop:12,borderTop:`1px solid ${C.border}`}}>
+
+      {/* Top action bar */}
+      <Card style={{padding:'12px 16px',marginBottom:12}}>
+        <div style={{display:'flex',alignItems:'center',gap:8,flexWrap:'wrap'}}>
           <button onClick={()=>{ if(isDirty) forceSaveV(); onBack(); }} style={{display:'flex',alignItems:'center',gap:4,background:'none',border:`1px solid ${C.borderStr}`,borderRadius:7,padding:'8px 12px',fontSize:12,fontWeight:600,color:C.textMid,cursor:'pointer',fontFamily:'inherit'}}><ChevronLeft size={14}/>Back</button>
           <SaveStatus isDirty={isDirty} savedAt={savedAt} onSave={forceSaveV}/>
-          <button onClick={()=>onShowSticker(vRef.current)} style={{display:'flex',alignItems:'center',gap:5,background:C.navyMuted,border:`1px solid ${C.navyBorder}`,borderRadius:7,padding:'8px 12px',fontSize:12,fontWeight:700,color:C.navy,cursor:'pointer',fontFamily:'inherit'}}><Printer size={13}/>Sticker</button>
+          <span style={{fontSize:11,fontFamily:'monospace',color:C.textLight}}>#{v.stockNumber}</span>
+          <span style={{fontSize:11,color:ageColor(days),fontFamily:'monospace'}}>· {days} days on lot</span>
           <div style={{flex:1}}/>
+          <select value={v.status} onChange={e=>up({status:e.target.value})} style={{padding:'7px 10px',border:`1px solid ${C.borderStr}`,borderRadius:7,fontSize:12,fontFamily:'inherit',background:'#fff'}}>
+            {Object.entries(VS).map(([k,s])=><option key={k} value={k}>{s.label}</option>)}
+          </select>
+          <button onClick={()=>onShowSticker(vRef.current)} style={{display:'flex',alignItems:'center',gap:5,background:C.navyMuted,border:`1px solid ${C.navyBorder}`,borderRadius:7,padding:'8px 12px',fontSize:12,fontWeight:700,color:C.navy,cursor:'pointer',fontFamily:'inherit'}}><Printer size={13}/>Sticker</button>
+          <button onClick={async()=>{const r=await shareVehicle(v,onGetDealer?onGetDealer():null); if(r.copied) showToast('Vehicle info copied to clipboard','success'); else if(r.success) showToast('Shared!','success'); else if(r.reason!=='cancelled') showToast('Tap again or check permissions','error');}} style={{background:C.teal,color:'#fff',border:'none',borderRadius:7,padding:'8px 14px',fontSize:12,fontWeight:700,cursor:'pointer',display:'flex',alignItems:'center',gap:6}}><Share2 size={14}/>Share</button>
           {v.status==='in_recon'&&<button onClick={()=>up({status:'available'})} style={{display:'flex',alignItems:'center',gap:5,background:C.green,border:'none',borderRadius:7,padding:'8px 14px',fontSize:12,fontWeight:700,color:'#fff',cursor:'pointer',fontFamily:'inherit'}}><CheckCircle size={13}/>Mark Available</button>}
           {v.status==='available'&&<button onClick={()=>up({status:'sold'})} style={{display:'flex',alignItems:'center',gap:5,background:'#fff',border:`1.5px solid ${C.navy}`,borderRadius:7,padding:'8px 14px',fontSize:12,fontWeight:700,color:C.navy,cursor:'pointer',fontFamily:'inherit'}}><Tag size={13}/>Mark Sold</button>}
         </div>
       </Card>
-      <Card style={{marginBottom:12,overflow:'hidden'}}>
-        <div style={{display:'flex',overflowX:'auto',borderBottom:`1px solid ${C.border}`,padding:'0 4px'}}>
-          {tabs.map(t=><button key={t.k} onClick={()=>setTab(t.k)} style={{padding:'10px 14px',background:'none',border:'none',borderBottom:`2px solid ${tab===t.k?C.navy:'transparent'}`,color:tab===t.k?C.navy:C.textLight,fontWeight:tab===t.k?700:500,fontSize:12,cursor:'pointer',display:'flex',alignItems:'center',gap:5,whiteSpace:'nowrap',fontFamily:'inherit',position:'relative'}}><t.I size={12}/>{t.l}{t.alert&&<span style={{position:'absolute',top:5,right:4,width:6,height:6,background:C.orange,borderRadius:'50%'}}/>}</button>)}
-        </div>
-        <div style={{padding:16}}>
-          {tab==='info'&&<div>
-            {/* VIN + Scan */}
+
+      {/* Two-column floating layout (mirrors appraisal) */}
+      <div className="two-col" style={{display:'grid',gridTemplateColumns:'minmax(340px,400px) 1fr',gap:14,alignItems:'start'}}>
+
+        {/* ── LEFT RAIL (floating) ── */}
+        <div className="appraisal-left" style={{position:'sticky',top:14,alignSelf:'start',maxHeight:'calc(100vh - 28px)',overflowY:'auto',overflowX:'hidden',paddingBottom:8}}>
+
+          <Sec title="Vehicle" icon={Car} accent>
             <div style={{display:'flex',gap:8,marginBottom:10}}>
               <div style={{flex:1}}><Input value={v.vin} onChange={val=>up({vin:val.toUpperCase().replace(/[^A-Z0-9]/g,'').substring(0,17)})} placeholder="17-char VIN" style={{fontFamily:'monospace',letterSpacing:1}}/></div>
-              <Btn onClick={()=>setShowVINScannerDetail(true)} variant="ghost" size="sm"><ScanLine size={13}/>Scan</Btn>
+              {v.vin&&v.vin.length>=10&&<CopyVIN vin={v.vin}/>}
+              <Btn onClick={()=>setShowVINScannerDetail(true)} variant="ghost" size="sm" className="cap-only"><ScanLine size={13}/>Scan</Btn>
               <Btn onClick={decode} disabled={vl||v.vin.length!==17} size="sm"><RefreshCw size={11} style={{animation:vl?'spin 1s linear infinite':undefined}}/>{vl?'...':'Decode'}</Btn>
             </div>
-            {/* Compact summary */}
             <VehicleSummary data={v} onEdit={()=>setVehExpandedDetail(p=>!p)}/>
-            {/* Expandable fields */}
             {vehExpandedDetail&&(
               <div style={{marginTop:10,paddingTop:10,borderTop:`1px solid ${C.navyBorder}`}}>
                 <div style={{display:'grid',gridTemplateColumns:'repeat(3,1fr)',gap:8,marginBottom:8}}>
-                  {[{f:'year',l:'Year',ph:'2022'},{f:'make',l:'Make',ph:'Toyota'},{f:'model',l:'Model',ph:'RAV4'},{f:'series',l:'Trim',ph:'XLE'},{f:'bodyType',l:'Body',ph:'SUV'},{f:'engine',l:'Engine',ph:'2.5L'},{f:'odometer',l:'KM',ph:'52000',t:'number'},{f:'extColour',l:'Ext. Colour',ph:'White'},{f:'intColour',l:'Int. Colour',ph:'Black'}].map(x=>(
+                  {[{f:'year',l:'Year',ph:''},{f:'make',l:'Make',ph:''},{f:'model',l:'Model',ph:''},{f:'series',l:'Trim',ph:''},{f:'bodyType',l:'Body',ph:''},{f:'engine',l:'Engine',ph:''},{f:'odometer',l:'KM',ph:'',t:'number'},{f:'extColour',l:'Ext. Colour',ph:''},{f:'intColour',l:'Int. Colour',ph:''}].map(x=>(
                     <div key={x.f} style={{minWidth:0}}>
                       <label style={{display:'block',fontSize:10,fontWeight:600,color:C.textMid,marginBottom:4}}>{x.l}</label>
                       <Input value={v[x.f]} onChange={val=>up({[x.f]:val})} placeholder={x.ph} type={x.t||'text'}/>
@@ -1894,181 +1858,161 @@ function VehicleDetail({vehicle:iv,onSave,onBack,showToast,onShowSticker=()=>{},
                   <div style={{minWidth:0}}><label style={{display:'block',fontSize:10,fontWeight:600,color:C.textMid,marginBottom:4}}>Transmission</label><Sel value={v.transmission} onChange={val=>up({transmission:val})} options={['Automatic','Manual','CVT','DCT']}/></div>
                   <div style={{minWidth:0}}><label style={{display:'block',fontSize:10,fontWeight:600,color:C.textMid,marginBottom:4}}>Drivetrain</label><Sel value={v.drivetrain} onChange={val=>up({drivetrain:val})} options={['FWD','RWD','AWD','4WD','4x4']}/></div>
                 </div>
-                {/* Pricing fields */}
-                <div style={{display:'grid',gridTemplateColumns:'repeat(3,1fr)',gap:8,marginTop:8,paddingTop:8,borderTop:`1px solid ${C.navyBorder}`}}>
-                  {[{f:'listPrice',l:'List Price',t:'number'},{f:'unitCost',l:'Unit Cost',t:'number'},{f:'reconCost',l:'Recon Cost',t:'number'}].map(x=>(
-                    <div key={x.f} style={{minWidth:0}}>
-                      <label style={{display:'block',fontSize:10,fontWeight:600,color:C.textMid,marginBottom:4}}>{x.l}</label>
-                      <Input value={v[x.f]} onChange={val=>up({[x.f]:val})} type="number"/>
-                    </div>
-                  ))}
-                </div>
               </div>
             )}
-            <div style={{marginBottom:12}}>
+
+            {/* Options / Features */}
+            <div style={{marginTop:12}}>
               <div style={{fontSize:11,fontWeight:600,color:C.textMid,marginBottom:6}}>Options / Features</div>
               <div style={{display:'flex',gap:6,flexWrap:'wrap',marginBottom:8}}>{(v.features||[]).map((f,i)=><span key={i} style={{background:C.navyMuted,color:C.navy,borderRadius:20,padding:'4px 12px',fontSize:12,display:'inline-flex',alignItems:'center',gap:5}}>{f}<button onClick={()=>up({features:v.features.filter((_,j)=>j!==i)})} style={{background:'none',border:'none',color:C.navy,cursor:'pointer',padding:0}}><X size={9}/></button></span>)}</div>
-              <div style={{display:'flex',gap:8}}><input id="feat" placeholder="Add feature, press Enter" onKeyDown={e=>{if(e.key==='Enter'&&e.target.value.trim()){up({features:[...v.features,e.target.value.trim()]});e.target.value='';e.preventDefault();}}} style={{flex:1,padding:'7px 12px',background:'#fff',border:`1px solid ${C.borderStr}`,borderRadius:6,fontSize:13,fontFamily:'inherit',outline:'none'}}/><Btn variant="ghost" size="sm" onClick={()=>{const el=document.getElementById('feat');if(el?.value.trim()){up({features:[...v.features,el.value.trim()]});el.value='';}}}> Add</Btn></div>
+              <div style={{display:'flex',gap:8}}><input id="vfeat" placeholder="Add feature, press Enter" onKeyDown={e=>{if(e.key==='Enter'&&e.target.value.trim()){up({features:[...(v.features||[]),e.target.value.trim()]});e.target.value='';e.preventDefault();}}} style={{flex:1,padding:'7px 12px',background:'#fff',border:`1px solid ${C.borderStr}`,borderRadius:6,fontSize:13,fontFamily:'inherit',outline:'none'}}/><Btn variant="ghost" size="sm" onClick={()=>{const el=document.getElementById('vfeat');if(el?.value.trim()){up({features:[...(v.features||[]),el.value.trim()]});el.value='';}}}> Add</Btn></div>
             </div>
-            <div style={{marginBottom:10}}>
+
+            {/* Description */}
+            <div style={{marginTop:12}}>
               <div style={{display:'flex',alignItems:'center',justifyContent:'space-between',marginBottom:6}}><div style={{fontSize:11,fontWeight:600,color:C.textMid}}>Listing Description</div><Btn onClick={genDesc} disabled={dl||!v.year} size="sm"><Sparkles size={11} style={{animation:dl?'spin 1s linear infinite':undefined}}/>{dl?'Generating...':'AI Generate'}</Btn></div>
               <textarea value={v.description} onChange={e=>up({description:e.target.value})} placeholder="Enter description or click AI Generate..." rows={3} style={{width:'100%',padding:'10px 12px',background:'#fff',border:`1px solid ${C.borderStr}`,borderRadius:7,fontSize:13,fontFamily:'inherit',resize:'vertical',outline:'none',boxSizing:'border-box',lineHeight:1.6}}/>
             </div>
-            <div><div style={{fontSize:11,fontWeight:600,color:C.textMid,marginBottom:5}}>Internal Notes</div><textarea value={v.notes} onChange={e=>up({notes:e.target.value})} rows={2} style={{width:'100%',padding:'9px 12px',background:'#fff',border:`1px solid ${C.borderStr}`,borderRadius:7,fontSize:13,fontFamily:'inherit',resize:'vertical',outline:'none',boxSizing:'border-box'}}/></div>
-          </div>}
 
-          {tab==='pricing'&&<div>
-            {/* Price + cost inputs */}
-            <div style={{display:'flex',gap:8,flexWrap:'wrap',marginBottom:12}}>
-              <Field label="List Price ($)"><Input value={v.listPrice} onChange={val=>up({listPrice:val})} type="number" style={{fontSize:15,fontWeight:700}}/></Field>
-              <Field label="Unit Cost ($)"><Input value={v.unitCost} onChange={val=>up({unitCost:val})} type="number"/></Field>
-              <Field label="Recon ($)"><Input value={v.reconCost} onChange={val=>up({reconCost:val})} type="number"/></Field>
+            {/* Photos — combined into vehicle section */}
+            <div style={{marginTop:12,paddingTop:12,borderTop:`1px solid ${C.navyBorder}`}}>
+              <div style={{fontSize:11,fontWeight:700,color:C.navy,marginBottom:8,display:'flex',alignItems:'center',gap:6}}><Camera size={13}/>Photos {v.photos?.length>0?`(${v.photos.length})`:''}</div>
+              <div style={{display:'flex',gap:8,marginBottom:10,flexWrap:'wrap'}}>
+                <label className="cap-only" style={{display:'inline-flex',alignItems:'center',gap:6,padding:'8px 16px',background:C.navy,color:'#fff',borderRadius:6,fontSize:13,fontWeight:600,cursor:'pointer'}}><Camera size={13}/>Take Photo<input type="file" accept="image/*" capture="environment" style={{display:'none'}} onChange={photo} multiple/></label>
+                <label style={{display:'inline-flex',alignItems:'center',gap:6,padding:'8px 16px',background:'#fff',color:C.textMid,border:`1px solid ${C.borderStr}`,borderRadius:6,fontSize:13,fontWeight:600,cursor:'pointer'}}><Upload size={13}/>Upload<input type="file" accept="image/*" style={{display:'none'}} onChange={photo} multiple/></label>
+              </div>
+              {v.photos?.length>0?<div style={{display:'grid',gridTemplateColumns:'repeat(auto-fill,minmax(110px,1fr))',gap:8}}>{(v.photos||[]).map(p=><div key={p.id} style={{position:'relative',borderRadius:7,overflow:'hidden',border:`1px solid ${C.border}`}}><img src={p.dataUrl} style={{width:'100%',height:80,objectFit:'cover',display:'block'}} alt=""/><div style={{padding:'3px 5px',background:'#fff'}}><select value={p.category} onChange={e=>up({photos:v.photos.map(ph=>ph.id===p.id?{...ph,category:e.target.value}:ph)})} style={{width:'100%',fontSize:10,border:'none',background:'none',fontFamily:'inherit'}}>{['Front','Rear','Driver Side','Pass. Side','Interior','Odometer','Engine','Damage','Misc'].map(c=><option key={c}>{c}</option>)}</select></div><button onClick={()=>up({photos:v.photos.filter(ph=>ph.id!==p.id)})} style={{position:'absolute',top:3,right:3,background:'rgba(0,0,0,0.6)',border:'none',borderRadius:'50%',width:20,height:20,display:'flex',alignItems:'center',justifyContent:'center',cursor:'pointer'}}><X size={10} color="white"/></button></div>)}</div>:<div style={{padding:'20px',background:C.navyMuted,borderRadius:7,textAlign:'center',border:`1.5px dashed ${C.navyBorder}`}}><div style={{fontSize:12,color:C.textLight}}>No photos yet</div></div>}
             </div>
-            {/* KPI strip */}
+          </Sec>
+
+          {/* Pricing (inventory-specific) */}
+          <Sec title="Pricing" icon={DollarSign} accent>
+            <div style={{display:'grid',gridTemplateColumns:'repeat(3,1fr)',gap:8,marginBottom:10}}>
+              {[{f:'listPrice',l:'List Price ($)'},{f:'unitCost',l:'Unit Cost ($)'},{f:'reconCost',l:'Recon ($)'}].map(x=>(
+                <div key={x.f} style={{minWidth:0}}>
+                  <label style={{display:'block',fontSize:10,fontWeight:600,color:'rgba(255,255,255,0.6)',marginBottom:4}}>{x.l}</label>
+                  <input type="number" value={v[x.f]||''} onChange={e=>up({[x.f]:e.target.value})} style={{width:'100%',padding:'8px 10px',background:'rgba(255,255,255,0.1)',border:'1px solid rgba(255,255,255,0.2)',borderRadius:6,fontSize:13,color:'#fff',fontFamily:'inherit',outline:'none',boxSizing:'border-box',fontWeight:x.f==='listPrice'?700:400}}/>
+                </div>
+              ))}
+            </div>
             {v.listPrice&&v.unitCost&&(()=>{
               const gross=Number(v.listPrice)-Number(v.unitCost||0)-Number(v.reconCost||0);
               const adjPct=v.marketMid?Math.round((Number(v.listPrice)/Number(v.marketMid))*100):null;
-              const grade=calcGrade(v.marketDaysSupply);
+              const cardBg={background:'rgba(255,255,255,0.12)',borderRadius:8,padding:'10px 12px',border:'1px solid rgba(255,255,255,0.2)'};
+              const lbl={fontSize:9,color:'rgba(255,255,255,0.65)',marginBottom:3,fontWeight:600,textTransform:'uppercase',letterSpacing:0.5};
               return(
-                <div style={{display:'grid',gridTemplateColumns:'repeat(4,1fr)',gap:8,marginBottom:12}}>
-                  {[
-                    {l:'Gross Margin',v:fmt(gross),c:gross>0?C.green:C.red},
-                    {l:'Days on Lot',v:days,c:ageColor(days)},
-                    {l:'Price Rank',v:myRank?`#${myRank} of ${comps.length+1}`:'—',c:C.navy},
-                    {l:'% of Market',v:adjPct?`${adjPct}%`:'—',c:adjPct?gaugeColor(adjPct):C.textLight},
-                  ].map(s=>(
-                    <div key={s.l} style={{background:C.navyMuted,borderRadius:8,padding:'10px 12px'}}>
-                      <div style={{fontSize:10,color:C.textLight,fontWeight:600,marginBottom:4}}>{s.l}</div>
-                      <div style={{fontSize:16,fontWeight:900,color:s.c,fontFamily:'monospace'}}>{s.v}</div>
-                    </div>
-                  ))}
+                <div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:8}}>
+                  <div style={cardBg}><div style={lbl}>Gross Margin</div><div style={{fontSize:15,fontWeight:800,color:gross>0?'#68D391':'#FC8181',fontFamily:'monospace'}}>{fmt(gross)}</div></div>
+                  <div style={cardBg}><div style={lbl}>Days on Lot</div><div style={{fontSize:15,fontWeight:800,color:'#fff',fontFamily:'monospace'}}>{days}</div></div>
+                  <div style={cardBg}><div style={lbl}>Price Rank</div><div style={{fontSize:15,fontWeight:800,color:'#fff',fontFamily:'monospace'}}>{myRank?`#${myRank} of ${comps.length+1}`:'—'}</div></div>
+                  <div style={cardBg}><div style={lbl}>% of Market</div><div style={{fontSize:15,fontWeight:800,fontFamily:'monospace',color:adjPct?(adjPct<=95?'#68D391':adjPct<=102?'#fff':'#FC8181'):'rgba(255,255,255,0.5)'}}>{adjPct?`${adjPct}%`:'—'}</div></div>
                 </div>
               );
             })()}
-            {days>=30&&<div style={{background:C.redBg,border:`1px solid ${C.red}`,borderRadius:7,padding:'10px 14px',marginBottom:12,display:'flex',alignItems:'center',gap:8}}><AlertCircle size={14} color={C.red}/><span style={{fontSize:13,color:C.red,fontWeight:600}}>{days} days on lot — price review recommended</span></div>}
-            {/* Competitive Criteria Controls */}
-            <div style={{background:C.navyMuted,borderRadius:10,padding:12,border:`1px solid ${C.navyBorder}`,marginBottom:12}}>
-              <div style={{display:'flex',justifyContent:'space-between',alignItems:'center',marginBottom:10}}>
-                <div style={{fontWeight:700,fontSize:13,color:C.navy}}>Market Intelligence</div>
-                <Btn onClick={refMkt} disabled={ml} variant="ghost" size="sm"><RefreshCw size={11} style={{animation:ml?'spin 1s linear infinite':undefined}}/> Refresh</Btn>
-              </div>
-              {/* Criteria row */}
-              <div style={{display:'flex',gap:10,flexWrap:'wrap',marginBottom:12,alignItems:'flex-end'}}>
-                <div>
-                  <label style={{display:'block',fontSize:10,fontWeight:600,color:C.textMid,marginBottom:4}}>Distance</label>
-                  <div style={{display:'flex',alignItems:'center',gap:4}}>
-                    <select value={v.searchDistance||150} onChange={e=>up({searchDistance:e.target.value})}
-                      style={{padding:'6px 8px',background:'#fff',border:`1px solid ${C.borderStr}`,borderRadius:6,fontSize:12,fontFamily:'inherit',outline:'none'}}>
-                      {DISTANCE_OPTS.map(d=><option key={d} value={d}>{d}</option>)}
-                    </select>
-                    <span style={{fontSize:10,color:C.textLight}}>km</span>
-                  </div>
-                </div>
-                <div>
-                  <label style={{display:'block',fontSize:10,fontWeight:600,color:C.textMid,marginBottom:4}}>KM Range</label>
-                  <div style={{display:'flex',alignItems:'center',gap:4}}>
-                    <input type="number" value={v.odoFrom||''} onChange={e=>up({odoFrom:e.target.value})} placeholder="From"
-                      style={{width:70,padding:'6px 8px',background:'#fff',border:`1px solid ${C.borderStr}`,borderRadius:6,fontSize:11,fontFamily:'inherit',outline:'none'}}/>
-                    <span style={{fontSize:10,color:C.textLight}}>–</span>
-                    <input type="number" value={v.odoTo||''} onChange={e=>up({odoTo:e.target.value})} placeholder="To"
-                      style={{width:70,padding:'6px 8px',background:'#fff',border:`1px solid ${C.borderStr}`,borderRadius:6,fontSize:11,fontFamily:'inherit',outline:'none'}}/>
-                  </div>
-                </div>
-              </div>
-              {!v.marketMid?<div style={{textAlign:'center',padding:'12px 0'}}><Btn onClick={refMkt} disabled={ml}><TrendingUp size={13}/>{ml?'Loading...':'Fetch Market Data'}</Btn></div>:(
-                <div>
-                  <div style={{display:'grid',gridTemplateColumns:'repeat(3,1fr)',gap:8,marginBottom:10}}>{[{l:'Market Low',v:fmt(v.marketLow),c:C.green},{l:'Market Mid',v:fmt(v.marketMid),c:C.navy},{l:'Market High',v:fmt(v.marketHigh),c:C.orange}].map(s=><div key={s.l} style={{background:'#fff',borderRadius:7,padding:'8px 10px',border:`1px solid ${C.border}`,textAlign:'center'}}><div style={{fontSize:9,color:C.textLight,fontWeight:600,marginBottom:2}}>{s.l}</div><div style={{fontSize:15,fontWeight:800,color:s.c,fontFamily:'monospace'}}>{s.v}</div></div>)}</div>
-                  <div style={{display:'grid',gridTemplateColumns:'repeat(2,1fr)',gap:8,marginBottom:10}}>
-                    {[
-                      {l:'Active Comps',v:v._marketMeta?v._marketMeta.activeCount:v.activeComps,t:'Unique active comparable listings'},
-                      {l:'Market Day Supply',v:(v.marketDaySupply!=null)?v.marketDaySupply:null,t:'Days to sell current active inventory at recent sales rate (active ÷ sold × 45)'},
-                      {l:'Median Days Listed',v:(v.medianDaysListed!=null?v.medianDaysListed:v.marketDaysSupply)??null,t:'Median days a current comp has been listed'},
-                      {l:'Median Comp KM',v:v._medianCompMileage?fmtN(v._medianCompMileage)+' km':(v.marketAvgOdometer?fmtN(v.marketAvgOdometer)+' km':null),t:'Median odometer across active comps'},
-                    ].map(s=>(
-                      <div key={s.l} title={s.t} style={{background:'#fff',borderRadius:7,padding:'7px 10px',border:`1px solid ${C.border}`,display:'flex',justifyContent:'space-between',cursor:'help'}}>
-                        <span style={{fontSize:10,color:C.textLight,display:'inline-flex',alignItems:'center',gap:3}}>{s.l}<Info size={10} color={C.textLight} style={{opacity:0.6}}/></span>
-                        <span style={{fontSize:11,fontWeight:700,color:C.navy,fontFamily:'monospace'}}>{s.v||s.v===0?s.v:'—'}</span>
-                      </div>
-                    ))}
-                  </div>
-                  {/* Recently Sold — real market stats, excluded from pricing */}
-                  {v._soldStats&&v._soldStats.count>0&&(()=>{
-                    const s=v._soldStats;
-                    return(
-                      <div style={{background:'#fff',border:`1px solid ${C.border}`,borderRadius:8,overflow:'hidden',marginBottom:10}}>
-                        <div style={{padding:'7px 10px',background:C.navyMuted,borderBottom:`1px solid ${C.border}`,fontSize:10,fontWeight:700,color:C.navy,display:'flex',justifyContent:'space-between',alignItems:'center'}}>
-                          <span>Recently Sold — Comparable Market</span>
-                          <span style={{fontSize:9,color:C.textLight,fontWeight:500}}>excluded from pricing</span>
-                        </div>
-                        <div style={{display:'grid',gridTemplateColumns:'repeat(4,1fr)'}}>
-                          {[
-                            {l:'Sold',v:s.count},
-                            {l:'Avg Days to Sell',v:s.avgDts!=null?s.avgDts:'—'},
-                            {l:'Avg Sold Price',v:s.avgPrice!=null?fmt(s.avgPrice):'—'},
-                            {l:'Avg KM',v:s.avgOdo!=null?fmtN(s.avgOdo):'—'},
-                          ].map((c,i)=>(
-                            <div key={c.l} style={{padding:'8px 8px',borderRight:i<3?`1px solid ${C.border}`:'none',textAlign:'center'}}>
-                              <div style={{fontSize:9,fontWeight:600,color:C.textLight,marginBottom:3}}>{c.l}</div>
-                              <div style={{fontSize:12,fontWeight:800,color:C.navy,fontFamily:'monospace'}}>{c.v}</div>
-                            </div>
-                          ))}
-                        </div>
-                      </div>
-                    );
-                  })()}
-                  {/* Odometer Adjustment */}
-                  {v.odometer&&v.marketAvgOdometer&&(()=>{
-                    const adj=odometerAdj(v.odometer,v.marketAvgOdometer);
-                    if(!adj) return null;
-                    return(
-                      <div style={{background:adj>0?C.greenBg:C.orangeBg,border:`1px solid ${adj>0?C.green:C.orange}`,borderRadius:7,padding:'7px 10px',display:'flex',justifyContent:'space-between',alignItems:'center',marginBottom:10}}>
-                        <span style={{fontSize:11,fontWeight:600,color:adj>0?C.green:C.orange}}>KM Adjustment vs Market Avg</span>
-                        <span style={{fontSize:12,fontWeight:800,fontFamily:'monospace',color:adj>0?C.green:C.orange}}>{adj>0?'+':''}{fmt(adj)}</span>
-                      </div>
-                    );
-                  })()}
-                  {v.listPrice&&<div style={{background:'#fff',borderRadius:7,padding:'10px',textAlign:'center',border:`1px solid ${C.border}`}}><div style={{fontSize:9,color:C.textLight,fontWeight:600,marginBottom:6,letterSpacing:1,textTransform:'uppercase'}}>Market Position</div><GaugeSmall price={v.listPrice} mid={v.marketMid}/></div>}
-                </div>
-              )}
-            </div>
-            {comps.length>0
-              ? <div style={{marginTop:12}}><CompSet comps={comps} myPrice={v.listPrice} myKm={v.odometer} myDays={days}/></div>
-              : v.marketMid&&<div style={{marginTop:12,background:C.navyMuted,border:`1px solid ${C.border}`,borderRadius:10,padding:'14px 16px',textAlign:'center',fontSize:12,color:C.textMid}}>Hit <strong>Refresh</strong> above to load live competitive listings for this vehicle.</div>}
-          </div>}
+          </Sec>
 
-          {tab==='carfax'&&<div>
-            <div style={{fontSize:13,color:C.textMid,marginBottom:14}}>Pull a Carfax Canada report for this vehicle. Reports are cached — you only pay once per VIN.</div>
-            <CarfaxBadge carfax={v.carfax} onFetch={pullCfx} loading={cl}/>
-          </div>}
-
-          {tab==='photos'&&<div>
-            <div style={{display:'flex',gap:8,marginBottom:12}}>
-              <label className="cap-only" style={{display:'inline-flex',alignItems:'center',gap:6,padding:'8px 16px',background:C.navy,color:'#fff',borderRadius:6,fontSize:13,fontWeight:600,cursor:'pointer'}}><Camera size={13}/>Take Photo<input type="file" accept="image/*" capture="environment" style={{display:'none'}} onChange={photo} multiple/></label>
-              <label style={{display:'inline-flex',alignItems:'center',gap:6,padding:'8px 16px',background:'#fff',color:C.textMid,border:`1px solid ${C.borderStr}`,borderRadius:6,fontSize:13,fontWeight:600,cursor:'pointer'}}><Upload size={13}/>Upload<input type="file" accept="image/*" style={{display:'none'}} onChange={photo} multiple/></label>
-            </div>
-            {v.photos?.length>0?<div style={{display:'grid',gridTemplateColumns:'repeat(auto-fill,minmax(130px,1fr))',gap:8}}>{(v.photos||[]).map(p=><div key={p.id} style={{position:'relative',borderRadius:7,overflow:'hidden',border:`1px solid ${C.border}`}}><img src={p.dataUrl} style={{width:'100%',height:90,objectFit:'cover',display:'block'}} alt=""/><div style={{padding:'4px 5px',background:'#fff'}}><select value={p.category} onChange={e=>up({photos:v.photos.map(ph=>ph.id===p.id?{...ph,category:e.target.value}:ph)})} style={{width:'100%',fontSize:10,border:'none',background:'none',fontFamily:'inherit'}}>{['Front','Rear','Driver Side','Pass. Side','Interior','Odometer','Engine','Damage','Misc'].map(c=><option key={c}>{c}</option>)}</select></div><button onClick={()=>up({photos:v.photos.filter(ph=>ph.id!==p.id)})} style={{position:'absolute',top:3,right:3,background:'rgba(0,0,0,0.6)',border:'none',borderRadius:'50%',width:20,height:20,display:'flex',alignItems:'center',justifyContent:'center',cursor:'pointer'}}><X size={10} color="white"/></button></div>)}</div>:<div style={{padding:'24px',background:C.navyMuted,borderRadius:7,textAlign:'center',border:`1.5px dashed ${C.navyBorder}`}}><Camera size={22} color={C.navyBorder} style={{marginBottom:6}}/><div style={{fontSize:12,color:C.textLight}}>No photos yet</div></div>}
-          </div>}
-
-          {tab==='feeds'&&<div>
-            <p style={{fontSize:13,color:C.textMid,marginBottom:14}}>Control where this vehicle is published. Requires at least one photo and a list price.</p>
+          {/* Advertising / Feeds (inventory-specific) */}
+          <Sec title="Advertising" icon={Radio} open={false} badge={v.feeds&&Object.values(v.feeds).some(f=>f&&f.active)?'Live':null}>
+            <p style={{fontSize:12,color:C.textLight,marginBottom:10}}>Requires at least one photo and a list price.</p>
             {[{key:'autotrader',label:'AutoTrader.ca',color:'#e85123',sub:'XML feed · every 4 hrs'},{key:'cargurus',label:'CarGurus.ca',color:'#009cfc',sub:'CSV/XML feed · every 4 hrs'},{key:'website',label:'Dealer Website',color:C.navy,sub:'Real-time · instant'},{key:'auction',label:'Public Auction',color:C.teal,sub:'Next auction event'}].map(f=>{
               const active=v.feeds?.[f.key]?.active;const ready=v.photos?.length>0&&v.listPrice&&v.year;
-              return <div key={f.key} style={{background:'#fff',border:`1.5px solid ${active?f.color:C.border}`,borderRadius:8,padding:'12px 14px',display:'flex',alignItems:'center',gap:12,marginBottom:8,transition:'all 0.2s'}}>
-                <div style={{width:34,height:34,borderRadius:7,background:active?f.color:C.navyMuted,display:'flex',alignItems:'center',justifyContent:'center',flexShrink:0,transition:'all 0.2s'}}><Globe size={15} color={active?'#fff':C.navy}/></div>
-                <div style={{flex:1}}><div style={{fontWeight:700,fontSize:13,color:C.textDark}}>{f.label}</div><div style={{fontSize:11,color:active?f.color:C.textLight}}>{active?`● Live`:f.sub}</div>{!ready&&!active&&<div style={{fontSize:11,color:C.orange,marginTop:2}}>⚠ Add photos and price first</div>}</div>
-                <button onClick={()=>{if(!ready&&!active)return;up({feeds:{...v.feeds,[f.key]:{active:!active}}});}} style={{width:40,height:22,background:active?f.color:C.navyBorder,borderRadius:11,border:'none',cursor:ready||active?'pointer':'not-allowed',position:'relative',opacity:!ready&&!active?0.4:1,transition:'all 0.2s',flexShrink:0}}>
+              return <div key={f.key} style={{background:'#fff',border:`1.5px solid ${active?f.color:C.border}`,borderRadius:8,padding:'10px 12px',display:'flex',alignItems:'center',gap:10,marginBottom:8}}>
+                <div style={{width:30,height:30,borderRadius:7,background:active?f.color:C.navyMuted,display:'flex',alignItems:'center',justifyContent:'center',flexShrink:0}}><Globe size={14} color={active?'#fff':C.navy}/></div>
+                <div style={{flex:1,minWidth:0}}><div style={{fontWeight:700,fontSize:12,color:C.textDark}}>{f.label}</div><div style={{fontSize:10,color:active?f.color:C.textLight}}>{active?`● Live`:f.sub}</div>{!ready&&!active&&<div style={{fontSize:10,color:C.orange,marginTop:1}}>⚠ Add photos and price first</div>}</div>
+                <button onClick={()=>{if(!ready&&!active)return;up({feeds:{...v.feeds,[f.key]:{active:!active}}});}} style={{width:40,height:22,background:active?f.color:C.navyBorder,borderRadius:11,border:'none',cursor:ready||active?'pointer':'not-allowed',position:'relative',opacity:!ready&&!active?0.4:1,flexShrink:0}}>
                   <span style={{position:'absolute',top:2,left:active?18:2,width:18,height:18,background:'#fff',borderRadius:'50%',transition:'left 0.2s',display:'block'}}/>
                 </button>
               </div>;
             })}
-          </div>}
+          </Sec>
 
-          {tab==='log'&&<div>
-            <ActionLog entries={v.log}/>
-          </div>}
+          {/* Internal Notes */}
+          <Sec title="Notes" icon={FileText} open={false}>
+            <textarea value={v.notes} onChange={e=>up({notes:e.target.value})} placeholder="Internal notes..." rows={3} style={{width:'100%',padding:'10px 12px',background:'#fff',border:`1px solid ${C.borderStr}`,borderRadius:7,fontSize:13,fontFamily:'inherit',resize:'vertical',outline:'none',boxSizing:'border-box',lineHeight:1.6,color:C.textDark}}/>
+          </Sec>
         </div>
-      </Card>
-      <div style={{display:'flex',justifyContent:'space-between',alignItems:'center',flexWrap:'wrap',gap:8,padding:'4px 4px 8px',fontSize:11,color:C.textLight}}>
+
+        {/* ── RIGHT COLUMN ── */}
+        <div>
+          {days>=30&&<div style={{background:C.redBg,border:`1px solid ${C.red}`,borderRadius:7,padding:'10px 14px',marginBottom:12,display:'flex',alignItems:'center',gap:8}}><AlertCircle size={14} color={C.red}/><span style={{fontSize:13,color:C.red,fontWeight:600}}>{days} days on lot — price review recommended</span></div>}
+
+          <Sec title="Carfax Canada" icon={ShieldCheck} badge={v.carfax?(v.carfax.clean?'✓ Clean':'⚠ Issues Found'):'Not Pulled'}>
+            <CarfaxBadge carfax={v.carfax} onFetch={pullCfx} loading={cl}/>
+          </Sec>
+
+          <Sec title="Market Intelligence" icon={BarChart2} accent>
+            <div style={{display:'flex',justifyContent:'flex-end',marginBottom:10}}>
+              <Btn onClick={refMkt} disabled={ml} variant="ghost" size="sm"><RefreshCw size={11} style={{animation:ml?'spin 1s linear infinite':undefined}}/> Refresh</Btn>
+            </div>
+            <div style={{display:'flex',gap:10,flexWrap:'wrap',marginBottom:12,alignItems:'flex-end'}}>
+              <div>
+                <label style={{display:'block',fontSize:10,fontWeight:600,color:C.textMid,marginBottom:4}}>Distance</label>
+                <div style={{display:'flex',alignItems:'center',gap:4}}>
+                  <select value={v.searchDistance||150} onChange={e=>up({searchDistance:e.target.value})} style={{padding:'6px 8px',background:'#fff',border:`1px solid ${C.borderStr}`,borderRadius:6,fontSize:12,fontFamily:'inherit',outline:'none'}}>
+                    {DISTANCE_OPTS.map(d=><option key={d} value={d}>{d}</option>)}
+                  </select>
+                  <span style={{fontSize:10,color:C.textLight}}>km</span>
+                </div>
+              </div>
+              <div>
+                <label style={{display:'block',fontSize:10,fontWeight:600,color:C.textMid,marginBottom:4}}>KM Range</label>
+                <div style={{display:'flex',alignItems:'center',gap:4}}>
+                  <input type="number" value={v.odoFrom||''} onChange={e=>up({odoFrom:e.target.value})} placeholder="From" style={{width:70,padding:'6px 8px',background:'#fff',border:`1px solid ${C.borderStr}`,borderRadius:6,fontSize:11,fontFamily:'inherit',outline:'none'}}/>
+                  <span style={{fontSize:10,color:C.textLight}}>–</span>
+                  <input type="number" value={v.odoTo||''} onChange={e=>up({odoTo:e.target.value})} placeholder="To" style={{width:70,padding:'6px 8px',background:'#fff',border:`1px solid ${C.borderStr}`,borderRadius:6,fontSize:11,fontFamily:'inherit',outline:'none'}}/>
+                </div>
+              </div>
+            </div>
+            {!v.marketMid?<div style={{textAlign:'center',padding:'12px 0'}}><Btn onClick={refMkt} disabled={ml}><TrendingUp size={13}/>{ml?'Loading...':'Fetch Market Data'}</Btn></div>:(
+              <div>
+                <div style={{display:'grid',gridTemplateColumns:'repeat(3,1fr)',gap:8,marginBottom:10}}>{[{l:'Market Low',v:fmt(v.marketLow),c:C.green,t:'10th percentile of active comparable listing prices'},{l:'Market Mid',v:fmt(v.marketMid),c:C.navy,t:'Median of active comparable listing prices'},{l:'Market High',v:fmt(v.marketHigh),c:C.orange,t:'90th percentile of active comparable listing prices'}].map(s=><div key={s.l} title={s.t} style={{background:C.navyMuted,borderRadius:7,padding:'10px 12px',textAlign:'center',cursor:'help'}}><div style={{fontSize:10,color:C.textLight,fontWeight:600,marginBottom:2,display:'inline-flex',alignItems:'center',gap:3}}>{s.l}<Info size={10} color={C.textLight} style={{opacity:0.6}}/></div><div style={{fontSize:16,fontWeight:800,color:s.c,fontFamily:'monospace'}}>{s.v}</div></div>)}</div>
+                <div style={{display:'grid',gridTemplateColumns:'repeat(2,1fr)',gap:8,marginBottom:10}}>
+                  {[
+                    {l:'Active Comps',v:v._marketMeta?v._marketMeta.activeCount:v.activeComps,t:'Unique active comparable listings'},
+                    {l:'Market Day Supply',v:(v.marketDaySupply!=null)?v.marketDaySupply:null,t:'Days to sell current active inventory at recent sales rate (active ÷ sold × 45)'},
+                    {l:'Median Days Listed',v:(v.medianDaysListed!=null?v.medianDaysListed:v.marketDaysSupply)??null,t:'Median days a current comp has been listed'},
+                    {l:'Median Comp KM',v:v._medianCompMileage?fmtN(v._medianCompMileage)+' km':(v.marketAvgOdometer?fmtN(v.marketAvgOdometer)+' km':null),t:'Median odometer across active comps'},
+                  ].map(s=>(
+                    <div key={s.l} title={s.t} style={{background:'#fff',borderRadius:7,padding:'7px 10px',border:`1px solid ${C.border}`,display:'flex',justifyContent:'space-between',cursor:'help'}}>
+                      <span style={{fontSize:10,color:C.textLight,display:'inline-flex',alignItems:'center',gap:3}}>{s.l}<Info size={10} color={C.textLight} style={{opacity:0.6}}/></span>
+                      <span style={{fontSize:11,fontWeight:700,color:C.navy,fontFamily:'monospace'}}>{s.v||s.v===0?s.v:'—'}</span>
+                    </div>
+                  ))}
+                </div>
+                {v._soldStats&&v._soldStats.count>0&&(()=>{
+                  const s=v._soldStats;
+                  return(
+                    <div style={{background:'#fff',border:`1px solid ${C.border}`,borderRadius:8,overflow:'hidden',marginBottom:10}}>
+                      <div style={{padding:'7px 10px',background:C.navyMuted,borderBottom:`1px solid ${C.border}`,fontSize:10,fontWeight:700,color:C.navy,display:'flex',justifyContent:'space-between',alignItems:'center'}}>
+                        <span>Recently Sold — Comparable Market</span>
+                        <span style={{fontSize:9,color:C.textLight,fontWeight:500}}>excluded from pricing</span>
+                      </div>
+                      <div style={{display:'grid',gridTemplateColumns:'repeat(4,1fr)'}}>
+                        {[{l:'Sold',v:s.count},{l:'Avg Days to Sell',v:s.avgDts!=null?s.avgDts:'—'},{l:'Avg Sold Price',v:s.avgPrice!=null?fmt(s.avgPrice):'—'},{l:'Avg KM',v:s.avgOdo!=null?fmtN(s.avgOdo):'—'}].map((c,i)=>(
+                          <div key={c.l} style={{padding:'8px 8px',borderRight:i<3?`1px solid ${C.border}`:'none',textAlign:'center'}}>
+                            <div style={{fontSize:9,fontWeight:600,color:C.textLight,marginBottom:3}}>{c.l}</div>
+                            <div style={{fontSize:12,fontWeight:800,color:C.navy,fontFamily:'monospace'}}>{c.v}</div>
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+                  );
+                })()}
+                {v.listPrice&&<div style={{background:'#fff',borderRadius:7,padding:'10px',textAlign:'center',border:`1px solid ${C.border}`}}><div style={{fontSize:9,color:C.textLight,fontWeight:600,marginBottom:6,letterSpacing:1,textTransform:'uppercase'}}>Market Position</div><GaugeSmall price={v.listPrice} mid={v.marketMid}/></div>}
+              </div>
+            )}
+            {comps.length>0
+              ? <div style={{marginTop:12}}><CompSet comps={comps} myPrice={v.listPrice} myKm={v.odometer} myDays={days}/></div>
+              : v.marketMid&&<div style={{marginTop:12,background:C.navyMuted,border:`1px solid ${C.border}`,borderRadius:10,padding:'14px 16px',textAlign:'center',fontSize:12,color:C.textMid}}>Hit <strong>Refresh</strong> above to load live competitive listings.</div>}
+          </Sec>
+
+          <Sec title="Vehicle Log" icon={Activity} open={false}>
+            <ActionLog entries={v.log}/>
+          </Sec>
+        </div>
+      </div>
+
+      <div style={{display:'flex',justifyContent:'space-between',alignItems:'center',flexWrap:'wrap',gap:8,padding:'8px 4px',fontSize:11,color:C.textLight}}>
         <span>Stock #{v.stockNumber} · Created {new Date(v.createdAt).toLocaleString('en-CA',{dateStyle:'medium',timeStyle:'short'})}</span>
         <span>Last saved {savedAt?new Date(savedAt).toLocaleString('en-CA',{dateStyle:'medium',timeStyle:'short'}):'—'}</span>
       </div>
