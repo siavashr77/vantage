@@ -1475,34 +1475,34 @@ function AppraisalForm({initial,onSave,onBack,showToast,onConvert,onFinalize,onU
           const adjPct=Math.round((totalCost/Number(a.marketMid))*100);
           const grade=calcGrade(a.marketDaysSupply);
           const askingPrice=a.marketMid?Math.round(Number(a.marketMid)*0.98):null;
-          const cardBg={background:'rgba(255,255,255,0.12)',borderRadius:8,padding:'10px 12px',border:'1px solid rgba(255,255,255,0.2)'};
-          const lbl={fontSize:9,color:'rgba(255,255,255,0.65)',marginBottom:3,fontWeight:600,textTransform:'uppercase',letterSpacing:0.5};
+          const cardBg={background:C.navyMuted,borderRadius:8,padding:'10px 12px',border:`1px solid ${C.border}`};
+          const lbl={fontSize:9,color:C.textLight,marginBottom:3,fontWeight:600,textTransform:'uppercase',letterSpacing:0.5};
           return(
             <div style={{marginTop:4}}>
               <div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:8,marginBottom:8}}>
-                <div style={cardBg}><div style={lbl}>Your Offer</div><div style={{fontSize:15,fontWeight:800,color:'#fff',fontFamily:'monospace'}}>{fmt(a.appraisedValue)}</div></div>
-                <div style={cardBg}><div style={lbl}>All-In Cost</div><div style={{fontSize:15,fontWeight:800,color:'#fff',fontFamily:'monospace'}}>{fmt(totalCost)}</div></div>
-                <div style={cardBg}><div style={lbl}>Proj. Gross</div><div style={{fontSize:15,fontWeight:800,color:projGross!==null&&projGross<0?'#FC8181':'#68D391',fontFamily:'monospace'}}>{projGross!==null?fmt(projGross):'—'}</div></div>
-                <div style={cardBg}><div style={lbl}>Cost / Market</div><div style={{fontSize:15,fontWeight:800,fontFamily:'monospace',color:adjPct<=92?'#68D391':adjPct<=100?'#fff':'#FC8181'}}>{adjPct}%</div><div style={{fontSize:9,color:'rgba(255,255,255,0.45)',marginTop:1}}>Target 85–95%</div></div>
-                {grade&&<div style={cardBg}><div style={lbl}>Provision Grade</div><div style={{fontSize:20,fontWeight:900,color:grade.grade==='A'?'#68D391':grade.grade==='B'?'#63B3ED':grade.grade==='C+'?'#F6AD55':'#FC8181'}}>{grade.grade}</div></div>}
-                {askingPrice&&<div style={cardBg}><div style={lbl}>Suggested Retail</div><div style={{fontSize:15,fontWeight:800,color:'#fff',fontFamily:'monospace'}}>{fmt(askingPrice)}</div><div style={{fontSize:9,color:'rgba(255,255,255,0.45)',marginTop:1}}>98% of market mid</div></div>}
+                <div style={cardBg}><div style={lbl}>Your Offer</div><div style={{fontSize:15,fontWeight:800,color:C.navy,fontFamily:'monospace'}}>{fmt(a.appraisedValue)}</div></div>
+                <div style={cardBg}><div style={lbl}>All-In Cost</div><div style={{fontSize:15,fontWeight:800,color:C.navy,fontFamily:'monospace'}}>{fmt(totalCost)}</div></div>
+                <div style={cardBg}><div style={lbl}>Proj. Gross</div><div style={{fontSize:15,fontWeight:800,color:projGross!==null&&projGross<0?C.red:C.green,fontFamily:'monospace'}}>{projGross!==null?fmt(projGross):'—'}</div></div>
+                <div style={cardBg}><div style={lbl}>Cost / Market</div><div style={{fontSize:15,fontWeight:800,fontFamily:'monospace',color:adjPct<=92?C.green:adjPct<=100?C.navy:C.red}}>{adjPct}%</div><div style={{fontSize:9,color:C.textLight,marginTop:1}}>Target 85–95%</div></div>
+                {grade&&<div style={cardBg}><div style={lbl}>Provision Grade</div><div style={{fontSize:20,fontWeight:900,color:grade.grade==='A'?C.green:grade.grade==='B'?C.blue:grade.grade==='C+'?C.orange:C.red}}>{grade.grade}</div></div>}
+                {askingPrice&&<div style={cardBg}><div style={lbl}>Suggested Retail</div><div style={{fontSize:15,fontWeight:800,color:C.navy,fontFamily:'monospace'}}>{fmt(askingPrice)}</div><div style={{fontSize:9,color:C.textLight,marginTop:1}}>98% of market mid</div></div>}
               </div>
             </div>
           );
         })()}
         {/* Lien Information */}
-        <div style={{marginTop:10,paddingTop:10,borderTop:'1px solid rgba(255,255,255,0.15)'}}>
-          <div style={{fontSize:10,color:'rgba(255,255,255,0.5)',fontWeight:600,marginBottom:8,textTransform:'uppercase',letterSpacing:0.5}}>Lien Information</div>
+        <div style={{marginTop:10,paddingTop:10,borderTop:`1px solid ${C.border}`}}>
+          <div style={{fontSize:10,color:C.textLight,fontWeight:600,marginBottom:8,textTransform:'uppercase',letterSpacing:0.5}}>Lien Information</div>
           <div style={{display:'flex',gap:8,flexWrap:'wrap'}}>
             <div style={{flex:1,minWidth:120}}>
-              <label style={{display:'block',fontSize:10,fontWeight:600,color:'rgba(255,255,255,0.5)',marginBottom:4}}>Lienholder (who the customer still owes)</label>
+              <label style={{display:'block',fontSize:10,fontWeight:600,color:C.textMid,marginBottom:4}}>Lienholder (who the customer still owes)</label>
               <input value={a.lienHolder||''} onChange={e=>set('lienHolder',e.target.value)} placeholder="Bank / Finance Co."
-                style={{width:'100%',padding:'7px 10px',background:'rgba(255,255,255,0.1)',border:'1px solid rgba(255,255,255,0.2)',borderRadius:6,fontSize:12,color:'#fff',fontFamily:'inherit',outline:'none',boxSizing:'border-box'}}/>
+                style={{width:'100%',padding:'7px 10px',background:'#fff',border:`1px solid ${C.borderStr}`,borderRadius:6,fontSize:12,color:C.textDark,fontFamily:'inherit',outline:'none',boxSizing:'border-box'}}/>
             </div>
             <div style={{flex:1,minWidth:100}}>
-              <label style={{display:'block',fontSize:10,fontWeight:600,color:'rgba(255,255,255,0.5)',marginBottom:4}}>Lien Payoff ($)</label>
+              <label style={{display:'block',fontSize:10,fontWeight:600,color:C.textMid,marginBottom:4}}>Lien Payoff ($)</label>
               <input type="number" value={a.lienPayoff||''} onChange={e=>set('lienPayoff',e.target.value)} placeholder="0"
-                style={{width:'100%',padding:'7px 10px',background:'rgba(255,255,255,0.1)',border:'1px solid rgba(255,255,255,0.2)',borderRadius:6,fontSize:12,color:'#fff',fontFamily:'inherit',outline:'none',boxSizing:'border-box'}}/>
+                style={{width:'100%',padding:'7px 10px',background:'#fff',border:`1px solid ${C.borderStr}`,borderRadius:6,fontSize:12,color:C.textDark,fontFamily:'inherit',outline:'none',boxSizing:'border-box'}}/>
             </div>
           </div>
         </div>
@@ -1890,22 +1890,22 @@ function VehicleDetail({vehicle:iv,onSave,onBack,showToast,onShowSticker=()=>{},
             <div style={{display:'grid',gridTemplateColumns:'repeat(3,1fr)',gap:8,marginBottom:10}}>
               {[{f:'listPrice',l:'List Price ($)'},{f:'unitCost',l:'Unit Cost ($)'},{f:'reconCost',l:'Recon ($)'}].map(x=>(
                 <div key={x.f} style={{minWidth:0}}>
-                  <label style={{display:'block',fontSize:10,fontWeight:600,color:'rgba(255,255,255,0.6)',marginBottom:4}}>{x.l}</label>
-                  <input type="number" value={v[x.f]||''} onChange={e=>up({[x.f]:e.target.value})} style={{width:'100%',padding:'8px 10px',background:'rgba(255,255,255,0.1)',border:'1px solid rgba(255,255,255,0.2)',borderRadius:6,fontSize:13,color:'#fff',fontFamily:'inherit',outline:'none',boxSizing:'border-box',fontWeight:x.f==='listPrice'?700:400}}/>
+                  <label style={{display:'block',fontSize:10,fontWeight:600,color:C.textMid,marginBottom:4}}>{x.l}</label>
+                  <input type="number" value={v[x.f]||''} onChange={e=>up({[x.f]:e.target.value})} style={{width:'100%',padding:'8px 10px',background:'#fff',border:`1px solid ${C.borderStr}`,borderRadius:6,fontSize:13,color:C.textDark,fontFamily:'inherit',outline:'none',boxSizing:'border-box',fontWeight:x.f==='listPrice'?700:400}}/>
                 </div>
               ))}
             </div>
             {v.listPrice&&v.unitCost&&(()=>{
               const gross=Number(v.listPrice)-Number(v.unitCost||0)-Number(v.reconCost||0);
               const adjPct=v.marketMid?Math.round((Number(v.listPrice)/Number(v.marketMid))*100):null;
-              const cardBg={background:'rgba(255,255,255,0.12)',borderRadius:8,padding:'10px 12px',border:'1px solid rgba(255,255,255,0.2)'};
-              const lbl={fontSize:9,color:'rgba(255,255,255,0.65)',marginBottom:3,fontWeight:600,textTransform:'uppercase',letterSpacing:0.5};
+              const cardBg={background:C.navyMuted,borderRadius:8,padding:'10px 12px',border:`1px solid ${C.border}`};
+              const lbl={fontSize:9,color:C.textLight,marginBottom:3,fontWeight:600,textTransform:'uppercase',letterSpacing:0.5};
               return(
                 <div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:8}}>
-                  <div style={cardBg}><div style={lbl}>Gross Margin</div><div style={{fontSize:15,fontWeight:800,color:gross>0?'#68D391':'#FC8181',fontFamily:'monospace'}}>{fmt(gross)}</div></div>
-                  <div style={cardBg}><div style={lbl}>Days on Lot</div><div style={{fontSize:15,fontWeight:800,color:'#fff',fontFamily:'monospace'}}>{days}</div></div>
-                  <div style={cardBg}><div style={lbl}>Price Rank</div><div style={{fontSize:15,fontWeight:800,color:'#fff',fontFamily:'monospace'}}>{myRank?`#${myRank} of ${comps.length+1}`:'—'}</div></div>
-                  <div style={cardBg}><div style={lbl}>% of Market</div><div style={{fontSize:15,fontWeight:800,fontFamily:'monospace',color:adjPct?(adjPct<=95?'#68D391':adjPct<=102?'#fff':'#FC8181'):'rgba(255,255,255,0.5)'}}>{adjPct?`${adjPct}%`:'—'}</div></div>
+                  <div style={cardBg}><div style={lbl}>Gross Margin</div><div style={{fontSize:15,fontWeight:800,color:gross>0?C.green:C.red,fontFamily:'monospace'}}>{fmt(gross)}</div></div>
+                  <div style={cardBg}><div style={lbl}>Days on Lot</div><div style={{fontSize:15,fontWeight:800,color:C.navy,fontFamily:'monospace'}}>{days}</div></div>
+                  <div style={cardBg}><div style={lbl}>Price Rank</div><div style={{fontSize:15,fontWeight:800,color:C.navy,fontFamily:'monospace'}}>{myRank?`#${myRank} of ${comps.length+1}`:'—'}</div></div>
+                  <div style={cardBg}><div style={lbl}>% of Market</div><div style={{fontSize:15,fontWeight:800,fontFamily:'monospace',color:adjPct?(adjPct<=95?C.green:adjPct<=102?C.navy:C.red):C.textLight}}>{adjPct?`${adjPct}%`:'—'}</div></div>
                 </div>
               );
             })()}
