@@ -7,7 +7,7 @@ import {
   Activity, Sparkles, Globe, AlertCircle, LayoutDashboard,
   ClipboardList, Package, Settings, Bell, ChevronRight,
   Printer, Image, Building2, ShieldCheck, Zap,
-  FileSearch, Mail, ExternalLink, ScanLine, Edit3, Share2
+  FileSearch, Mail, ExternalLink, ScanLine, Edit3, Share2, Info
 } from "lucide-react";
 import VINScanner from './VINScanner.jsx'
 
@@ -176,11 +176,29 @@ async function decodeVIN(vin) {
   ].filter(Boolean)
   const rawMake = r.Make || ''
   const make = rawMake.charAt(0).toUpperCase() + rawMake.slice(1).toLowerCase()
+  let model = r.Model || ''
+  let series = r.Series || r.Trim || ''
+  // NHTSA's flat endpoint sometimes returns Make+Year but a BLANK Model.
+  // Fall back to the verbose decoder, which resolves Model/Series more reliably.
+  if (!model) {
+    try {
+      const res2 = await fetch(`https://vpic.nhtsa.dot.gov/api/vehicles/decodevin/${vin.toUpperCase()}?format=json`)
+      if (res2.ok) {
+        const d2 = await res2.json()
+        const byVar = {}
+        for (const row of (d2.Results || [])) {
+          if (row.Value != null && row.Value !== '') byVar[row.Variable] = row.Value
+        }
+        model = model || byVar['Model'] || ''
+        series = series || byVar['Series'] || byVar['Trim'] || byVar['Series2'] || ''
+      }
+    } catch { /* fallback best-effort; leave model blank if it also fails */ }
+  }
   return {
     year:         r.ModelYear || '',
     make:         make,
-    model:        r.Model || '',
-    series:       r.Series || r.Trim || '',
+    model:        model,
+    series:       series,
     bodyType:     r.BodyClass || '',
     engine:       engineParts.join(' '),
     transmission: r.TransmissionStyle || '',
@@ -215,6 +233,61 @@ async function fetchMarketData(vin, postal, radius = 250) {
   return data; // {found, marketLow/Mid/High, comps:[...], meta:{...}} or {found:false}
 }
 
+// Re-derive market stats from ALREADY-FETCHED comps, applying local filters.
+// This is how criteria changes (radius / odometer band) update the numbers
+// WITHOUT spending another VinAudit lookup — you fetch once per VIN, then slice
+// the cached comp set locally. Active listings only drive pricing; sold/dropped
+// comps are summarized separately (never blended into Low/Mid/High).
+function recomputeFromComps(comps, opts = {}) {
+  const { radiusKm = null, odoFrom = '', odoTo = '' } = opts;
+  if (!Array.isArray(comps) || comps.length === 0) return null;
+  const lo = odoFrom !== '' && odoFrom != null ? Number(odoFrom) : null;
+  const hi = odoTo !== '' && odoTo != null ? Number(odoTo) : null;
+  const inBand = c => {
+    if (radiusKm != null && Number.isFinite(c.distance) && c.distance > radiusKm) return false;
+    const km = Number(c.mileage);
+    if (lo != null && Number.isFinite(km) && km < lo) return false;
+    if (hi != null && Number.isFinite(km) && km > hi) return false;
+    return true;
+  };
+  const filtered = comps.filter(inBand);
+  const active = filtered.filter(c => c.status !== 'dropped');
+  const sold = filtered.filter(c => c.status === 'dropped');
+  const prices = active.map(c => Number(c.price)).filter(p => Number.isFinite(p) && p >= 1000).sort((a, b) => a - b);
+  if (prices.length === 0) return { found: false, activeCount: active.length, soldCount: sold.length };
+  const pct = (arr, p) => {
+    if (arr.length === 1) return arr[0];
+    const idx = (arr.length - 1) * p, l = Math.floor(idx), h = Math.ceil(idx);
+    return l === h ? arr[l] : Math.round(arr[l] + (arr[h] - arr[l]) * (idx - l));
+  };
+  const avg = arr => arr.length ? Math.round(arr.reduce((s, n) => s + n, 0) / arr.length) : null;
+  const miles = active.map(c => Number(c.mileage)).filter(Number.isFinite).sort((a, b) => a - b);
+  const days = active.map(c => Number(c.days)).filter(Number.isFinite).sort((a, b) => a - b);
+  const soldPrices = sold.map(c => Number(c.price)).filter(p => Number.isFinite(p) && p >= 1000);
+  const soldDts = sold.map(c => Number(c.days)).filter(Number.isFinite);
+  const soldOdo = sold.map(c => Number(c.mileage)).filter(Number.isFinite);
+  // Local MDS: active ÷ recent sold × 45 (same definition as the backend).
+  const mds = sold.length > 0 ? Math.round((active.length / sold.length) * 45) : null;
+  return {
+    found: true,
+    marketLow: pct(prices, 0.10),
+    marketMid: pct(prices, 0.50),
+    marketHigh: pct(prices, 0.90),
+    marketAvgPrice: avg(prices),
+    activeComps: active.length,
+    medianCompMileage: miles.length ? pct(miles, 0.50) : null,
+    medianDaysListed: days.length ? pct(days, 0.50) : null,
+    marketDaySupply: mds,
+    soldStats: {
+      count: sold.length,
+      avgPrice: avg(soldPrices),
+      medianPrice: soldPrices.length ? pct([...soldPrices].sort((a, b) => a - b), 0.50) : null,
+      avgDts: avg(soldDts),
+      avgOdo: avg(soldOdo),
+    },
+  };
+}
+
 // Mock Carfax — replace with real API when credentials available
 async function fetchCarfax(vin) {
   await new Promise(r=>setTimeout(r,1200));
@@ -237,6 +310,8 @@ async function fetchCarfax(vin) {
 function CompSet({ comps, myPrice, myKm, myDays }) {
   const [feeState, setFeeState] = useState({});
   const [sort, setSort] = useState({ key: 'price', dir: 'asc' });
+  // Both comp sections collapsed by default so they don't fill the page.
+  const [openSec, setOpenSec] = useState({ listed: false, sold: false });
   if (!comps || comps.length === 0) return null;
   const mp = Number(myPrice) || null;
   const sold = comps.filter(c => c.status === 'dropped');
@@ -283,13 +358,18 @@ function CompSet({ comps, myPrice, myKm, myDays }) {
     if(fs.feeTotal>0) return <span style={{fontSize:10,fontWeight:700,color:C.orange,whiteSpace:'nowrap'}} title={fs.fees.map(f=>`${f.name} ${fmt(f.amount)}`).join(' + ')}>+{fmt(fs.feeTotal)} → {fmt((c.price||0)+fs.feeTotal)}</span>;
     return <span style={{fontSize:10,fontWeight:600,color:C.green,whiteSpace:'nowrap'}}>no added fees</span>;
   };
-  const block = (heading, rows, mode, showMine, badge) => (
+  const block = (heading, rows, mode, showMine, badge, secKey) => {
+    const isOpen = !!openSec[secKey];
+    return (
     <div style={{background:'#fff',border:`1px solid ${C.border}`,borderRadius:10,overflow:'hidden',marginBottom:10}}>
-      <div style={{padding:'10px 14px',borderBottom:`1px solid ${C.border}`,display:'flex',alignItems:'center',justifyContent:'space-between',gap:8,flexWrap:'wrap'}}>
-        <div style={{fontWeight:700,fontSize:13,color:C.navy}}>{heading} <span style={{color:C.textLight,fontWeight:500}}>({rows.length})</span></div>
+      <div onClick={()=>setOpenSec(s=>({...s,[secKey]:!s[secKey]}))} style={{padding:'10px 14px',borderBottom:isOpen?`1px solid ${C.border}`:'none',display:'flex',alignItems:'center',justifyContent:'space-between',gap:8,flexWrap:'wrap',cursor:'pointer',userSelect:'none'}}>
+        <div style={{display:'flex',alignItems:'center',gap:8}}>
+          <ChevronRight size={15} color={C.navy} style={{transform:isOpen?'rotate(90deg)':'none',transition:'transform 0.15s'}}/>
+          <span style={{fontWeight:700,fontSize:13,color:C.navy}}>{heading} <span style={{color:C.textLight,fontWeight:500}}>({rows.length})</span></span>
+        </div>
         {badge}
       </div>
-      <div style={{overflowX:'auto'}}>
+      {isOpen&&<div style={{overflowX:'auto'}}>
         <table style={{width:'100%',borderCollapse:'collapse',fontSize:12}}>
           <thead><tr style={{background:C.navyMuted}}>{[
             {label:'Price',key:'price'},
@@ -335,22 +415,23 @@ function CompSet({ comps, myPrice, myKm, myDays }) {
             );})}
           </tbody>
         </table>
-      </div>
+      </div>}
     </div>
-  );
+    );
+  };
   return (
     <div>
-      {active.length>0&&block('Currently Listed', active, 'listed', true, myRank&&<span style={{fontSize:11,fontFamily:'monospace',color:C.teal,background:C.tealMuted,padding:'2px 10px',borderRadius:12}}>Your price ranks #{myRank} of {active.length+1}</span>)}
-      {sold.length>0&&block('Recently Sold · likely', sold, 'sold', false, <span style={{fontSize:10,color:C.textLight}} title="Listing dropped off the market — usually sold, not guaranteed">last 45 days</span>)}
+      {sold.length>0&&block('Recently Sold · likely', sold, 'sold', false, <span style={{fontSize:10,color:C.textLight}} title="Listing dropped off the market — usually sold, not guaranteed">last 45 days</span>, 'sold')}
+      {active.length>0&&block('Currently Listed', active, 'listed', true, myRank&&<span style={{fontSize:11,fontFamily:'monospace',color:C.teal,background:C.tealMuted,padding:'2px 10px',borderRadius:12}}>Your price ranks #{myRank} of {active.length+1}</span>, 'listed')}
     </div>
   );
 }
 
 // ─── SHARED COMPONENTS ────────────────────────────────────────────────
-function Btn({children,onClick,variant='primary',size='md',disabled,full,style:sx={}}) {
+function Btn({children,onClick,variant='primary',size='md',disabled,full,style:sx={},className}) {
   const S={sm:{padding:'6px 14px',fontSize:12},md:{padding:'9px 20px',fontSize:13},lg:{padding:'12px 28px',fontSize:14}};
   const V={primary:{background:C.navy,color:'#fff',border:'none'},teal:{background:C.teal,color:'#fff',border:'none'},ghost:{background:'transparent',color:C.textMid,border:`1px solid ${C.borderStr}`},danger:{background:C.red,color:'#fff',border:'none'},success:{background:C.green,color:'#fff',border:'none'},outline:{background:'#fff',color:C.navy,border:`1.5px solid ${C.navy}`}};
-  return <button onClick={onClick} disabled={disabled} style={{...S[size],...V[variant],borderRadius:6,fontWeight:600,cursor:disabled?'not-allowed':'pointer',opacity:disabled?0.5:1,display:'inline-flex',alignItems:'center',gap:6,fontFamily:'inherit',transition:'all 0.15s',width:full?'100%':undefined,justifyContent:full?'center':undefined,...sx}}>{children}</button>;
+  return <button className={className} onClick={onClick} disabled={disabled} style={{...S[size],...V[variant],borderRadius:6,fontWeight:600,cursor:disabled?'not-allowed':'pointer',opacity:disabled?0.5:1,display:'inline-flex',alignItems:'center',gap:6,fontFamily:'inherit',transition:'all 0.15s',width:full?'100%':undefined,justifyContent:full?'center':undefined,...sx}}>{children}</button>;
 }
 function Input({value,onChange,placeholder,type='text',style:sx={}}) {
   return <input type={type} value={value} onChange={e=>onChange(e.target.value)} placeholder={placeholder} style={{width:'100%',padding:'8px 12px',background:'#fff',border:`1px solid ${C.borderStr}`,borderRadius:6,fontSize:13,color:C.textDark,fontFamily:'inherit',outline:'none',boxSizing:'border-box',...sx}} onFocus={e=>e.target.style.borderColor=C.navy} onBlur={e=>e.target.style.borderColor=C.borderStr}/>;
@@ -1003,7 +1084,7 @@ function consumerOfferPrint(a, dealer){
 
 // ── COMPACT VEHICLE SUMMARY CARD ─────────────────────────────────────
 function VehicleSummary({data,onEdit}){
-  const decoded = data.year&&data.make&&data.model
+  const decoded = data.year||data.make||data.model||data.vin
   return(
     <div style={{background:C.navyMuted,borderRadius:8,border:`1px solid ${C.navyBorder}`,overflow:'hidden'}}>
       {decoded?(
@@ -1035,19 +1116,13 @@ function VehicleSummary({data,onEdit}){
           {data.odometer&&(
             <div style={{padding:'8px 14px',borderTop:`1px solid ${C.navyBorder}`,display:'flex',alignItems:'center',justifyContent:'space-between',background:'rgba(28,45,94,0.04)'}}>
               <span style={{fontSize:11,fontWeight:600,color:C.textLight,textTransform:'uppercase',letterSpacing:1}}>Odometer</span>
-              <span style={{fontSize:18,fontWeight:900,color:C.navy,fontFamily:'monospace',letterSpacing:-0.5}}>
-                {Number(data.odometer).toLocaleString('en-CA')} <span style={{fontSize:12,fontWeight:500,color:C.textLight}}>km</span>
+              <span style={{fontSize:15,fontWeight:800,color:C.navy,fontFamily:'monospace',letterSpacing:-0.3}}>
+                {Number(data.odometer).toLocaleString('en-CA')} <span style={{fontSize:11,fontWeight:500,color:C.textLight}}>km</span>
               </span>
             </div>
           )}
 
-          {/* VIN with copy button */}
-          {data.vin&&(
-            <div style={{padding:'7px 14px',borderTop:`1px solid ${C.navyBorder}`,display:'flex',alignItems:'center',justifyContent:'space-between',gap:8}}>
-              <span style={{fontSize:10,fontFamily:'monospace',color:C.textLight,letterSpacing:0.5,flex:1,minWidth:0,overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'}}>{data.vin}</span>
-              <CopyVIN vin={data.vin}/>
-            </div>
-          )}
+          {/* VIN shown once in the editable row above — no duplicate here */}
 
           {/* Carfax tags */}
           {(data.carfax||(data.odometer&&data.marketAvgOdometer))&&(
@@ -1140,6 +1215,32 @@ function AppraisalForm({initial,onSave,onBack,showToast,onConvert,onFinalize,onU
     }catch(e){showToast(e.message||'Market data unavailable','error');}
     finally{setMl(false);}
   }
+  // Auto-fetch ONCE when the VIN first becomes valid and we have no cached comps.
+  // After this, criteria changes recompute locally (no further VinAudit calls).
+  const autoFetchedRef=useRef(false);
+  useEffect(()=>{
+    if(locked) return;
+    if(a.vin?.length!==17){ autoFetchedRef.current=false; return; }
+    if(a._comps || a.marketMid) return;
+    if(autoFetchedRef.current) return;
+    const dealer=onGetDealer?onGetDealer():null;
+    if(!dealer?.postal) return;
+    autoFetchedRef.current=true;
+    fetchMkt();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  },[a.vin]);
+  // Recompute market numbers from CACHED comps when criteria change — no API call.
+  function recompute(partial){
+    const next={...aRef.current,...partial};
+    const comps=next._comps;
+    if(!comps||comps.length===0){ setA(p=>{const n={...p,...partial,updatedAt:new Date().toISOString()};aRef.current=n;setIsDirty(true);return n;}); return; }
+    const r=recomputeFromComps(comps,{radiusKm:next._radius?Number(next._radius):null,odoFrom:next.odoFrom,odoTo:next.odoTo});
+    setA(p=>{
+      const n={...p,...partial,updatedAt:new Date().toISOString()};
+      if(r&&r.found){n.marketLow=r.marketLow;n.marketMid=r.marketMid;n.marketHigh=r.marketHigh;n.marketAvgPrice=r.marketAvgPrice;n.activeComps=r.activeComps;n.marketDaySupply=r.marketDaySupply;n.medianDaysListed=r.medianDaysListed;n._medianCompMileage=r.medianCompMileage;n._soldStats=r.soldStats;}
+      aRef.current=n;setIsDirty(true);return n;
+    });
+  }
   async function pullCarfax(){if(!a.vin||a.vin.length!==17){showToast('Valid VIN required','error');return;}setCl(true);try{const c=await fetchCarfax(a.vin);setA(p=>{const next=withLog({...p,carfax:c,updatedAt:new Date().toISOString()},[logEvent('Carfax Report',c.clean?'Clean':'Issues Found',user,'Not Pulled')]);aRef.current=next;return next;});setIsDirty(true);showToast('Carfax report retrieved','success');}catch{showToast('Carfax unavailable','error');}finally{setCl(false);}}
   function photo(e){if(locked){showToast('Appraisal is finalized — unlock to edit','warning');e.target.value='';return;}Array.from(e.target.files).forEach(f=>{const r=new FileReader();r.onload=ev=>setA(p=>{const next={...p,photos:[...p.photos,{id:Date.now().toString()+Math.random(),dataUrl:ev.target.result,category:'Misc',name:f.name}]};aRef.current=next;return next;});r.readAsDataURL(f);});setIsDirty(true);e.target.value='';}
   function printConsumerOffer(){
@@ -1216,7 +1317,7 @@ function AppraisalForm({initial,onSave,onBack,showToast,onConvert,onFinalize,onU
       {/* Two-column layout: sticky Vehicle panel on the left, everything else right */}
       <div className="two-col" style={{display:'grid',gridTemplateColumns:'minmax(300px, 360px) 1fr',gap:14,alignItems:'start'}}>
         {/* LEFT RAIL — sticks to viewport as the right column scrolls */}
-        <div className="appraisal-left" style={{position:'sticky',top:14,maxHeight:'calc(100vh - 28px)',overflowY:'auto'}}>
+        <div className="appraisal-left" style={{position:'sticky',top:14,alignSelf:'start',maxHeight:'calc(100vh - 28px)',overflowY:'auto',overflowX:'hidden',paddingBottom:8}}>
       <Sec title="Vehicle" icon={Car} accent>
         {/* VIN row */}
         <div style={{display:'flex',gap:8,marginBottom:10,alignItems:'center'}}>
@@ -1224,7 +1325,7 @@ function AppraisalForm({initial,onSave,onBack,showToast,onConvert,onFinalize,onU
             <Input value={a.vin} onChange={v=>set('vin',v.toUpperCase().replace(/[^A-Z0-9]/g,'').substring(0,17))} placeholder="17-character VIN" style={{fontFamily:'monospace',letterSpacing:1,fontSize:14}}/>
           </div>
           {a.vin&&a.vin.length>=10&&<CopyVIN vin={a.vin}/>}
-          <Btn onClick={()=>setShowVINScanner(true)} variant="ghost" size="sm"><ScanLine size={13}/>Scan</Btn>
+          <Btn onClick={()=>setShowVINScanner(true)} variant="ghost" size="sm" className="cap-only"><ScanLine size={13}/>Scan</Btn>
           <Btn onClick={decode} disabled={vl||a.vin.length!==17} size="sm"><RefreshCw size={12} style={{animation:vl?'spin 1s linear infinite':undefined}}/>{vl?'...':'Decode'}</Btn>
         </div>
         {/* Summary or expand */}
@@ -1233,7 +1334,7 @@ function AppraisalForm({initial,onSave,onBack,showToast,onConvert,onFinalize,onU
         {vehExpanded&&(
           <div style={{marginTop:10,paddingTop:10,borderTop:`1px solid ${C.navyBorder}`}}>
             <div style={{display:'grid',gridTemplateColumns:'repeat(3,1fr)',gap:8,marginBottom:8}}>
-              {[{f:'year',l:'Year',ph:'2022'},{f:'make',l:'Make',ph:'Toyota'},{f:'model',l:'Model',ph:'RAV4'},{f:'series',l:'Trim',ph:'XLE'},{f:'bodyType',l:'Body',ph:'SUV'},{f:'engine',l:'Engine',ph:'2.5L'},{f:'odometer',l:'Odometer (km)',ph:'52000',t:'number'},{f:'extColour',l:'Ext. Colour',ph:'White'},{f:'intColour',l:'Int. Colour',ph:'Black'}].map(x=>(
+              {[{f:'year',l:'Year',ph:''},{f:'make',l:'Make',ph:''},{f:'model',l:'Model',ph:''},{f:'series',l:'Trim',ph:''},{f:'bodyType',l:'Body',ph:''},{f:'engine',l:'Engine',ph:''},{f:'odometer',l:'Odometer (km)',ph:'',t:'number'},{f:'extColour',l:'Ext. Colour',ph:''},{f:'intColour',l:'Int. Colour',ph:''}].map(x=>(
                 <div key={x.f} style={{minWidth:0}}>
                   <label style={{display:'block',fontSize:10,fontWeight:600,color:C.textMid,marginBottom:4}}>{x.l}</label>
                   <Input value={a[x.f]} onChange={v=>set(x.f,v)} placeholder={x.ph} type={x.t||'text'}/>
@@ -1261,6 +1362,102 @@ function AppraisalForm({initial,onSave,onBack,showToast,onConvert,onFinalize,onU
           </div>
         )}
       </Sec>
+      {/* Moved into floating panel: Photos, Notes, Offer & Pricing */}
+      <Sec title="Photos" icon={Camera} badge={a.photos.length>0?`${a.photos.length}`:'None'}>
+        <div style={{display:'flex',gap:8,marginBottom:12,flexWrap:'wrap'}}>
+          <label className="cap-only" style={{display:'inline-flex',alignItems:'center',gap:6,padding:'8px 16px',background:C.navy,color:'#fff',borderRadius:6,fontSize:13,fontWeight:600,cursor:'pointer'}}><Camera size={13}/>Take Photo<input type="file" accept="image/*" capture="environment" style={{display:'none'}} onChange={photo} multiple/></label>
+          <label style={{display:'inline-flex',alignItems:'center',gap:6,padding:'8px 16px',background:'#fff',color:C.textMid,border:`1px solid ${C.borderStr}`,borderRadius:6,fontSize:13,fontWeight:600,cursor:'pointer'}}><Upload size={13}/>Upload<input type="file" accept="image/*" style={{display:'none'}} onChange={photo} multiple/></label>
+        </div>
+        {a.photos.length>0?<div style={{display:'grid',gridTemplateColumns:'repeat(auto-fill,minmax(110px,1fr))',gap:8}}>{(a.photos||[]).map(p=><div key={p.id} style={{position:'relative',borderRadius:7,overflow:'hidden',border:`1px solid ${C.border}`}}><img src={p.dataUrl} style={{width:'100%',height:80,objectFit:'cover',display:'block'}} alt=""/><div style={{padding:'3px 5px',background:'#fff'}}><select value={p.category} onChange={e=>setA(prev=>({...prev,photos:prev.photos.map(ph=>ph.id===p.id?{...ph,category:e.target.value}:ph)}))} style={{width:'100%',fontSize:10,border:'none',background:'none',fontFamily:'inherit'}}>{['Front','Rear','Driver Side','Pass. Side','Interior','Odometer','Engine','Damage','Misc'].map(c=><option key={c}>{c}</option>)}</select></div><button onClick={()=>setA(prev=>({...prev,photos:prev.photos.filter(ph=>ph.id!==p.id)}))} style={{position:'absolute',top:3,right:3,background:'rgba(0,0,0,0.6)',border:'none',borderRadius:'50%',width:20,height:20,display:'flex',alignItems:'center',justifyContent:'center',cursor:'pointer'}}><X size={10} color="white"/></button></div>)}</div>:<div style={{padding:'20px',background:C.navyMuted,borderRadius:7,textAlign:'center',border:`1.5px dashed ${C.navyBorder}`}}><div style={{fontSize:12,color:C.textLight}}>No photos yet</div></div>}
+      </Sec>
+
+      <Sec title="Notes" icon={FileText}>
+        <textarea value={a.notes} onChange={e=>set('notes',e.target.value)} placeholder="Recon items, special options, condition observations..." rows={4} style={{width:'100%',padding:'10px 12px',background:'#fff',border:`1px solid ${C.borderStr}`,borderRadius:7,fontSize:13,fontFamily:'inherit',resize:'vertical',outline:'none',boxSizing:'border-box',lineHeight:1.6,color:C.textDark}}/>
+      </Sec>
+
+      <Sec title="Offer & Pricing" icon={DollarSign} accent>
+        <div style={{display:'flex',gap:10,flexWrap:'wrap',marginBottom:12}}>
+          <Field label="Recon Cost ($)"><Input value={a.reconCost} onChange={v=>set('reconCost',v)} type="number" placeholder="2,500"/></Field>
+          <Field label="Cert / Transport ($)"><Input value={a.certCost||''} onChange={v=>set('certCost',v)} type="number" placeholder="0"/></Field>
+          <Field label="Pack ($)"><Input value={a.pack||''} onChange={v=>set('pack',v)} type="number" placeholder="850"/></Field>
+          <Field label="Your Offer / Appraised Value"><Input value={a.appraisedValue} onChange={v=>set('appraisedValue',v)} type="number" placeholder="Enter your offer" style={{fontSize:15,fontWeight:700}}/></Field>
+        </div>
+        {a.appraisedValue&&a.marketMid&&(()=>{
+          const totalCost=Number(a.appraisedValue)+Number(a.reconCost||0)+Number(a.certCost||0)+Number(a.pack||0);
+          const adjPct=Math.round((totalCost/Number(a.marketMid))*100);
+          const grade=calcGrade(a.marketDaysSupply);
+          const action=calcAction(a.marketDaysSupply, 72); // 72 = mock fleet avg MDS
+          const askingPrice=a.marketMid?Math.round(Number(a.marketMid)*0.98):null;
+          return(
+            <div>
+              {/* Summary cards */}
+              <div style={{display:'grid',gridTemplateColumns:'repeat(3,1fr)',gap:8,marginBottom:10}}>
+                {[
+                  {l:'Your Offer',v:fmt(a.appraisedValue)},
+                  {l:'All-In Cost',v:fmt(totalCost)},
+                  {l:'Proj. Gross',v:projGross!==null?fmt(projGross):'—'},
+                ].map(s=>(
+                  <div key={s.l} style={{background:'rgba(255,255,255,0.12)',borderRadius:7,padding:'8px 10px',border:'1px solid rgba(255,255,255,0.2)'}}>
+                    <div style={{fontSize:9,color:'rgba(255,255,255,0.6)',marginBottom:2,fontWeight:600}}>{s.l}</div>
+                    <div style={{fontSize:13,fontWeight:800,color:'#fff',fontFamily:'monospace'}}>{s.v}</div>
+                  </div>
+                ))}
+              </div>
+              {/* Market position row */}
+              <div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:8,marginBottom:10}}>
+                {/* Adj % Cost to Market */}
+                <div style={{background:'rgba(255,255,255,0.1)',borderRadius:7,padding:'8px 10px',border:'1px solid rgba(255,255,255,0.15)'}}>
+                  <div style={{fontSize:9,color:'rgba(255,255,255,0.5)',fontWeight:600,marginBottom:3,textTransform:'uppercase',letterSpacing:0.5}}>Cost / Market</div>
+                  <div style={{fontSize:18,fontWeight:900,fontFamily:'monospace',color:adjPct<=92?'#68D391':adjPct<=100?'#fff':'#FC8181'}}>{adjPct}%</div>
+                  <div style={{fontSize:9,color:'rgba(255,255,255,0.4)',marginTop:1}}>Target: 85-95%</div>
+                </div>
+                {/* Provisioning Grade */}
+                {grade&&(
+                  <div style={{background:'rgba(255,255,255,0.1)',borderRadius:7,padding:'8px 10px',border:'1px solid rgba(255,255,255,0.15)',textAlign:'center'}}>
+                    <div style={{fontSize:9,color:'rgba(255,255,255,0.5)',fontWeight:600,marginBottom:3,textTransform:'uppercase',letterSpacing:0.5}}>Grade</div>
+                    <div style={{fontSize:22,fontWeight:900,color:grade.grade==='A'?'#68D391':grade.grade==='B'?'#63B3ED':grade.grade==='C+'?'#F6AD55':'#FC8181'}}>{grade.grade}</div>
+                  </div>
+                )}
+                {/* Action badge */}
+                {action!==null&&(
+                  <div style={{background:'rgba(255,255,255,0.1)',borderRadius:7,padding:'8px 10px',border:'1px solid rgba(255,255,255,0.15)',textAlign:'center'}}>
+                    <div style={{fontSize:9,color:'rgba(255,255,255,0.5)',fontWeight:600,marginBottom:3,textTransform:'uppercase',letterSpacing:0.5}}>MDS Impact</div>
+                    <div style={{fontSize:20,fontWeight:900,color:action>0?'#68D391':action<0?'#FC8181':'rgba(255,255,255,0.5)'}}>
+                      {action>0?'+':''}{action}
+                    </div>
+                    <div style={{fontSize:9,color:'rgba(255,255,255,0.4)',marginTop:1}}>{action>0?'Improves lot':action<0?'Hurts lot':'Neutral'}</div>
+                  </div>
+                )}
+                {/* Asking Price suggestion */}
+                {askingPrice&&(
+                  <div style={{background:'rgba(255,255,255,0.1)',borderRadius:7,padding:'8px 10px',border:'1px solid rgba(255,255,255,0.15)'}}>
+                    <div style={{fontSize:9,color:'rgba(255,255,255,0.5)',fontWeight:600,marginBottom:3,textTransform:'uppercase',letterSpacing:0.5}}>Suggested Retail</div>
+                    <div style={{fontSize:14,fontWeight:900,color:'#fff',fontFamily:'monospace'}}>{fmt(askingPrice)}</div>
+                    <div style={{fontSize:9,color:'rgba(255,255,255,0.4)',marginTop:1}}>98% of market mid</div>
+                  </div>
+                )}
+              </div>
+            </div>
+          );
+        })()}
+        {/* Lien Information */}
+        <div style={{marginTop:10,paddingTop:10,borderTop:'1px solid rgba(255,255,255,0.15)'}}>
+          <div style={{fontSize:10,color:'rgba(255,255,255,0.5)',fontWeight:600,marginBottom:8,textTransform:'uppercase',letterSpacing:0.5}}>Lien Information</div>
+          <div style={{display:'flex',gap:8,flexWrap:'wrap'}}>
+            <div style={{flex:1,minWidth:120}}>
+              <label style={{display:'block',fontSize:10,fontWeight:600,color:'rgba(255,255,255,0.5)',marginBottom:4}}>Lien Holder</label>
+              <input value={a.lienHolder||''} onChange={e=>set('lienHolder',e.target.value)} placeholder="Bank / Finance Co."
+                style={{width:'100%',padding:'7px 10px',background:'rgba(255,255,255,0.1)',border:'1px solid rgba(255,255,255,0.2)',borderRadius:6,fontSize:12,color:'#fff',fontFamily:'inherit',outline:'none',boxSizing:'border-box'}}/>
+            </div>
+            <div style={{flex:1,minWidth:100}}>
+              <label style={{display:'block',fontSize:10,fontWeight:600,color:'rgba(255,255,255,0.5)',marginBottom:4}}>Lien Payoff ($)</label>
+              <input type="number" value={a.lienPayoff||''} onChange={e=>set('lienPayoff',e.target.value)} placeholder="0"
+                style={{width:'100%',padding:'7px 10px',background:'rgba(255,255,255,0.1)',border:'1px solid rgba(255,255,255,0.2)',borderRadius:6,fontSize:12,color:'#fff',fontFamily:'inherit',outline:'none',boxSizing:'border-box'}}/>
+            </div>
+          </div>
+        </div>
+      </Sec>
+
         </div>{/* end LEFT RAIL */}
 
         {/* RIGHT COLUMN — all other sections scroll past the sticky vehicle panel */}
@@ -1276,7 +1473,7 @@ function AppraisalForm({initial,onSave,onBack,showToast,onConvert,onFinalize,onU
           <div style={{minWidth:0}}>
             <label style={{display:'block',fontSize:10,fontWeight:600,color:C.textMid,marginBottom:4}}>Distance</label>
             <div style={{display:'flex',alignItems:'center',gap:6}}>
-              <select value={a.searchDistance||150} onChange={e=>set('searchDistance',e.target.value)}
+              <select value={a.searchDistance||150} onChange={e=>recompute({searchDistance:e.target.value,_radius:e.target.value})}
                 style={{padding:'7px 10px',background:'#fff',border:`1px solid ${C.borderStr}`,borderRadius:6,fontSize:12,fontFamily:'inherit',outline:'none'}}>
                 {DISTANCE_OPTS.map(d=><option key={d} value={d}>{d}</option>)}
               </select>
@@ -1286,10 +1483,10 @@ function AppraisalForm({initial,onSave,onBack,showToast,onConvert,onFinalize,onU
           <div style={{minWidth:0}}>
             <label style={{display:'block',fontSize:10,fontWeight:600,color:C.textMid,marginBottom:4}}>Odometer Range</label>
             <div style={{display:'flex',alignItems:'center',gap:4}}>
-              <input type="number" value={a.odoFrom||''} onChange={e=>set('odoFrom',e.target.value)} placeholder="From"
+              <input type="number" value={a.odoFrom||''} onChange={e=>recompute({odoFrom:e.target.value})} placeholder="From"
                 style={{width:70,padding:'7px 8px',background:'#fff',border:`1px solid ${C.borderStr}`,borderRadius:6,fontSize:11,fontFamily:'inherit',outline:'none'}}/>
               <span style={{fontSize:10,color:C.textLight}}>to</span>
-              <input type="number" value={a.odoTo||''} onChange={e=>set('odoTo',e.target.value)} placeholder="To"
+              <input type="number" value={a.odoTo||''} onChange={e=>recompute({odoTo:e.target.value})} placeholder="To"
                 style={{width:70,padding:'7px 8px',background:'#fff',border:`1px solid ${C.borderStr}`,borderRadius:6,fontSize:11,fontFamily:'inherit',outline:'none'}}/>
               <span style={{fontSize:10,color:C.textLight}}>km</span>
             </div>
@@ -1318,9 +1515,9 @@ function AppraisalForm({initial,onSave,onBack,showToast,onConvert,onFinalize,onU
           <div>
             {/* Market averages */}
             <div style={{display:'grid',gridTemplateColumns:'repeat(3,1fr)',gap:8,marginBottom:10}}>
-              {[{l:'Market Low',v:fmt(a.marketLow),c:C.green},{l:'Market Mid',v:fmt(a.marketMid),c:C.navy},{l:'Market High',v:fmt(a.marketHigh),c:C.orange}].map(s=>(
-                <div key={s.l} style={{background:C.navyMuted,borderRadius:7,padding:'10px 12px',textAlign:'center'}}>
-                  <div style={{fontSize:10,color:C.textLight,marginBottom:3,fontWeight:600}}>{s.l}</div>
+              {[{l:'Market Low',v:fmt(a.marketLow),c:C.green,t:'10th percentile of active comparable listing prices — the low end of the market'},{l:'Market Mid',v:fmt(a.marketMid),c:C.navy,t:'Median (50th percentile) of active comparable listing prices'},{l:'Market High',v:fmt(a.marketHigh),c:C.orange,t:'90th percentile of active comparable listing prices — the high end of the market'}].map(s=>(
+                <div key={s.l} title={s.t} style={{background:C.navyMuted,borderRadius:7,padding:'10px 12px',textAlign:'center',cursor:'help'}}>
+                  <div style={{fontSize:10,color:C.textLight,marginBottom:3,fontWeight:600,display:'inline-flex',alignItems:'center',gap:3}}>{s.l}<Info size={10} color={C.textLight} style={{opacity:0.6}}/></div>
                   <div style={{fontSize:16,fontWeight:800,color:s.c,fontFamily:'monospace'}}>{s.v}</div>
                 </div>
               ))}
@@ -1348,7 +1545,7 @@ function AppraisalForm({initial,onSave,onBack,showToast,onConvert,onFinalize,onU
                 {l:'Median Comp KM',v:a._medianCompMileage?fmtN(a._medianCompMileage)+' km':null,t:'Median odometer across active comparable listings'},
               ].map(s=>(
                 <div key={s.l} title={s.t} style={{background:C.navyMuted,borderRadius:7,padding:'8px 12px',display:'flex',justifyContent:'space-between',alignItems:'center',cursor:'help'}}>
-                  <span style={{fontSize:11,color:C.textLight,fontWeight:600}}>{s.l}</span>
+                  <span style={{fontSize:11,color:C.textLight,fontWeight:600,display:'inline-flex',alignItems:'center',gap:4}}>{s.l}<Info size={11} color={C.textLight} style={{opacity:0.6}}/></span>
                   <span style={{fontSize:13,fontWeight:700,color:C.navy,fontFamily:'monospace'}}>{s.v||s.v===0?s.v:'—'}</span>
                 </div>
               ))}
@@ -1407,101 +1604,6 @@ function AppraisalForm({initial,onSave,onBack,showToast,onConvert,onFinalize,onU
           <input type="checkbox" checked={a.accidentVisible} readOnly style={{width:15,height:15,accentColor:C.red}}/>
           <span style={{fontSize:13,fontWeight:600,color:a.accidentVisible?C.red:C.textDark}}>Accident / Damage Visible</span>
           {a.accidentVisible&&<AlertTriangle size={15} color={C.red} style={{marginLeft:'auto'}}/>}
-        </div>
-      </Sec>
-
-      <Sec title="Photos" icon={Camera} badge={a.photos.length>0?`${a.photos.length}`:'None'}>
-        <div style={{display:'flex',gap:8,marginBottom:12,flexWrap:'wrap'}}>
-          <label style={{display:'inline-flex',alignItems:'center',gap:6,padding:'8px 16px',background:C.navy,color:'#fff',borderRadius:6,fontSize:13,fontWeight:600,cursor:'pointer'}}><Camera size={13}/>Take Photo<input type="file" accept="image/*" capture="environment" style={{display:'none'}} onChange={photo} multiple/></label>
-          <label style={{display:'inline-flex',alignItems:'center',gap:6,padding:'8px 16px',background:'#fff',color:C.textMid,border:`1px solid ${C.borderStr}`,borderRadius:6,fontSize:13,fontWeight:600,cursor:'pointer'}}><Upload size={13}/>Upload<input type="file" accept="image/*" style={{display:'none'}} onChange={photo} multiple/></label>
-        </div>
-        {a.photos.length>0?<div style={{display:'grid',gridTemplateColumns:'repeat(auto-fill,minmax(110px,1fr))',gap:8}}>{(a.photos||[]).map(p=><div key={p.id} style={{position:'relative',borderRadius:7,overflow:'hidden',border:`1px solid ${C.border}`}}><img src={p.dataUrl} style={{width:'100%',height:80,objectFit:'cover',display:'block'}} alt=""/><div style={{padding:'3px 5px',background:'#fff'}}><select value={p.category} onChange={e=>setA(prev=>({...prev,photos:prev.photos.map(ph=>ph.id===p.id?{...ph,category:e.target.value}:ph)}))} style={{width:'100%',fontSize:10,border:'none',background:'none',fontFamily:'inherit'}}>{['Front','Rear','Driver Side','Pass. Side','Interior','Odometer','Engine','Damage','Misc'].map(c=><option key={c}>{c}</option>)}</select></div><button onClick={()=>setA(prev=>({...prev,photos:prev.photos.filter(ph=>ph.id!==p.id)}))} style={{position:'absolute',top:3,right:3,background:'rgba(0,0,0,0.6)',border:'none',borderRadius:'50%',width:20,height:20,display:'flex',alignItems:'center',justifyContent:'center',cursor:'pointer'}}><X size={10} color="white"/></button></div>)}</div>:<div style={{padding:'20px',background:C.navyMuted,borderRadius:7,textAlign:'center',border:`1.5px dashed ${C.navyBorder}`}}><div style={{fontSize:12,color:C.textLight}}>No photos yet</div></div>}
-      </Sec>
-
-      <Sec title="Notes" icon={FileText}>
-        <textarea value={a.notes} onChange={e=>set('notes',e.target.value)} placeholder="Recon items, special options, condition observations..." rows={4} style={{width:'100%',padding:'10px 12px',background:'#fff',border:`1px solid ${C.borderStr}`,borderRadius:7,fontSize:13,fontFamily:'inherit',resize:'vertical',outline:'none',boxSizing:'border-box',lineHeight:1.6,color:C.textDark}}/>
-      </Sec>
-
-      <Sec title="Offer & Pricing" icon={DollarSign} accent>
-        <div style={{display:'flex',gap:10,flexWrap:'wrap',marginBottom:12}}>
-          <Field label="Recon Cost ($)"><Input value={a.reconCost} onChange={v=>set('reconCost',v)} type="number" placeholder="2,500"/></Field>
-          <Field label="Cert / Transport ($)"><Input value={a.certCost||''} onChange={v=>set('certCost',v)} type="number" placeholder="0"/></Field>
-          <Field label="Pack ($)"><Input value={a.pack||''} onChange={v=>set('pack',v)} type="number" placeholder="850"/></Field>
-          <Field label="Your Offer / Appraised Value"><Input value={a.appraisedValue} onChange={v=>set('appraisedValue',v)} type="number" placeholder="Enter your offer" style={{fontSize:15,fontWeight:700}}/></Field>
-        </div>
-        {a.appraisedValue&&a.marketMid&&(()=>{
-          const totalCost=Number(a.appraisedValue)+Number(a.reconCost||0)+Number(a.certCost||0)+Number(a.pack||0);
-          const adjPct=Math.round((totalCost/Number(a.marketMid))*100);
-          const grade=calcGrade(a.marketDaysSupply);
-          const action=calcAction(a.marketDaysSupply, 72); // 72 = mock fleet avg MDS
-          const askingPrice=a.marketMid?Math.round(Number(a.marketMid)*0.98):null;
-          return(
-            <div>
-              {/* Summary cards */}
-              <div style={{display:'grid',gridTemplateColumns:'repeat(3,1fr)',gap:8,marginBottom:10}}>
-                {[
-                  {l:'Your Offer',v:fmt(a.appraisedValue)},
-                  {l:'All-In Cost',v:fmt(totalCost)},
-                  {l:'Proj. Gross',v:projGross!==null?fmt(projGross):'—'},
-                ].map(s=>(
-                  <div key={s.l} style={{background:'rgba(255,255,255,0.12)',borderRadius:7,padding:'10px 12px',border:'1px solid rgba(255,255,255,0.2)'}}>
-                    <div style={{fontSize:10,color:'rgba(255,255,255,0.6)',marginBottom:3,fontWeight:600}}>{s.l}</div>
-                    <div style={{fontSize:16,fontWeight:900,color:'#fff',fontFamily:'monospace'}}>{s.v}</div>
-                  </div>
-                ))}
-              </div>
-              {/* Market position row */}
-              <div style={{display:'grid',gridTemplateColumns:'1fr 1fr 1fr 1fr',gap:8,marginBottom:10}}>
-                {/* Adj % Cost to Market */}
-                <div style={{background:'rgba(255,255,255,0.1)',borderRadius:7,padding:'8px 10px',border:'1px solid rgba(255,255,255,0.15)'}}>
-                  <div style={{fontSize:9,color:'rgba(255,255,255,0.5)',fontWeight:600,marginBottom:3,textTransform:'uppercase',letterSpacing:0.5}}>Cost / Market</div>
-                  <div style={{fontSize:18,fontWeight:900,fontFamily:'monospace',color:adjPct<=92?'#68D391':adjPct<=100?'#fff':'#FC8181'}}>{adjPct}%</div>
-                  <div style={{fontSize:9,color:'rgba(255,255,255,0.4)',marginTop:1}}>Target: 85-95%</div>
-                </div>
-                {/* Provisioning Grade */}
-                {grade&&(
-                  <div style={{background:'rgba(255,255,255,0.1)',borderRadius:7,padding:'8px 10px',border:'1px solid rgba(255,255,255,0.15)',textAlign:'center'}}>
-                    <div style={{fontSize:9,color:'rgba(255,255,255,0.5)',fontWeight:600,marginBottom:3,textTransform:'uppercase',letterSpacing:0.5}}>Grade</div>
-                    <div style={{fontSize:22,fontWeight:900,color:grade.grade==='A'?'#68D391':grade.grade==='B'?'#63B3ED':grade.grade==='C+'?'#F6AD55':'#FC8181'}}>{grade.grade}</div>
-                  </div>
-                )}
-                {/* Action badge */}
-                {action!==null&&(
-                  <div style={{background:'rgba(255,255,255,0.1)',borderRadius:7,padding:'8px 10px',border:'1px solid rgba(255,255,255,0.15)',textAlign:'center'}}>
-                    <div style={{fontSize:9,color:'rgba(255,255,255,0.5)',fontWeight:600,marginBottom:3,textTransform:'uppercase',letterSpacing:0.5}}>MDS Impact</div>
-                    <div style={{fontSize:20,fontWeight:900,color:action>0?'#68D391':action<0?'#FC8181':'rgba(255,255,255,0.5)'}}>
-                      {action>0?'+':''}{action}
-                    </div>
-                    <div style={{fontSize:9,color:'rgba(255,255,255,0.4)',marginTop:1}}>{action>0?'Improves lot':action<0?'Hurts lot':'Neutral'}</div>
-                  </div>
-                )}
-                {/* Asking Price suggestion */}
-                {askingPrice&&(
-                  <div style={{background:'rgba(255,255,255,0.1)',borderRadius:7,padding:'8px 10px',border:'1px solid rgba(255,255,255,0.15)'}}>
-                    <div style={{fontSize:9,color:'rgba(255,255,255,0.5)',fontWeight:600,marginBottom:3,textTransform:'uppercase',letterSpacing:0.5}}>Suggested Retail</div>
-                    <div style={{fontSize:14,fontWeight:900,color:'#fff',fontFamily:'monospace'}}>{fmt(askingPrice)}</div>
-                    <div style={{fontSize:9,color:'rgba(255,255,255,0.4)',marginTop:1}}>98% of market mid</div>
-                  </div>
-                )}
-              </div>
-            </div>
-          );
-        })()}
-        {/* Lien Information */}
-        <div style={{marginTop:10,paddingTop:10,borderTop:'1px solid rgba(255,255,255,0.15)'}}>
-          <div style={{fontSize:10,color:'rgba(255,255,255,0.5)',fontWeight:600,marginBottom:8,textTransform:'uppercase',letterSpacing:0.5}}>Lien Information</div>
-          <div style={{display:'flex',gap:8,flexWrap:'wrap'}}>
-            <div style={{flex:1,minWidth:120}}>
-              <label style={{display:'block',fontSize:10,fontWeight:600,color:'rgba(255,255,255,0.5)',marginBottom:4}}>Lien Holder</label>
-              <input value={a.lienHolder||''} onChange={e=>set('lienHolder',e.target.value)} placeholder="Bank / Finance Co."
-                style={{width:'100%',padding:'7px 10px',background:'rgba(255,255,255,0.1)',border:'1px solid rgba(255,255,255,0.2)',borderRadius:6,fontSize:12,color:'#fff',fontFamily:'inherit',outline:'none',boxSizing:'border-box'}}/>
-            </div>
-            <div style={{flex:1,minWidth:100}}>
-              <label style={{display:'block',fontSize:10,fontWeight:600,color:'rgba(255,255,255,0.5)',marginBottom:4}}>Lien Payoff ($)</label>
-              <input type="number" value={a.lienPayoff||''} onChange={e=>set('lienPayoff',e.target.value)} placeholder="0"
-                style={{width:'100%',padding:'7px 10px',background:'rgba(255,255,255,0.1)',border:'1px solid rgba(255,255,255,0.2)',borderRadius:6,fontSize:12,color:'#fff',fontFamily:'inherit',outline:'none',boxSizing:'border-box'}}/>
-            </div>
-          </div>
         </div>
       </Sec>
 
@@ -1851,7 +1953,7 @@ function VehicleDetail({vehicle:iv,onSave,onBack,showToast,onShowSticker=()=>{},
                       {l:'Median Comp KM',v:v._medianCompMileage?fmtN(v._medianCompMileage)+' km':(v.marketAvgOdometer?fmtN(v.marketAvgOdometer)+' km':null),t:'Median odometer across active comps'},
                     ].map(s=>(
                       <div key={s.l} title={s.t} style={{background:'#fff',borderRadius:7,padding:'7px 10px',border:`1px solid ${C.border}`,display:'flex',justifyContent:'space-between',cursor:'help'}}>
-                        <span style={{fontSize:10,color:C.textLight}}>{s.l}</span>
+                        <span style={{fontSize:10,color:C.textLight,display:'inline-flex',alignItems:'center',gap:3}}>{s.l}<Info size={10} color={C.textLight} style={{opacity:0.6}}/></span>
                         <span style={{fontSize:11,fontWeight:700,color:C.navy,fontFamily:'monospace'}}>{s.v||s.v===0?s.v:'—'}</span>
                       </div>
                     ))}
@@ -1908,7 +2010,7 @@ function VehicleDetail({vehicle:iv,onSave,onBack,showToast,onShowSticker=()=>{},
 
           {tab==='photos'&&<div>
             <div style={{display:'flex',gap:8,marginBottom:12}}>
-              <label style={{display:'inline-flex',alignItems:'center',gap:6,padding:'8px 16px',background:C.navy,color:'#fff',borderRadius:6,fontSize:13,fontWeight:600,cursor:'pointer'}}><Camera size={13}/>Take Photo<input type="file" accept="image/*" capture="environment" style={{display:'none'}} onChange={photo} multiple/></label>
+              <label className="cap-only" style={{display:'inline-flex',alignItems:'center',gap:6,padding:'8px 16px',background:C.navy,color:'#fff',borderRadius:6,fontSize:13,fontWeight:600,cursor:'pointer'}}><Camera size={13}/>Take Photo<input type="file" accept="image/*" capture="environment" style={{display:'none'}} onChange={photo} multiple/></label>
               <label style={{display:'inline-flex',alignItems:'center',gap:6,padding:'8px 16px',background:'#fff',color:C.textMid,border:`1px solid ${C.borderStr}`,borderRadius:6,fontSize:13,fontWeight:600,cursor:'pointer'}}><Upload size={13}/>Upload<input type="file" accept="image/*" style={{display:'none'}} onChange={photo} multiple/></label>
             </div>
             {v.photos?.length>0?<div style={{display:'grid',gridTemplateColumns:'repeat(auto-fill,minmax(130px,1fr))',gap:8}}>{(v.photos||[]).map(p=><div key={p.id} style={{position:'relative',borderRadius:7,overflow:'hidden',border:`1px solid ${C.border}`}}><img src={p.dataUrl} style={{width:'100%',height:90,objectFit:'cover',display:'block'}} alt=""/><div style={{padding:'4px 5px',background:'#fff'}}><select value={p.category} onChange={e=>up({photos:v.photos.map(ph=>ph.id===p.id?{...ph,category:e.target.value}:ph)})} style={{width:'100%',fontSize:10,border:'none',background:'none',fontFamily:'inherit'}}>{['Front','Rear','Driver Side','Pass. Side','Interior','Odometer','Engine','Damage','Misc'].map(c=><option key={c}>{c}</option>)}</select></div><button onClick={()=>up({photos:v.photos.filter(ph=>ph.id!==p.id)})} style={{position:'absolute',top:3,right:3,background:'rgba(0,0,0,0.6)',border:'none',borderRadius:'50%',width:20,height:20,display:'flex',alignItems:'center',justifyContent:'center',cursor:'pointer'}}><X size={10} color="white"/></button></div>)}</div>:<div style={{padding:'24px',background:C.navyMuted,borderRadius:7,textAlign:'center',border:`1.5px dashed ${C.navyBorder}`}}><Camera size={22} color={C.navyBorder} style={{marginBottom:6}}/><div style={{fontSize:12,color:C.textLight}}>No photos yet</div></div>}
@@ -2296,8 +2398,12 @@ export default function Vantage() {
     input[type=number]::-webkit-outer-spin-button,
     input[type=number]::-webkit-inner-spin-button { -webkit-appearance: none; }
 
+    /* Camera-capture controls: only meaningful on mobile (rear camera). Hidden on desktop. */
+    .cap-only { display: none !important; }
+
     /* ── MOBILE RESPONSIVE ── */
     @media (max-width: 768px) {
+      .cap-only { display: inline-flex !important; }
       .dash-stats { grid-template-columns: repeat(2, 1fr) !important; }
       .dash-tiles { grid-template-columns: repeat(2, 1fr) !important; max-width: 100% !important; }
       .nav-links { display: none !important; }
