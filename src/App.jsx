@@ -417,7 +417,7 @@ function CompSet({ comps, myPrice, myKm, myDays }) {
                   : <td style={{...cell,whiteSpace:'nowrap',color:c.days>45?C.orange:C.textMid}}>{c.days?c.days:'—'}</td>}
                 <td style={{...cell,color:C.textLight,whiteSpace:'nowrap'}}>{[c.city,c.region].filter(Boolean).join(', ')||'—'}</td>
                 <td style={{...cell,color:C.textDark}}>
-                  <div>{c.dealer}</div>
+                  <div>{c.url?<a href={c.url} target="_blank" rel="noopener noreferrer" style={{color:C.navy,fontWeight:600,textDecoration:'none',borderBottom:`1px solid ${C.navyBorder}`}}>{c.dealer}</a>:c.dealer}</div>
                   <div style={{marginTop:2,display:'flex',gap:5,alignItems:'center',flexWrap:'wrap'}}>
                     {c.source&&<span style={{fontSize:9,color:C.textLight,background:C.navyMuted,padding:'1px 6px',borderRadius:8,whiteSpace:'nowrap'}}>{c.source}</span>}{Array.isArray(c.portals)&&c.portals.map(p=><a key={p.name} href={p.url} target="_blank" rel="noopener noreferrer" style={{display:'inline-block',fontSize:9,fontWeight:600,color:C.teal,background:C.tealMuted,padding:'1px 6px',borderRadius:8,whiteSpace:'nowrap',textDecoration:'none',marginRight:4,marginTop:2}}>{p.name}</a>)}
                     {c.feeWarning&&<span title={`Caught adding fees on ${c.feeWarning.count} prior check${c.feeWarning.count>1?'s':''}`} style={{fontSize:9,fontWeight:700,color:C.orange,background:C.orangeBg,padding:'1px 6px',borderRadius:8,whiteSpace:'nowrap'}}>⚠ adds fees ~{fmt(c.feeWarning.avgFee)}</span>}
@@ -1149,7 +1149,9 @@ function consumerOfferPrint(a, dealer){
   const veh=[a.year,a.make,a.model,a.series].filter(Boolean).join(' ')||'Vehicle';
   const cust=[a.firstName,a.lastName].filter(Boolean).join(' ');
   const today=new Date().toLocaleDateString('en-CA',{dateStyle:'long'});
-  const expiry=new Date(Date.now()+7*86400000).toLocaleDateString('en-CA',{dateStyle:'long'});
+  // Selectable expiry: use a.offerExpiry if set, else default to +7 days.
+  const expDate=a.offerExpiry?new Date(a.offerExpiry+'T00:00:00'):new Date(Date.now()+7*86400000);
+  const expiry=expDate.toLocaleDateString('en-CA',{dateStyle:'long'});
   const row=(k,v)=>v?`<div class="pp-row"><span class="k">${esc(k)}</span><span class="v">${esc(v)}</span></div>`:'';
   const cfx=a.carfax?`<div class="pp-sec"><h3>Vehicle History (Carfax Canada)</h3><div class="pp-grid">
       ${row('Reported Accidents', a.carfax.accidents)}
@@ -1161,17 +1163,21 @@ function consumerOfferPrint(a, dealer){
     ${dealerHeader(dealer,'Cash Offer','Vehicle Purchase Offer')}
     <div class="pp-sec"><h3>Prepared For</h3><div class="pp-grid">
       ${row('Customer', cust||'—')}
-      ${row('Date', today)}
       ${row('Phone', a.phone)}
+      ${row('Email', a.email)}
+      ${row('Date', today)}
       ${row('Offer Valid Until', expiry)}
     </div></div>
     <div class="pp-sec"><h3>Vehicle</h3><div class="pp-grid">
       ${row('Vehicle', veh)}
       ${row('VIN', a.vin)}
       ${row('Odometer', a.odometer?fmtN(a.odometer)+' km':'')}
+      ${row('Body', a.bodyType)}
       ${row('Exterior', a.extColour)}
+      ${row('Interior', a.intColour)}
       ${row('Engine', a.engine)}
       ${row('Drivetrain', a.drivetrain)}
+      ${row('Transmission', a.transmission)}
     </div></div>
     ${cfx}
     <div class="pp-sec"><h3>Our Offer</h3>
@@ -1445,6 +1451,15 @@ function AppraisalForm({initial,onSave,onBack,showToast,onConvert,onFinalize,onU
             </div>
           </div>
         )}
+        {/* Photos — combined into vehicle section */}
+        <div style={{marginTop:12,paddingTop:12,borderTop:`1px solid ${C.navyBorder}`}}>
+          <div style={{fontSize:11,fontWeight:700,color:C.navy,marginBottom:8,display:'flex',alignItems:'center',gap:6}}><Camera size={13}/>Photos {a.photos.length>0?`(${a.photos.length})`:''}</div>
+        <div style={{display:'flex',gap:8,marginBottom:12,flexWrap:'wrap'}}>
+          <label className="cap-only" style={{display:'inline-flex',alignItems:'center',gap:6,padding:'8px 16px',background:C.navy,color:'#fff',borderRadius:6,fontSize:13,fontWeight:600,cursor:'pointer'}}><Camera size={13}/>Take Photo<input type="file" accept="image/*" capture="environment" style={{display:'none'}} onChange={photo} multiple/></label>
+          <label style={{display:'inline-flex',alignItems:'center',gap:6,padding:'8px 16px',background:'#fff',color:C.textMid,border:`1px solid ${C.borderStr}`,borderRadius:6,fontSize:13,fontWeight:600,cursor:'pointer'}}><Upload size={13}/>Upload<input type="file" accept="image/*" style={{display:'none'}} onChange={photo} multiple/></label>
+        </div>
+        {a.photos.length>0?<div style={{display:'grid',gridTemplateColumns:'repeat(auto-fill,minmax(110px,1fr))',gap:8}}>{(a.photos||[]).map(p=><div key={p.id} style={{position:'relative',borderRadius:7,overflow:'hidden',border:`1px solid ${C.border}`}}><img src={p.dataUrl} style={{width:'100%',height:80,objectFit:'cover',display:'block'}} alt=""/><div style={{padding:'3px 5px',background:'#fff'}}><select value={p.category} onChange={e=>setA(prev=>({...prev,photos:prev.photos.map(ph=>ph.id===p.id?{...ph,category:e.target.value}:ph)}))} style={{width:'100%',fontSize:10,border:'none',background:'none',fontFamily:'inherit'}}>{['Front','Rear','Driver Side','Pass. Side','Interior','Odometer','Engine','Damage','Misc'].map(c=><option key={c}>{c}</option>)}</select></div><button onClick={()=>setA(prev=>({...prev,photos:prev.photos.filter(ph=>ph.id!==p.id)}))} style={{position:'absolute',top:3,right:3,background:'rgba(0,0,0,0.6)',border:'none',borderRadius:'50%',width:20,height:20,display:'flex',alignItems:'center',justifyContent:'center',cursor:'pointer'}}><X size={10} color="white"/></button></div>)}</div>:<div style={{padding:'20px',background:C.navyMuted,borderRadius:7,textAlign:'center',border:`1.5px dashed ${C.navyBorder}`}}><div style={{fontSize:12,color:C.textLight}}>No photos yet</div></div>}
+        </div>
       </Sec>
 
       <Sec title="Offer & Pricing" icon={DollarSign} accent>
@@ -1453,61 +1468,24 @@ function AppraisalForm({initial,onSave,onBack,showToast,onConvert,onFinalize,onU
           <Field label="Cert / Transport ($)"><Input value={a.certCost||''} onChange={v=>set('certCost',v)} type="number" placeholder="0"/></Field>
           <Field label="Pack ($)"><Input value={a.pack||''} onChange={v=>set('pack',v)} type="number" placeholder="850"/></Field>
           <Field label="Your Offer / Appraised Value"><Input value={a.appraisedValue} onChange={v=>set('appraisedValue',v)} type="number" placeholder="Enter your offer" style={{fontSize:15,fontWeight:700}}/></Field>
+          <Field label="Offer Valid Until"><Input value={a.offerExpiry||''} onChange={v=>set('offerExpiry',v)} type="date"/></Field>
         </div>
         {a.appraisedValue&&a.marketMid&&(()=>{
           const totalCost=Number(a.appraisedValue)+Number(a.reconCost||0)+Number(a.certCost||0)+Number(a.pack||0);
           const adjPct=Math.round((totalCost/Number(a.marketMid))*100);
           const grade=calcGrade(a.marketDaysSupply);
-          const action=calcAction(a.marketDaysSupply, 72); // 72 = mock fleet avg MDS
           const askingPrice=a.marketMid?Math.round(Number(a.marketMid)*0.98):null;
+          const cardBg={background:'rgba(255,255,255,0.12)',borderRadius:8,padding:'10px 12px',border:'1px solid rgba(255,255,255,0.2)'};
+          const lbl={fontSize:9,color:'rgba(255,255,255,0.65)',marginBottom:3,fontWeight:600,textTransform:'uppercase',letterSpacing:0.5};
           return(
-            <div>
-              {/* Summary cards */}
-              <div style={{display:'grid',gridTemplateColumns:'repeat(3,1fr)',gap:8,marginBottom:10}}>
-                {[
-                  {l:'Your Offer',v:fmt(a.appraisedValue)},
-                  {l:'All-In Cost',v:fmt(totalCost)},
-                  {l:'Proj. Gross',v:projGross!==null?fmt(projGross):'—'},
-                ].map(s=>(
-                  <div key={s.l} style={{background:'rgba(255,255,255,0.12)',borderRadius:7,padding:'8px 10px',border:'1px solid rgba(255,255,255,0.2)'}}>
-                    <div style={{fontSize:9,color:'rgba(255,255,255,0.6)',marginBottom:2,fontWeight:600}}>{s.l}</div>
-                    <div style={{fontSize:13,fontWeight:800,color:'#fff',fontFamily:'monospace'}}>{s.v}</div>
-                  </div>
-                ))}
-              </div>
-              {/* Market position row */}
-              <div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:8,marginBottom:10}}>
-                {/* Adj % Cost to Market */}
-                <div style={{background:'rgba(255,255,255,0.1)',borderRadius:7,padding:'8px 10px',border:'1px solid rgba(255,255,255,0.15)'}}>
-                  <div style={{fontSize:9,color:'rgba(255,255,255,0.5)',fontWeight:600,marginBottom:3,textTransform:'uppercase',letterSpacing:0.5}}>Cost / Market</div>
-                  <div style={{fontSize:18,fontWeight:900,fontFamily:'monospace',color:adjPct<=92?'#68D391':adjPct<=100?'#fff':'#FC8181'}}>{adjPct}%</div>
-                  <div style={{fontSize:9,color:'rgba(255,255,255,0.4)',marginTop:1}}>Target: 85-95%</div>
-                </div>
-                {/* Provisioning Grade */}
-                {grade&&(
-                  <div style={{background:'rgba(255,255,255,0.1)',borderRadius:7,padding:'8px 10px',border:'1px solid rgba(255,255,255,0.15)',textAlign:'center'}}>
-                    <div style={{fontSize:9,color:'rgba(255,255,255,0.5)',fontWeight:600,marginBottom:3,textTransform:'uppercase',letterSpacing:0.5}}>Grade</div>
-                    <div style={{fontSize:22,fontWeight:900,color:grade.grade==='A'?'#68D391':grade.grade==='B'?'#63B3ED':grade.grade==='C+'?'#F6AD55':'#FC8181'}}>{grade.grade}</div>
-                  </div>
-                )}
-                {/* Action badge */}
-                {action!==null&&(
-                  <div style={{background:'rgba(255,255,255,0.1)',borderRadius:7,padding:'8px 10px',border:'1px solid rgba(255,255,255,0.15)',textAlign:'center'}}>
-                    <div style={{fontSize:9,color:'rgba(255,255,255,0.5)',fontWeight:600,marginBottom:3,textTransform:'uppercase',letterSpacing:0.5}}>MDS Impact</div>
-                    <div style={{fontSize:20,fontWeight:900,color:action>0?'#68D391':action<0?'#FC8181':'rgba(255,255,255,0.5)'}}>
-                      {action>0?'+':''}{action}
-                    </div>
-                    <div style={{fontSize:9,color:'rgba(255,255,255,0.4)',marginTop:1}}>{action>0?'Improves lot':action<0?'Hurts lot':'Neutral'}</div>
-                  </div>
-                )}
-                {/* Asking Price suggestion */}
-                {askingPrice&&(
-                  <div style={{background:'rgba(255,255,255,0.1)',borderRadius:7,padding:'8px 10px',border:'1px solid rgba(255,255,255,0.15)'}}>
-                    <div style={{fontSize:9,color:'rgba(255,255,255,0.5)',fontWeight:600,marginBottom:3,textTransform:'uppercase',letterSpacing:0.5}}>Suggested Retail</div>
-                    <div style={{fontSize:14,fontWeight:900,color:'#fff',fontFamily:'monospace'}}>{fmt(askingPrice)}</div>
-                    <div style={{fontSize:9,color:'rgba(255,255,255,0.4)',marginTop:1}}>98% of market mid</div>
-                  </div>
-                )}
+            <div style={{marginTop:4}}>
+              <div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:8,marginBottom:8}}>
+                <div style={cardBg}><div style={lbl}>Your Offer</div><div style={{fontSize:15,fontWeight:800,color:'#fff',fontFamily:'monospace'}}>{fmt(a.appraisedValue)}</div></div>
+                <div style={cardBg}><div style={lbl}>All-In Cost</div><div style={{fontSize:15,fontWeight:800,color:'#fff',fontFamily:'monospace'}}>{fmt(totalCost)}</div></div>
+                <div style={cardBg}><div style={lbl}>Proj. Gross</div><div style={{fontSize:15,fontWeight:800,color:projGross!==null&&projGross<0?'#FC8181':'#68D391',fontFamily:'monospace'}}>{projGross!==null?fmt(projGross):'—'}</div></div>
+                <div style={cardBg}><div style={lbl}>Cost / Market</div><div style={{fontSize:15,fontWeight:800,fontFamily:'monospace',color:adjPct<=92?'#68D391':adjPct<=100?'#fff':'#FC8181'}}>{adjPct}%</div><div style={{fontSize:9,color:'rgba(255,255,255,0.45)',marginTop:1}}>Target 85–95%</div></div>
+                {grade&&<div style={cardBg}><div style={lbl}>Provision Grade</div><div style={{fontSize:20,fontWeight:900,color:grade.grade==='A'?'#68D391':grade.grade==='B'?'#63B3ED':grade.grade==='C+'?'#F6AD55':'#FC8181'}}>{grade.grade}</div></div>}
+                {askingPrice&&<div style={cardBg}><div style={lbl}>Suggested Retail</div><div style={{fontSize:15,fontWeight:800,color:'#fff',fontFamily:'monospace'}}>{fmt(askingPrice)}</div><div style={{fontSize:9,color:'rgba(255,255,255,0.45)',marginTop:1}}>98% of market mid</div></div>}
               </div>
             </div>
           );
@@ -1528,14 +1506,6 @@ function AppraisalForm({initial,onSave,onBack,showToast,onConvert,onFinalize,onU
             </div>
           </div>
         </div>
-      </Sec>
-
-      <Sec title="Photos" icon={Camera} badge={a.photos.length>0?`${a.photos.length}`:'None'}>
-        <div style={{display:'flex',gap:8,marginBottom:12,flexWrap:'wrap'}}>
-          <label className="cap-only" style={{display:'inline-flex',alignItems:'center',gap:6,padding:'8px 16px',background:C.navy,color:'#fff',borderRadius:6,fontSize:13,fontWeight:600,cursor:'pointer'}}><Camera size={13}/>Take Photo<input type="file" accept="image/*" capture="environment" style={{display:'none'}} onChange={photo} multiple/></label>
-          <label style={{display:'inline-flex',alignItems:'center',gap:6,padding:'8px 16px',background:'#fff',color:C.textMid,border:`1px solid ${C.borderStr}`,borderRadius:6,fontSize:13,fontWeight:600,cursor:'pointer'}}><Upload size={13}/>Upload<input type="file" accept="image/*" style={{display:'none'}} onChange={photo} multiple/></label>
-        </div>
-        {a.photos.length>0?<div style={{display:'grid',gridTemplateColumns:'repeat(auto-fill,minmax(110px,1fr))',gap:8}}>{(a.photos||[]).map(p=><div key={p.id} style={{position:'relative',borderRadius:7,overflow:'hidden',border:`1px solid ${C.border}`}}><img src={p.dataUrl} style={{width:'100%',height:80,objectFit:'cover',display:'block'}} alt=""/><div style={{padding:'3px 5px',background:'#fff'}}><select value={p.category} onChange={e=>setA(prev=>({...prev,photos:prev.photos.map(ph=>ph.id===p.id?{...ph,category:e.target.value}:ph)}))} style={{width:'100%',fontSize:10,border:'none',background:'none',fontFamily:'inherit'}}>{['Front','Rear','Driver Side','Pass. Side','Interior','Odometer','Engine','Damage','Misc'].map(c=><option key={c}>{c}</option>)}</select></div><button onClick={()=>setA(prev=>({...prev,photos:prev.photos.filter(ph=>ph.id!==p.id)}))} style={{position:'absolute',top:3,right:3,background:'rgba(0,0,0,0.6)',border:'none',borderRadius:'50%',width:20,height:20,display:'flex',alignItems:'center',justifyContent:'center',cursor:'pointer'}}><X size={10} color="white"/></button></div>)}</div>:<div style={{padding:'20px',background:C.navyMuted,borderRadius:7,textAlign:'center',border:`1.5px dashed ${C.navyBorder}`}}><div style={{fontSize:12,color:C.textLight}}>No photos yet</div></div>}
       </Sec>
 
       <Sec title="Notes" icon={FileText} open={false}>
@@ -1819,7 +1789,7 @@ function VehicleDetail({vehicle:iv,onSave,onBack,showToast,onShowSticker=()=>{},
 
   function forceSaveV(){onSave(vRef.current,true);initialRef.current=JSON.stringify(vRef.current);setSavedAt(new Date().toISOString());setIsDirty(false);showToast('Saved','success');}
 
-  async function decode(){if(v.vin.length!==17){showToast('Valid 17-char VIN required','error');return;}setVl(true);try{const d=await decodeVIN(v.vin.toUpperCase());up(d);showToast(`Decoded: ${d.year} ${d.make} ${d.model}`,'success');}catch{showToast('Could not decode','error');}finally{setVl(false);}}
+  async function decode(){if(v.vin.length!==17){showToast('Valid 17-char VIN required','error');return;}setVl(true);try{const d=await decodeVIN(v.vin.toUpperCase());up(d);setVehExpandedDetail(true);showToast(`Decoded: ${[d.year,d.make,d.model].filter(Boolean).join(' ')||'partial — review fields'}`,'success');}catch{showToast('Could not decode — enter manually','error');}finally{setVl(false);}}
   async function genDesc(){setDl(true);try{const d=await generateDescription(v);up({description:d});showToast('Description generated','success');}catch{showToast('Generation failed','error');}finally{setDl(false);}}
   async function refMkt(){
     if(!v.vin||v.vin.length!==17){showToast('Valid VIN required','error');return;}
