@@ -236,12 +236,33 @@ async function fetchCarfax(vin) {
 // Live competitive set — renders real VinAudit listings with clickable links.
 function CompSet({ comps, myPrice, myKm, myDays }) {
   const [feeState, setFeeState] = useState({});
+  const [sort, setSort] = useState({ key: 'price', dir: 'asc' });
   if (!comps || comps.length === 0) return null;
   const mp = Number(myPrice) || null;
   const sold = comps.filter(c => c.status === 'dropped');
   const active = comps.filter(c => c.status !== 'dropped');
   const myRank = mp ? active.filter(c => c.price < mp).length + 1 : null;
   const soldAgo = (s) => { if(!s) return null; const d=new Date(s); if(isNaN(d.getTime())) return null; return Math.max(0,Math.round((Date.now()-d.getTime())/86400000)); };
+  // Sort helper. Keys: price, mileage, days, location. Nulls always sort last.
+  const sortRows = (rows, mode) => {
+    const dir = sort.dir === 'asc' ? 1 : -1;
+    const val = (c) => {
+      if (sort.key === 'price') return c.price;
+      if (sort.key === 'mileage') return c.mileage;
+      if (sort.key === 'days') return mode === 'sold' ? soldAgo(c.dropDate) : c.days;
+      if (sort.key === 'location') return [c.city, c.region].filter(Boolean).join(', ').toLowerCase() || null;
+      return null;
+    };
+    return [...rows].sort((a, b) => {
+      const av = val(a), bv = val(b);
+      if (av == null && bv == null) return 0;
+      if (av == null) return 1;   // nulls last regardless of dir
+      if (bv == null) return -1;
+      if (typeof av === 'string') return av.localeCompare(bv) * dir;
+      return (av - bv) * dir;
+    });
+  };
+  const toggleSort = (key) => setSort(s => s.key === key ? { key, dir: s.dir === 'asc' ? 'desc' : 'asc' } : { key, dir: key === 'location' ? 'asc' : 'asc' });
   const checkFees = async (c) => {
     if(!c.url) return;
     setFeeState(s=>({...s,[c.id]:{status:'loading'}}));
@@ -270,26 +291,36 @@ function CompSet({ comps, myPrice, myKm, myDays }) {
       </div>
       <div style={{overflowX:'auto'}}>
         <table style={{width:'100%',borderCollapse:'collapse',fontSize:12}}>
-          <thead><tr style={{background:C.navyMuted}}>{['Price','KM',mode==='sold'?'Sold':'Days','Location','Dealer','Fees',''].map((h,i)=>(
-            <th key={i} style={{padding:'7px 12px',textAlign:'left',fontSize:10,fontWeight:600,color:C.textLight,borderBottom:`1px solid ${C.border}`,whiteSpace:'nowrap'}}>{h}</th>
+          <thead><tr style={{background:C.navyMuted}}>{[
+            {label:'Price',key:'price'},
+            {label:'KM',key:'mileage'},
+            {label:mode==='sold'?'Sold (days ago)':'Days',key:'days'},
+            {label:'Location',key:'location'},
+            {label:'Dealer',key:null},
+            {label:'Fees',key:null},
+            {label:'',key:null},
+          ].map((h,i)=>(
+            <th key={i} onClick={h.key?()=>toggleSort(h.key):undefined} style={{padding:'7px 12px',textAlign:'left',fontSize:10,fontWeight:600,color:sort.key===h.key?C.navy:C.textLight,borderBottom:`1px solid ${C.border}`,whiteSpace:'nowrap',cursor:h.key?'pointer':'default',userSelect:'none'}}>
+              {h.label}{h.key&&sort.key===h.key&&<span style={{marginLeft:3}}>{sort.dir==='asc'?'▲':'▼'}</span>}
+            </th>
           ))}</tr></thead>
           <tbody>
             {showMine&&mp&&<tr style={{background:C.tealMuted}}>
               <td style={{...cell,fontFamily:'monospace',fontWeight:700,color:C.teal}}>{fmt(mp)}</td>
               <td style={{...cell,fontFamily:'monospace',color:C.teal}}>{myKm?fmtN(myKm):'—'}</td>
-              <td style={{...cell,color:C.teal}}>{myDays?`${myDays}d`:'—'}</td>
+              <td style={{...cell,color:C.teal}}>{myDays?myDays:'—'}</td>
               <td style={{...cell,color:C.teal}}>—</td>
               <td style={{...cell,fontWeight:700,color:C.teal}} colSpan={3}>Your Vehicle</td>
             </tr>}
-            {rows.map((c,i)=>{
+            {sortRows(rows,mode).map((c,i)=>{
               const ago=mode==='sold'?soldAgo(c.dropDate):null;
               return (
               <tr key={c.id||i} style={{borderTop:`1px solid ${C.border}`}}>
                 <td style={{...cell,fontFamily:'monospace',fontWeight:600,color:C.textDark,whiteSpace:'nowrap'}}>{fmt(c.price)}{c.certified&&<span style={{marginLeft:6,fontSize:9,fontWeight:700,color:C.green,background:C.greenBg,padding:'1px 5px',borderRadius:8}}>CPO</span>}</td>
                 <td style={{...cell,fontFamily:'monospace',color:C.textMid,whiteSpace:'nowrap'}}>{c.mileage?fmtN(c.mileage):'—'}</td>
                 {mode==='sold'
-                  ? <td style={{...cell,whiteSpace:'nowrap',fontWeight:600,color:ago!=null&&ago<=14?C.green:C.textMid}}>{ago!=null?`${ago}d ago`:'—'}</td>
-                  : <td style={{...cell,whiteSpace:'nowrap',color:c.days>45?C.orange:C.textMid}}>{c.days?`${c.days}d`:'—'}</td>}
+                  ? <td style={{...cell,whiteSpace:'nowrap',fontWeight:600,color:ago!=null&&ago<=14?C.green:C.textMid}}>{ago!=null?ago:'—'}</td>
+                  : <td style={{...cell,whiteSpace:'nowrap',color:c.days>45?C.orange:C.textMid}}>{c.days?c.days:'—'}</td>}
                 <td style={{...cell,color:C.textLight,whiteSpace:'nowrap'}}>{[c.city,c.region].filter(Boolean).join(', ')||'—'}</td>
                 <td style={{...cell,color:C.textDark}}>
                   <div>{c.dealer}</div>
@@ -1103,7 +1134,7 @@ function AppraisalForm({initial,onSave,onBack,showToast,onConvert,onFinalize,onU
       const m=await fetchMarketData(a.vin,postal);
       if(!m.found){showToast(m.message||'No Canadian comps found for this vehicle','warning');setMl(false);return;}
       const note=`${m.meta.comps} comps · ${m.meta.matchMode==='trim'?'trim match':'model match'}${m.meta.widened?' (widened)':''}`;
-      setA(p=>{const next=withLog({...p,marketLow:m.marketLow,marketMid:m.marketMid,marketHigh:m.marketHigh,marketAvgPrice:m.marketAvgPrice,activeComps:m.activeComps,marketDaysSupply:m.marketDaysSupply,marketDataFetched:m.marketDataFetched,_marketMeta:m.meta,_medianCompMileage:m.medianCompMileage,_comps:m.comps,updatedAt:new Date().toISOString()},[logEvent('Market Data',`mid ${fmt(m.marketMid)} · ${note}`,user)]);aRef.current=next;return next;});
+      setA(p=>{const next=withLog({...p,marketLow:m.marketLow,marketMid:m.marketMid,marketHigh:m.marketHigh,marketAvgPrice:m.marketAvgPrice,activeComps:m.activeComps,marketDaysSupply:m.marketDaysSupply,marketDaySupply:m.marketDaySupply,medianDaysListed:m.medianDaysListed,_soldStats:m.soldStats,marketDataFetched:m.marketDataFetched,_marketMeta:m.meta,_medianCompMileage:m.medianCompMileage,_comps:m.comps,updatedAt:new Date().toISOString()},[logEvent('Market Data',`mid ${fmt(m.marketMid)} · ${note}`,user)]);aRef.current=next;return next;});
       setIsDirty(true);
       showToast(`Market: ${note}`,'success');
     }catch(e){showToast(e.message||'Market data unavailable','error');}
@@ -1182,6 +1213,10 @@ function AppraisalForm({initial,onSave,onBack,showToast,onConvert,onFinalize,onU
         </div>
       </Card>
 
+      {/* Two-column layout: sticky Vehicle panel on the left, everything else right */}
+      <div className="two-col" style={{display:'grid',gridTemplateColumns:'minmax(300px, 360px) 1fr',gap:14,alignItems:'start'}}>
+        {/* LEFT RAIL — sticks to viewport as the right column scrolls */}
+        <div className="appraisal-left" style={{position:'sticky',top:14,maxHeight:'calc(100vh - 28px)',overflowY:'auto'}}>
       <Sec title="Vehicle" icon={Car} accent>
         {/* VIN row */}
         <div style={{display:'flex',gap:8,marginBottom:10,alignItems:'center'}}>
@@ -1226,6 +1261,10 @@ function AppraisalForm({initial,onSave,onBack,showToast,onConvert,onFinalize,onU
           </div>
         )}
       </Sec>
+        </div>{/* end LEFT RAIL */}
+
+        {/* RIGHT COLUMN — all other sections scroll past the sticky vehicle panel */}
+        <div style={{minWidth:0}}>
 
       <Sec title="Carfax Canada" icon={ShieldCheck} badge={a.carfax?(a.carfax.clean?'✓ Clean':'⚠ Issues Found'):'Not Pulled'}>
         <CarfaxBadge carfax={a.carfax} onFetch={pullCarfax} loading={cl}/>
@@ -1303,12 +1342,12 @@ function AppraisalForm({initial,onSave,onBack,showToast,onConvert,onFinalize,onU
             {/* Key metrics */}
             <div style={{display:'grid',gridTemplateColumns:'repeat(2,1fr)',gap:8,marginBottom:10}}>
               {[
-                {l:'Comps Used',v:a._marketMeta?a._marketMeta.comps:a.activeComps},
-                {l:'Median Days Listed',v:a.marketDaysSupply?`${a.marketDaysSupply}d`:null},
-                {l:'Active Now',v:a.activeComps},
-                {l:'Median Comp KM',v:a._medianCompMileage?fmtN(a._medianCompMileage)+' km':null},
+                {l:'Active Comps',v:a._marketMeta?a._marketMeta.activeCount:a.activeComps,t:'Unique active comparable listings the price stats are built from'},
+                {l:'Market Day Supply',v:(a.marketDaySupply!=null)?a.marketDaySupply:null,t:'Days for the local market to sell current active inventory at the recent sales rate (active ÷ sold × 45). Lower = sells faster.'},
+                {l:'Median Days Listed',v:(a.medianDaysListed!=null?a.medianDaysListed:a.marketDaysSupply)??null,t:'Median days a current comparable listing has been on the market'},
+                {l:'Median Comp KM',v:a._medianCompMileage?fmtN(a._medianCompMileage)+' km':null,t:'Median odometer across active comparable listings'},
               ].map(s=>(
-                <div key={s.l} style={{background:C.navyMuted,borderRadius:7,padding:'8px 12px',display:'flex',justifyContent:'space-between',alignItems:'center'}}>
+                <div key={s.l} title={s.t} style={{background:C.navyMuted,borderRadius:7,padding:'8px 12px',display:'flex',justifyContent:'space-between',alignItems:'center',cursor:'help'}}>
                   <span style={{fontSize:11,color:C.textLight,fontWeight:600}}>{s.l}</span>
                   <span style={{fontSize:13,fontWeight:700,color:C.navy,fontFamily:'monospace'}}>{s.v||s.v===0?s.v:'—'}</span>
                 </div>
@@ -1327,32 +1366,31 @@ function AppraisalForm({initial,onSave,onBack,showToast,onConvert,onFinalize,onU
                 </div>
               );
             })()}
-            {/* Historical Data for Similar Inventory */}
-            {a.make&&a.model&&(()=>{
-              const hist=mockHistoricalData(a.make,a.model);
+            {/* Recently Sold — REAL market data (dropped listings), kept separate
+                from the active price stats above. Never feeds Low/Mid/High. */}
+            {a._soldStats&&a._soldStats.count>0&&(()=>{
+              const s=a._soldStats;
               return(
                 <div style={{background:'#fff',border:`1px solid ${C.border}`,borderRadius:8,overflow:'hidden',marginBottom:2}}>
-                  <div style={{padding:'8px 12px',background:C.navyMuted,borderBottom:`1px solid ${C.border}`,fontSize:11,fontWeight:700,color:C.navy}}>
-                    Historical Data — Similar Inventory at Your Store
+                  <div style={{padding:'8px 12px',background:C.navyMuted,borderBottom:`1px solid ${C.border}`,fontSize:11,fontWeight:700,color:C.navy,display:'flex',justifyContent:'space-between',alignItems:'center'}}>
+                    <span>Recently Sold — Comparable Market</span>
+                    <span style={{fontSize:10,color:C.textLight,fontWeight:500}}>excluded from pricing above</span>
                   </div>
-                  <div style={{display:'grid',gridTemplateColumns:'1fr 1fr'}}>
+                  <div style={{display:'grid',gridTemplateColumns:'repeat(4,1fr)'}}>
                     {[
-                      {label:'In Stock',data:hist.inStock,cols:[{l:'Units',v:hist.inStock.count},{l:'Avg Age',v:hist.inStock.avgAge+'d'},{l:'Avg Price',v:fmt(hist.inStock.avgPrice)},{l:'Avg KM',v:fmtN(hist.inStock.avgOdo)}]},
-                      {label:'Sold',data:hist.sold,cols:[{l:'Units',v:hist.sold.count},{l:'Avg DTS',v:hist.sold.avgDts+'d'},{l:'Avg Price',v:fmt(hist.sold.avgPrice)},{l:'Avg KM',v:fmtN(hist.sold.avgOdo)}]},
-                    ].map(side=>(
-                      <div key={side.label} style={{padding:'10px 12px',borderRight:side.label==='In Stock'?`1px solid ${C.border}`:'none'}}>
-                        <div style={{fontSize:10,fontWeight:700,color:C.textMid,textTransform:'uppercase',letterSpacing:1,marginBottom:8}}>{side.label}</div>
-                        {side.cols.map(c=>(
-                          <div key={c.l} style={{display:'flex',justifyContent:'space-between',marginBottom:4}}>
-                            <span style={{fontSize:11,color:C.textLight}}>{c.l}</span>
-                            <span style={{fontSize:11,fontWeight:700,color:C.navy,fontFamily:'monospace'}}>{c.v}</span>
-                          </div>
-                        ))}
+                      {l:'Sold',v:s.count},
+                      {l:'Avg Days to Sell',v:s.avgDts!=null?s.avgDts:'—'},
+                      {l:'Avg Sold Price',v:s.avgPrice!=null?fmt(s.avgPrice):'—'},
+                      {l:'Avg KM',v:s.avgOdo!=null?fmtN(s.avgOdo):'—'},
+                    ].map((c,i)=>(
+                      <div key={c.l} style={{padding:'10px 12px',borderRight:i<3?`1px solid ${C.border}`:'none',textAlign:'center'}}>
+                        <div style={{fontSize:10,fontWeight:600,color:C.textLight,marginBottom:4}}>{c.l}</div>
+                        <div style={{fontSize:13,fontWeight:800,color:C.navy,fontFamily:'monospace'}}>{c.v}</div>
                       </div>
                     ))}
                   </div>
                   <div style={{padding:'6px 12px',background:'rgba(0,0,0,0.02)',borderTop:`1px solid ${C.border}`,fontSize:10,color:C.textLight}}>
-                    ⚠ Mock data — connect DMS email sync for real dealer history
+                    Based on comparable listings that dropped off the market (likely sold). Shown for context only.
                   </div>
                 </div>
               );
@@ -1481,6 +1519,9 @@ function AppraisalForm({initial,onSave,onBack,showToast,onConvert,onFinalize,onU
       <Sec title="Action Log" icon={Activity} open={false} badge={(a.log||[]).length||null}>
         <ActionLog entries={a.log}/>
       </Sec>
+
+        </div>{/* end RIGHT COLUMN */}
+      </div>{/* end two-col */}
 
       <div style={{display:'flex',justifyContent:'space-between',alignItems:'center',flexWrap:'wrap',gap:8,padding:'4px 4px 8px',fontSize:11,color:C.textLight}}>
         <span>Created {new Date(a.createdAt).toLocaleString('en-CA',{dateStyle:'medium',timeStyle:'short'})}</span>
@@ -1614,7 +1655,7 @@ function VehicleDetail({vehicle:iv,onSave,onBack,showToast,onShowSticker=()=>{},
       const m=await fetchMarketData(v.vin,postal);
       if(!m.found){showToast(m.message||'No Canadian comps found','warning');setMl(false);return;}
       const note=`${m.meta.comps} comps · ${m.meta.matchMode==='trim'?'trim match':'model match'}${m.meta.widened?' (widened)':''}`;
-      up(withLog({...vRef.current,marketLow:m.marketLow,marketMid:m.marketMid,marketHigh:m.marketHigh,marketAvgPrice:m.marketAvgPrice,activeComps:m.activeComps,marketDaysSupply:m.marketDaysSupply,marketDataFetched:m.marketDataFetched,_marketMeta:m.meta,_medianCompMileage:m.medianCompMileage,_comps:m.comps},[logEvent('Market Data',`mid ${fmt(m.marketMid)} · ${note}`,user)]));
+      up(withLog({...vRef.current,marketLow:m.marketLow,marketMid:m.marketMid,marketHigh:m.marketHigh,marketAvgPrice:m.marketAvgPrice,activeComps:m.activeComps,marketDaysSupply:m.marketDaysSupply,marketDaySupply:m.marketDaySupply,medianDaysListed:m.medianDaysListed,_soldStats:m.soldStats,marketDataFetched:m.marketDataFetched,_marketMeta:m.meta,_medianCompMileage:m.medianCompMileage,_comps:m.comps},[logEvent('Market Data',`mid ${fmt(m.marketMid)} · ${note}`,user)]));
       showToast(`Market: ${note}`,'success');
     }catch(e){showToast(e.message||'Market data unavailable','error');}
     finally{setMl(false);}
@@ -1803,13 +1844,43 @@ function VehicleDetail({vehicle:iv,onSave,onBack,showToast,onShowSticker=()=>{},
                 <div>
                   <div style={{display:'grid',gridTemplateColumns:'repeat(3,1fr)',gap:8,marginBottom:10}}>{[{l:'Market Low',v:fmt(v.marketLow),c:C.green},{l:'Market Mid',v:fmt(v.marketMid),c:C.navy},{l:'Market High',v:fmt(v.marketHigh),c:C.orange}].map(s=><div key={s.l} style={{background:'#fff',borderRadius:7,padding:'8px 10px',border:`1px solid ${C.border}`,textAlign:'center'}}><div style={{fontSize:9,color:C.textLight,fontWeight:600,marginBottom:2}}>{s.l}</div><div style={{fontSize:15,fontWeight:800,color:s.c,fontFamily:'monospace'}}>{s.v}</div></div>)}</div>
                   <div style={{display:'grid',gridTemplateColumns:'repeat(2,1fr)',gap:8,marginBottom:10}}>
-                    {[{l:'Days Supply',v:v.marketDaysSupply},{l:'Like Mine',v:v.likeMineSupply},{l:'Avg KM',v:v.marketAvgOdometer?fmtN(v.marketAvgOdometer)+' km':null},{l:'Avg Days to Sell',v:v.avgDaysToSell?v.avgDaysToSell+'d':null}].map(s=>(
-                      <div key={s.l} style={{background:'#fff',borderRadius:7,padding:'7px 10px',border:`1px solid ${C.border}`,display:'flex',justifyContent:'space-between'}}>
+                    {[
+                      {l:'Active Comps',v:v._marketMeta?v._marketMeta.activeCount:v.activeComps,t:'Unique active comparable listings'},
+                      {l:'Market Day Supply',v:(v.marketDaySupply!=null)?v.marketDaySupply:null,t:'Days to sell current active inventory at recent sales rate (active ÷ sold × 45)'},
+                      {l:'Median Days Listed',v:(v.medianDaysListed!=null?v.medianDaysListed:v.marketDaysSupply)??null,t:'Median days a current comp has been listed'},
+                      {l:'Median Comp KM',v:v._medianCompMileage?fmtN(v._medianCompMileage)+' km':(v.marketAvgOdometer?fmtN(v.marketAvgOdometer)+' km':null),t:'Median odometer across active comps'},
+                    ].map(s=>(
+                      <div key={s.l} title={s.t} style={{background:'#fff',borderRadius:7,padding:'7px 10px',border:`1px solid ${C.border}`,display:'flex',justifyContent:'space-between',cursor:'help'}}>
                         <span style={{fontSize:10,color:C.textLight}}>{s.l}</span>
-                        <span style={{fontSize:11,fontWeight:700,color:C.navy,fontFamily:'monospace'}}>{s.v||'—'}</span>
+                        <span style={{fontSize:11,fontWeight:700,color:C.navy,fontFamily:'monospace'}}>{s.v||s.v===0?s.v:'—'}</span>
                       </div>
                     ))}
                   </div>
+                  {/* Recently Sold — real market stats, excluded from pricing */}
+                  {v._soldStats&&v._soldStats.count>0&&(()=>{
+                    const s=v._soldStats;
+                    return(
+                      <div style={{background:'#fff',border:`1px solid ${C.border}`,borderRadius:8,overflow:'hidden',marginBottom:10}}>
+                        <div style={{padding:'7px 10px',background:C.navyMuted,borderBottom:`1px solid ${C.border}`,fontSize:10,fontWeight:700,color:C.navy,display:'flex',justifyContent:'space-between',alignItems:'center'}}>
+                          <span>Recently Sold — Comparable Market</span>
+                          <span style={{fontSize:9,color:C.textLight,fontWeight:500}}>excluded from pricing</span>
+                        </div>
+                        <div style={{display:'grid',gridTemplateColumns:'repeat(4,1fr)'}}>
+                          {[
+                            {l:'Sold',v:s.count},
+                            {l:'Avg Days to Sell',v:s.avgDts!=null?s.avgDts:'—'},
+                            {l:'Avg Sold Price',v:s.avgPrice!=null?fmt(s.avgPrice):'—'},
+                            {l:'Avg KM',v:s.avgOdo!=null?fmtN(s.avgOdo):'—'},
+                          ].map((c,i)=>(
+                            <div key={c.l} style={{padding:'8px 8px',borderRight:i<3?`1px solid ${C.border}`:'none',textAlign:'center'}}>
+                              <div style={{fontSize:9,fontWeight:600,color:C.textLight,marginBottom:3}}>{c.l}</div>
+                              <div style={{fontSize:12,fontWeight:800,color:C.navy,fontFamily:'monospace'}}>{c.v}</div>
+                            </div>
+                          ))}
+                        </div>
+                      </div>
+                    );
+                  })()}
                   {/* Odometer Adjustment */}
                   {v.odometer&&v.marketAvgOdometer&&(()=>{
                     const adj=odometerAdj(v.odometer,v.marketAvgOdometer);
@@ -2240,6 +2311,7 @@ export default function Vantage() {
       .comp-table { font-size: 11px !important; }
       .stat-grid-4 { grid-template-columns: repeat(2, 1fr) !important; }
       .two-col { grid-template-columns: 1fr !important; }
+      .appraisal-left { position: static !important; max-height: none !important; overflow: visible !important; }
     }
     @media (max-width: 480px) {
       .dash-tiles { grid-template-columns: 1fr !important; }
