@@ -167,7 +167,7 @@ const API_BASE = (import.meta.env.VITE_API_URL || 'http://localhost:3001').repla
 
 // NHTSA's Trim field can be a comma-separated list of candidate trims when the
 // VIN doesn't pin down an exact one, e.g. "L, LE, LE w/Tech pkg, LE - US Source".
-// Parse it into clean, distinct base trims the user can pick from (like vAuto).
+// Parse it into clean, distinct base trims the user can pick from.
 function parseTrimOptions(rawTrim, rawSeries) {
   // Only use the Trim field for options; Series is often a generic code
   // ("18 Series", "F-Series") that isn't a real trim choice.
@@ -305,7 +305,7 @@ async function decodeVIN(vin) {
     } catch { /* best-effort */ }
   }
   if (!out.year && !out.make && !out.model) throw new Error('VIN not found')
-  // Parse candidate trims (vAuto-style picker when the VIN is ambiguous).
+  // Parse candidate trims for a picker when the VIN is ambiguous.
   const trimOptions = parseTrimOptions(out._rawTrim, out._rawSeries)
   out.trimOptions = trimOptions
   // If exactly one clean trim, prefill it; if several, leave series blank so the
@@ -604,7 +604,7 @@ function ManualVehicleEntry({ data, onSet, postal, onMarket, busy }) {
 
 // Trim picker: when the VIN decode returns multiple candidate trims, show a
 // dropdown (with an "Other…" escape to type a custom value); otherwise a plain
-// editable input. Mirrors vAuto's behaviour when it can't pin the exact trim.
+// editable input, for when the decode can't pin the exact trim.
 function TrimField({value,onChange,options}){
   const opts = Array.isArray(options) ? options : [];
   const multi = opts.length > 1;
@@ -1683,7 +1683,7 @@ function AppraisalForm({initial,onSave,onBack,showToast,onConvert,onFinalize,onU
                 <div style={cardBg}><div style={lbl}>All-In Cost</div><div style={{fontSize:15,fontWeight:800,color:C.navy,fontFamily:'monospace'}}>{fmt(totalCost)}</div></div>
                 <div style={cardBg}><div style={lbl}>Proj. Gross</div><div style={{fontSize:15,fontWeight:800,color:projGross!==null&&projGross<0?C.red:C.green,fontFamily:'monospace'}}>{projGross!==null?fmt(projGross):'—'}</div></div>
                 <div style={cardBg}><div style={lbl}>Cost / Market</div><div style={{fontSize:15,fontWeight:800,fontFamily:'monospace',color:adjPct<=92?C.green:adjPct<=100?C.navy:C.red}}>{adjPct}%</div><div style={{fontSize:9,color:C.textLight,marginTop:1}}>Target 85–95%</div></div>
-                {grade&&<div style={cardBg}><div style={lbl}>Provision Grade</div><div style={{fontSize:20,fontWeight:900,color:grade.grade==='A'?C.green:grade.grade==='B'?C.blue:grade.grade==='C+'?C.orange:C.red}}>{grade.grade}</div></div>}
+                {grade&&<div style={cardBg} title="Based on market day supply (how fast this vehicle sells vs. how many are listed) — reflects the market, not your pricing. A = sells fast, D = slow mover."><div style={lbl}>Demand Grade</div><div style={{fontSize:20,fontWeight:900,color:grade.grade==='A'?C.green:grade.grade==='B'?C.blue:grade.grade==='C+'?C.orange:C.red}}>{grade.grade}</div></div>}
                 {askingPrice&&<div style={cardBg}><div style={lbl}>Suggested Retail</div><div style={{fontSize:15,fontWeight:800,color:C.navy,fontFamily:'monospace'}}>{fmt(askingPrice)}</div><div style={{fontSize:9,color:C.textLight,marginTop:1}}>98% of market mid</div></div>}
               </div>
             </div>

@@ -283,7 +283,7 @@ function computeMarket(listings) {
 // Stats for SOLD (dropped) listings, kept SEPARATE from the active market math.
 // Sold cars must never feed Low/Mid/High or the active median — they're shown
 // in their own panel (avg sold price, avg days-to-sell, avg odometer) the way
-// vAuto segregates its "Sold" column.
+// Sold listings are segregated from active ones.
 function computeSoldStats(listings) {
   const rows = listings
     .map(l => ({
@@ -306,7 +306,7 @@ function computeSoldStats(listings) {
   }
 }
 
-// Market Day Supply (vAuto-style): how many days the local market would take to
+// Market Day Supply: how many days the local market would take to
 // sell through current ACTIVE comparable inventory at the recent rate of sale.
 //   MDS = (active comparable listings ÷ sold in the window) × window_days
 // Lower = sells fast / liquid; higher = slow mover. Returns null if we can't
