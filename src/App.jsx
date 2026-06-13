@@ -165,6 +165,30 @@ const DEFAULT_DEALER = {name:'Your Dealership',logo:null,address:'123 Main Stree
 // no trailing slash) in Netlify env vars. Falls back to local dev server.
 const API_BASE = (import.meta.env.VITE_API_URL || 'http://localhost:3001').replace(/\/$/, '');
 
+// NHTSA's Trim field can be a comma-separated list of candidate trims when the
+// VIN doesn't pin down an exact one, e.g. "L, LE, LE w/Tech pkg, LE - US Source".
+// Parse it into clean, distinct base trims the user can pick from (like vAuto).
+function parseTrimOptions(rawTrim, rawSeries) {
+  // Only use the Trim field for options; Series is often a generic code
+  // ("18 Series", "F-Series") that isn't a real trim choice.
+  const raw = rawTrim || ''
+  if (!raw) return []
+  const seen = new Set()
+  const opts = []
+  for (let part of raw.split(',')) {
+    part = part.trim()
+    if (!part) continue
+    // Cut everything from "w/" onward, and drop "- US Source" style suffixes.
+    let base = part.split(/w\//i)[0]
+    base = base.split(/\s+-\s+/)[0]
+    base = base.trim()
+    if (!base) continue
+    const key = base.toLowerCase()
+    if (!seen.has(key) && base.length <= 16) { seen.add(key); opts.push(base) }
+  }
+  return opts
+}
+
 async function decodeVIN(vin) {
   const V = vin.toUpperCase();
   const res = await fetch(`https://vpic.nhtsa.dot.gov/api/vehicles/decodevinvalues/${V}?format=json`)
@@ -185,6 +209,7 @@ async function decodeVIN(vin) {
       bodyType: obj.BodyClass || '', engine: engineParts.join(' '),
       transmission: obj.TransmissionStyle || '', drivetrain: obj.DriveType || '',
       extColour: '', intColour: '',
+      _rawTrim: obj.Trim || '', _rawSeries: obj.Series || '',
     }
   }
   let out = pick(r);
@@ -209,11 +234,20 @@ async function decodeVIN(vin) {
           series: out.series || v2.series, bodyType: out.bodyType || v2.bodyType,
           engine: out.engine || v2.engine, transmission: out.transmission || v2.transmission,
           drivetrain: out.drivetrain || v2.drivetrain, extColour: '', intColour: '',
+          _rawTrim: out._rawTrim || v2._rawTrim, _rawSeries: out._rawSeries || v2._rawSeries,
         }
       }
     } catch { /* best-effort */ }
   }
   if (!out.year && !out.make && !out.model) throw new Error('VIN not found')
+  // Parse candidate trims (vAuto-style picker when the VIN is ambiguous).
+  const trimOptions = parseTrimOptions(out._rawTrim, out._rawSeries)
+  out.trimOptions = trimOptions
+  // If exactly one clean trim, prefill it; if several, leave series blank so the
+  // user picks. If the existing series is a messy multi-trim string, clear it.
+  if (trimOptions.length === 1) out.series = trimOptions[0]
+  else if (trimOptions.length > 1 && (out.series || '').includes(',')) out.series = ''
+  delete out._rawTrim; delete out._rawSeries
   return out
 }
 
@@ -224,11 +258,12 @@ async function generateDescription(v) {
 }
 
 // Real market data via VinAudit (Canadian comps). Needs vin + dealer postal.
-async function fetchMarketData(vin, postal, radius = 250, drivetrain = '') {
+async function fetchMarketData(vin, postal, radius = 250, drivetrain = '', trim = '') {
   if (!vin || vin.length !== 17) throw new Error('Valid VIN required');
   if (!postal) throw new Error('Dealer postal code required (set it in Settings)');
   let url = `${API_BASE}/api/market/${vin}?postal=${encodeURIComponent(postal)}&radius=${radius}`;
   if (drivetrain) url += `&drivetrain=${encodeURIComponent(drivetrain)}`;
+  if (trim) url += `&trim=${encodeURIComponent(trim)}`;
   // Fetch with one retry — Railway can cold-start, dropping the first request.
   let res;
   for (let attempt = 0; attempt < 2; attempt++) {
@@ -460,6 +495,35 @@ function Input({value,onChange,placeholder,type='text',style:sx={}}) {
 function Sel({value,onChange,options,placeholder}) {
   return <select value={value} onChange={e=>onChange(e.target.value)} style={{width:'100%',padding:'8px 12px',background:'#fff',border:`1px solid ${C.borderStr}`,borderRadius:6,fontSize:13,color:value?C.textDark:C.textLight,fontFamily:'inherit',outline:'none',appearance:'none'}}><option value="">{placeholder||'Select...'}</option>{options.map(o=><option key={o.value||o} value={o.value||o}>{o.label||o}</option>)}</select>;
 }
+// Trim picker: when the VIN decode returns multiple candidate trims, show a
+// dropdown (with an "Other…" escape to type a custom value); otherwise a plain
+// editable input. Mirrors vAuto's behaviour when it can't pin the exact trim.
+function TrimField({value,onChange,options}){
+  const opts = Array.isArray(options) ? options : [];
+  const multi = opts.length > 1;
+  const [custom,setCustom] = useState(false);
+  const inList = opts.some(o=>o.toLowerCase()===(value||'').toLowerCase());
+  if(!multi && !custom){
+    return <Input value={value} onChange={onChange} placeholder=""/>;
+  }
+  if(custom || (value && !inList)){
+    return (
+      <div style={{display:'flex',gap:4}}>
+        <Input value={value} onChange={onChange} placeholder="Type trim"/>
+        {multi&&<button onClick={()=>{setCustom(false);onChange(opts[0]||'');}} title="Back to list" style={{flexShrink:0,padding:'0 8px',border:`1px solid ${C.borderStr}`,borderRadius:6,background:'#fff',cursor:'pointer',color:C.textMid,fontSize:11}}>↩</button>}
+      </div>
+    );
+  }
+  return (
+    <select value={inList?value:''} onChange={e=>{ if(e.target.value==='__other'){setCustom(true);onChange('');} else onChange(e.target.value); }}
+      style={{width:'100%',padding:'8px 12px',background:'#fff',border:`1px solid ${value?C.navy:C.orange}`,borderRadius:6,fontSize:13,color:value?C.textDark:C.textLight,fontFamily:'inherit',outline:'none',appearance:'none'}}>
+      <option value="">Select trim…</option>
+      {opts.map(o=><option key={o} value={o}>{o}</option>)}
+      <option value="__other">Other / type manually…</option>
+    </select>
+  );
+}
+
 function Field({label,children,half,third}) {
   return <div style={{flex:third?'0 0 calc(33.3% - 8px)':half?'0 0 calc(50% - 6px)':'1 1 100%',minWidth:0}}><label style={{display:'block',fontSize:11,fontWeight:600,color:C.textMid,marginBottom:5}}>{label}</label>{children}</div>;
 }
@@ -1303,7 +1367,7 @@ function AppraisalForm({initial,onSave,onBack,showToast,onConvert,onFinalize,onU
     if(!postal){showToast('Set your dealer postal code in Settings first','error');return;}
     setMl(true);
     try{
-      const m=await fetchMarketData(a.vin,postal,a.searchDistance||250,a.drivetrain||"");
+      const m=await fetchMarketData(a.vin,postal,a.searchDistance||250,a.drivetrain||"",a.series||"");
       if(!m.found){showToast(m.message||'No Canadian comps found for this vehicle','warning');setMl(false);return;}
       const note=`${m.meta.comps} comps · ${m.meta.matchMode==='trim'?'trim match':'model match'}${m.meta.widened?' (widened)':''}`;
       setA(p=>{const next=withLog({...p,marketLow:m.marketLow,marketMid:m.marketMid,marketHigh:m.marketHigh,marketAvgPrice:m.marketAvgPrice,activeComps:m.activeComps,marketDaysSupply:m.marketDaysSupply,marketDaySupply:m.marketDaySupply,medianDaysListed:m.medianDaysListed,_soldStats:m.soldStats,marketDataFetched:m.marketDataFetched,_marketMeta:m.meta,_medianCompMileage:m.medianCompMileage,_comps:m.comps,updatedAt:new Date().toISOString()},[logEvent('Market Data',`mid ${fmt(m.marketMid)} · ${note}`,user)]);aRef.current=next;return next;});
@@ -1433,8 +1497,10 @@ function AppraisalForm({initial,onSave,onBack,showToast,onConvert,onFinalize,onU
             <div style={{display:'grid',gridTemplateColumns:'repeat(3,1fr)',gap:8,marginBottom:8}}>
               {[{f:'year',l:'Year',ph:''},{f:'make',l:'Make',ph:''},{f:'model',l:'Model',ph:''},{f:'series',l:'Trim',ph:''},{f:'bodyType',l:'Body',ph:''},{f:'engine',l:'Engine',ph:''},{f:'odometer',l:'Odometer (km)',ph:'',t:'number'},{f:'extColour',l:'Ext. Colour',ph:''},{f:'intColour',l:'Int. Colour',ph:''}].map(x=>(
                 <div key={x.f} style={{minWidth:0}}>
-                  <label style={{display:'block',fontSize:10,fontWeight:600,color:C.textMid,marginBottom:4}}>{x.l}</label>
-                  <Input value={a[x.f]} onChange={v=>set(x.f,v)} placeholder={x.ph} type={x.t||'text'}/>
+                  <label style={{display:'block',fontSize:10,fontWeight:600,color:C.textMid,marginBottom:4}}>{x.l}{x.f==='series'&&a.trimOptions?.length>1&&!a.series&&<span style={{color:C.orange,marginLeft:4}}>• pick</span>}</label>
+                  {x.f==='series'
+                    ? <TrimField value={a.series} onChange={v=>set('series',v)} options={a.trimOptions}/>
+                    : <Input value={a[x.f]} onChange={v=>set(x.f,v)} placeholder={x.ph} type={x.t||'text'}/>}
                 </div>
               ))}
               <div style={{minWidth:0}}>
@@ -2079,7 +2145,7 @@ function VehicleDetail({vehicle:iv,onSave,onBack,showToast,onShowSticker=()=>{},
     if(!postal){showToast('Set your dealer postal code in Settings first','error');return;}
     setMl(true);
     try{
-      const m=await fetchMarketData(v.vin,postal,v.searchDistance||250,v.drivetrain||"");
+      const m=await fetchMarketData(v.vin,postal,v.searchDistance||250,v.drivetrain||"",v.series||"");
       if(!m.found){showToast(m.message||'No Canadian comps found','warning');setMl(false);return;}
       const note=`${m.meta.comps} comps · ${m.meta.matchMode==='trim'?'trim match':'model match'}${m.meta.widened?' (widened)':''}`;
       up(withLog({...vRef.current,marketLow:m.marketLow,marketMid:m.marketMid,marketHigh:m.marketHigh,marketAvgPrice:m.marketAvgPrice,activeComps:m.activeComps,marketDaysSupply:m.marketDaysSupply,marketDaySupply:m.marketDaySupply,medianDaysListed:m.medianDaysListed,_soldStats:m.soldStats,marketDataFetched:m.marketDataFetched,_marketMeta:m.meta,_medianCompMileage:m.medianCompMileage,_comps:m.comps},[logEvent('Market Data',`mid ${fmt(m.marketMid)} · ${note}`,user)]));
@@ -2132,8 +2198,10 @@ function VehicleDetail({vehicle:iv,onSave,onBack,showToast,onShowSticker=()=>{},
                 <div style={{display:'grid',gridTemplateColumns:'repeat(3,1fr)',gap:8,marginBottom:8}}>
                   {[{f:'year',l:'Year',ph:''},{f:'make',l:'Make',ph:''},{f:'model',l:'Model',ph:''},{f:'series',l:'Trim',ph:''},{f:'bodyType',l:'Body',ph:''},{f:'engine',l:'Engine',ph:''},{f:'odometer',l:'KM',ph:'',t:'number'},{f:'extColour',l:'Ext. Colour',ph:''},{f:'intColour',l:'Int. Colour',ph:''}].map(x=>(
                     <div key={x.f} style={{minWidth:0}}>
-                      <label style={{display:'block',fontSize:10,fontWeight:600,color:C.textMid,marginBottom:4}}>{x.l}</label>
-                      <Input value={v[x.f]} onChange={val=>up({[x.f]:val})} placeholder={x.ph} type={x.t||'text'}/>
+                      <label style={{display:'block',fontSize:10,fontWeight:600,color:C.textMid,marginBottom:4}}>{x.l}{x.f==='series'&&v.trimOptions?.length>1&&!v.series&&<span style={{color:C.orange,marginLeft:4}}>• pick</span>}</label>
+                      {x.f==='series'
+                        ? <TrimField value={v.series} onChange={val=>up({series:val})} options={v.trimOptions}/>
+                        : <Input value={v[x.f]} onChange={val=>up({[x.f]:val})} placeholder={x.ph} type={x.t||'text'}/>}
                     </div>
                   ))}
                   <div style={{minWidth:0}}><label style={{display:'block',fontSize:10,fontWeight:600,color:C.textMid,marginBottom:4}}>Transmission</label><Sel value={v.transmission} onChange={val=>up({transmission:val})} options={['Automatic','Manual','CVT','DCT']}/></div>

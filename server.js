@@ -198,6 +198,29 @@ function detectDrive(text) {
   return normalizeDrive(text)
 }
 
+// Reduce a trim string to a clean token set for matching, dropping drivetrain
+// and package noise so "LE FWD" and "LE w/Tech" both reduce to "le".
+function normalizeTrim(s) {
+  let t = (s || '').toString().toLowerCase()
+  if (!t) return ''
+  t = t
+    .replace(/\b(awd|fwd|rwd|4wd|2wd|4x4|4x2|all.?wheel|front.?wheel|rear.?wheel)\b/g, ' ')
+    .replace(/\bw\/.*$/g, ' ')
+    .replace(/\b(package|pkg|convenience|tech|premium|plus|cvt|sedan|hatchback|us|canada|source)\b/g, ' ')
+    .replace(/[^a-z0-9 ]+/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim()
+  return t
+}
+// True if the comp's normalized trim contains the subject trim token (whole-word).
+function trimContains(compTrim, subjectTrim) {
+  if (!subjectTrim) return true
+  const tokens = compTrim.split(' ').filter(Boolean)
+  const want = subjectTrim.split(' ').filter(Boolean)
+  // require every subject token to appear in the comp trim tokens
+  return want.every(w => tokens.includes(w))
+}
+
 function computeMarketFromComps(comps) {
   const priced = comps.filter(c => Number.isFinite(c.price) && c.price >= 1000)
   if (priced.length === 0) return null
@@ -583,6 +606,24 @@ app.get('/api/market/:vin', async (req, res) => {
       const fs = soldComps.filter(matchesDrive)
       // Only apply the filter if it doesn't wipe out the set (safety: if every
       // comp got a different drivetrain tag, we likely mis-detected — keep all).
+      if (fa.length >= Math.min(3, beforeA)) { activeComps = fa; soldComps = fs }
+    }
+
+    // ── Trim-level matching ──
+    // If the caller specifies the subject's trim (e.g. "LE"), keep only comps
+    // whose trim/title contains that trim token — so an LE subject isn't priced
+    // against SE/XSE. Matching is token-based and case-insensitive, and tolerant
+    // of suffixes ("LE FWD", "LE w/Tech"). Comps with no trim info are kept.
+    const subjectTrim = normalizeTrim(req.query.trim)
+    if (subjectTrim) {
+      const matchesTrim = c => {
+        const ct = normalizeTrim(`${c.trim || ''} ${c.title || ''}`)
+        if (!ct) return true               // no trim info → keep
+        return trimContains(ct, subjectTrim)
+      }
+      const beforeA = activeComps.length
+      const fa = activeComps.filter(matchesTrim)
+      const fs = soldComps.filter(matchesTrim)
       if (fa.length >= Math.min(3, beforeA)) { activeComps = fa; soldComps = fs }
     }
     const comps = [...activeComps, ...soldComps]
