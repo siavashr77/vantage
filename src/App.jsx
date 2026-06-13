@@ -1537,9 +1537,9 @@ function AppraisalForm({initial,onSave,onBack,showToast,onConvert,onFinalize,onU
 
       <Sec title="Offer & Pricing" icon={DollarSign} accent>
         <div style={{display:'flex',gap:10,flexWrap:'wrap',marginBottom:12}}>
-          <Field label="Recon Cost ($)"><Input value={a.reconCost} onChange={v=>set('reconCost',v)} type="number" placeholder="2,500"/></Field>
-          <Field label="Cert / Transport ($)"><Input value={a.certCost||''} onChange={v=>set('certCost',v)} type="number" placeholder="0"/></Field>
-          <Field label="Pack ($)"><Input value={a.pack||''} onChange={v=>set('pack',v)} type="number" placeholder="850"/></Field>
+          <Field label="Recon Cost ($)"><Input value={a.reconCost} onChange={v=>set('reconCost',v)} type="number" /></Field>
+          <Field label="Cert / Transport ($)"><Input value={a.certCost||''} onChange={v=>set('certCost',v)} type="number" /></Field>
+          <Field label="Pack ($)"><Input value={a.pack||''} onChange={v=>set('pack',v)} type="number" /></Field>
           <Field label="Your Offer / Appraised Value"><Input value={a.appraisedValue} onChange={v=>set('appraisedValue',v)} type="number" placeholder="Enter your offer" style={{fontSize:15,fontWeight:700}}/></Field>
           <Field label="Offer Valid Until"><Input value={a.offerExpiry||''} onChange={v=>set('offerExpiry',v)} type="date"/></Field>
         </div>
@@ -1574,7 +1574,7 @@ function AppraisalForm({initial,onSave,onBack,showToast,onConvert,onFinalize,onU
             </div>
             <div style={{flex:1,minWidth:100}}>
               <label style={{display:'block',fontSize:10,fontWeight:600,color:C.textMid,marginBottom:4}}>Lien Payoff ($)</label>
-              <input type="number" value={a.lienPayoff||''} onChange={e=>set('lienPayoff',e.target.value)} placeholder="0"
+              <input type="number" value={a.lienPayoff||''} onChange={e=>set('lienPayoff',e.target.value)} 
                 style={{width:'100%',padding:'7px 10px',background:'#fff',border:`1px solid ${C.borderStr}`,borderRadius:6,fontSize:12,color:C.textDark,fontFamily:'inherit',outline:'none',boxSizing:'border-box'}}/>
             </div>
           </div>

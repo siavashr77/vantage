@@ -317,24 +317,45 @@ function marketDaySupply(activeCount, soldInWindow, windowDays = 45) {
 }
 
 async function fetchListings({ vin, match, status, postal, radius, historyDays }) {
-  const params = new URLSearchParams({
-    key: VINAUDIT_KEY,
-    format: 'json',
-    country: 'canada',          // force Canadian market
-    listing_status: status,     // 'active' or 'dropped'
-    page_size: '100',
-    spec_vin: vin,
-    spec_vin_match: match,      // 'trim' (strict) or 'model'
-    postal,
-    radius: String(radius),
-  })
-  if (status === 'dropped' && historyDays) params.set('history_days', String(historyDays))
-  const url = `https://marketlistings.vinaudit.com/v1/listings?${params.toString()}`
-  const r = await fetch(url)
-  if (!r.ok) throw new Error(`VinAudit HTTP ${r.status}`)
-  const data = await r.json()
-  if (data.error) throw new Error(data.error)
-  return Array.isArray(data.listings) ? data.listings : []
+  // VinAudit returns at most page_size listings per request. Page 1 alone caps
+  // us at ~100 → ~50 after dedup, while the real market can be hundreds. Loop
+  // pages until exhausted so we see the whole market (like vAuto). Hard cap on
+  // pages to bound latency/cost.
+  const PAGE_SIZE = 100
+  const MAX_PAGES = 8            // up to ~800 raw listings
+  let all = []
+  for (let page = 1; page <= MAX_PAGES; page++) {
+    const params = new URLSearchParams({
+      key: VINAUDIT_KEY,
+      format: 'json',
+      country: 'canada',
+      listing_status: status,
+      page_size: String(PAGE_SIZE),
+      page: String(page),
+      spec_vin: vin,
+      spec_vin_match: match,
+      postal,
+      radius: String(radius),
+    })
+    if (status === 'dropped' && historyDays) params.set('history_days', String(historyDays))
+    const url = `https://marketlistings.vinaudit.com/v1/listings?${params.toString()}`
+    const r = await fetch(url)
+    if (!r.ok) throw new Error(`VinAudit HTTP ${r.status}`)
+    const data = await r.json()
+    if (data.error) throw new Error(data.error)
+    const listings = Array.isArray(data.listings) ? data.listings : []
+    // Safety: if VinAudit ignores the `page` param, page 2 would repeat page 1.
+    // Detect a fully-overlapping page by VIN+price signature and stop.
+    if (page > 1 && listings.length) {
+      const prevSig = new Set(all.map(l => `${l.vin || ''}|${l.listing_price || ''}|${l.listing_vdp_url || ''}`))
+      const allSeen = listings.every(l => prevSig.has(`${l.vin || ''}|${l.listing_price || ''}|${l.listing_vdp_url || ''}`))
+      if (allSeen) break   // param not honored — don't refetch the same data
+    }
+    all = all.concat(listings)
+    // Stop when this page returned fewer than a full page (no more data).
+    if (listings.length < PAGE_SIZE) break
+  }
+  return all
 }
 
 const MIN_COMPS = 5  // below this, widen match strictness
