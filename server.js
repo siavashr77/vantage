@@ -317,13 +317,13 @@ function marketDaySupply(activeCount, soldInWindow, windowDays = 45) {
 }
 
 async function fetchListings({ vin, match, status, postal, radius, historyDays }) {
-  // VinAudit returns at most page_size listings per request. Page 1 alone caps
-  // us at ~100 → ~50 after dedup, while the real market can be hundreds. Loop
-  // pages until exhausted so we see the whole market (like vAuto). Hard cap on
-  // pages to bound latency/cost.
+  // VinAudit paginates with `page` (1-based) + `page_size` (default/typical 100).
+  // The response includes `query_total` (total matches across all pages), so we
+  // page until we've pulled them all. Bounded by MAX_PAGES for latency/cost.
   const PAGE_SIZE = 100
-  const MAX_PAGES = 8            // up to ~800 raw listings
+  const MAX_PAGES = 12          // up to ~1200 raw listings
   let all = []
+  let queryTotal = null
   for (let page = 1; page <= MAX_PAGES; page++) {
     const params = new URLSearchParams({
       key: VINAUDIT_KEY,
@@ -344,16 +344,11 @@ async function fetchListings({ vin, match, status, postal, radius, historyDays }
     const data = await r.json()
     if (data.error) throw new Error(data.error)
     const listings = Array.isArray(data.listings) ? data.listings : []
-    // Safety: if VinAudit ignores the `page` param, page 2 would repeat page 1.
-    // Detect a fully-overlapping page by VIN+price signature and stop.
-    if (page > 1 && listings.length) {
-      const prevSig = new Set(all.map(l => `${l.vin || ''}|${l.listing_price || ''}|${l.listing_vdp_url || ''}`))
-      const allSeen = listings.every(l => prevSig.has(`${l.vin || ''}|${l.listing_price || ''}|${l.listing_vdp_url || ''}`))
-      if (allSeen) break   // param not honored — don't refetch the same data
-    }
+    if (queryTotal == null) queryTotal = Number(data.query_total) || null
     all = all.concat(listings)
-    // Stop when this page returned fewer than a full page (no more data).
+    // Stop conditions: short page (no more data), or we've pulled query_total.
     if (listings.length < PAGE_SIZE) break
+    if (queryTotal != null && all.length >= queryTotal) break
   }
   return all
 }
