@@ -82,6 +82,16 @@ function mockHistoricalData(make, model){
 }
 const fmtN = n => n?Number(n).toLocaleString('en-CA'):'—';
 const daysAgo = d => Math.floor((Date.now()-new Date(d))/86400000);
+// Friendly, consistent date display: "Jun 12, 2026" (avoids raw ISO look).
+const fmtDate = d => { try { return new Date(d).toLocaleDateString('en-CA',{month:'short',day:'numeric',year:'numeric'}); } catch { return ''; } };
+// Deterministic muted colour from a make name, for photoless thumbnails so the
+// inventory list is scannable (each brand gets a consistent placeholder colour).
+const makeColor = (make) => {
+  const palette = ['#3B5BA5','#5A7D9A','#6B5B95','#4A7C59','#9A6A4A','#7A5C8E','#436B8C','#8C6A43','#5E8C7D','#7D5E8C'];
+  const s = (make||'').toLowerCase();
+  let h = 0; for (let i=0;i<s.length;i++) h = (h*31 + s.charCodeAt(i)) >>> 0;
+  return palette[h % palette.length];
+};
 const stockNum = () => 'V'+Math.floor(10000+Math.random()*90000);
 // Guaranteed-unique id even when many are created in the same millisecond
 // (e.g. bulk import). Date.now() alone collides in tight loops → React key
@@ -1105,7 +1115,7 @@ function Dashboard({vehicles,appraisals,dealer,onNav,onOpenVehicle,onOpenApprais
             {appraisals.filter(a=>a.status==='in_progress').slice(0,5).map((a,i,arr)=>(
               <div key={a.id} onClick={()=>onOpenAppraisal(a)} style={{padding:'10px 14px',borderBottom:i<arr.length-1?`1px solid ${C.border}`:'none',display:'flex',alignItems:'center',gap:12,cursor:'pointer'}} onMouseEnter={e=>e.currentTarget.style.background=C.navyMuted} onMouseLeave={e=>e.currentTarget.style.background='transparent'}>
                 <Car size={16} color={C.navy}/>
-                <div style={{flex:1}}><div style={{fontWeight:600,fontSize:13,color:C.textDark}}>{[a.year,a.make,a.model].filter(Boolean).join(' ')||'Untitled'}</div><div style={{fontSize:11,color:C.textLight}}>{new Date(a.createdAt).toLocaleDateString('en-CA')}</div></div>
+                <div style={{flex:1}}><div style={{fontWeight:600,fontSize:13,color:C.textDark}}>{[a.year,a.make,a.model].filter(Boolean).join(' ')||'Untitled'}</div><div style={{fontSize:11,color:C.textLight}}>{fmtDate(a.createdAt)}</div></div>
                 <ABadge status={a.status}/>{a.appraisedValue&&<div style={{fontSize:13,fontWeight:700,color:C.navy,fontFamily:'monospace'}}>{fmt(a.appraisedValue)}</div>}
                 <ChevronRight size={13} color={C.textLight}/>
               </div>
@@ -1674,7 +1684,7 @@ function AppraisalForm({initial,onSave,onBack,showToast,onConvert,onFinalize,onU
           <Field label="Cert / Transport ($)"><Input value={a.certCost||''} onChange={v=>set('certCost',v)} type="number" /></Field>
           <Field label="Pack ($)"><Input value={a.pack||''} onChange={v=>set('pack',v)} type="number" /></Field>
           <Field label="Your Offer / Appraised Value"><Input value={a.appraisedValue} onChange={v=>set('appraisedValue',v)} type="number" placeholder="Enter your offer" style={{fontSize:15,fontWeight:700}}/></Field>
-          <Field label="Offer Valid Until"><Input value={a.offerExpiry||''} onChange={v=>set('offerExpiry',v)} type="date"/></Field>
+          <Field label="Offer Valid Until"><Input value={a.offerExpiry||''} onChange={v=>set('offerExpiry',v)} type="date"/>{a.offerExpiry&&<div style={{fontSize:9,color:C.textLight,marginTop:2}}>Expires {fmtDate(a.offerExpiry)}</div>}</Field>
         </div>
         {a.appraisedValue&&a.marketMid&&(()=>{
           const totalCost=Number(a.appraisedValue)+Number(a.reconCost||0)+Number(a.certCost||0)+Number(a.pack||0);
@@ -1906,7 +1916,7 @@ function AppraisalList({appraisals,onNew,onEdit}) {
         {Object.entries(AS).map(([k,s])=><div key={k} style={{background:C.card,borderRadius:7,padding:'10px 14px',border:`1px solid ${C.border}`}}><div style={{fontSize:10,color:C.textLight,fontWeight:600,marginBottom:3}}>{s.label}</div><div style={{fontSize:20,fontWeight:800,color:s.color,fontFamily:'monospace'}}>{appraisals.filter(a=>a.status===k).length}</div></div>)}
       </div>
       {filtered.length===0?<Card style={{padding:'40px',textAlign:'center'}}><ClipboardList size={32} color={C.navyBorder} style={{marginBottom:10}}/><div style={{fontSize:14,fontWeight:700,color:C.textMid,marginBottom:14}}>No appraisals yet</div><Btn onClick={onNew}><Plus size={13}/>New Appraisal</Btn></Card>:(
-        <Card style={{overflow:'hidden'}}>{filtered.map((a,i)=><div key={a.id} onClick={()=>onEdit(a)} style={{padding:'12px 16px',borderBottom:i<filtered.length-1?`1px solid ${C.border}`:'none',display:'flex',alignItems:'center',gap:12,cursor:'pointer',transition:'background 0.15s'}} onMouseEnter={e=>e.currentTarget.style.background=C.navyMuted} onMouseLeave={e=>e.currentTarget.style.background='transparent'}><div style={{width:38,height:38,background:C.navyMuted,borderRadius:8,display:'flex',alignItems:'center',justifyContent:'center',flexShrink:0}}><Car size={17} color={C.navy}/></div><div style={{flex:1}}><div style={{fontWeight:700,fontSize:13,color:C.navy}}>{[a.year,a.make,a.model,a.series].filter(Boolean).join(' ')||'Untitled'}</div><div style={{display:'flex',gap:10,marginTop:2}}>{a.vin&&<span style={{fontSize:11,fontFamily:'monospace',color:C.textLight}}>{a.vin}</span>}{a.odometer&&<span style={{fontSize:11,color:C.textLight}}>{fmtN(a.odometer)} km</span>}</div></div><ABadge status={a.status}/>{a.carfax&&<ShieldCheck size={14} color={a.carfax.clean?C.green:C.red}/>}{a.appraisedValue&&<div style={{fontSize:14,fontWeight:800,color:C.navy,fontFamily:'monospace'}}>{fmt(a.appraisedValue)}</div>}<div style={{fontSize:11,color:C.textLight,textAlign:'right'}}>{new Date(a.createdAt).toLocaleDateString('en-CA')}</div><ChevronRight size={13} color={C.textLight}/></div>)}</Card>
+        <Card style={{overflow:'hidden'}}>{filtered.map((a,i)=><div key={a.id} onClick={()=>onEdit(a)} style={{padding:'12px 16px',borderBottom:i<filtered.length-1?`1px solid ${C.border}`:'none',display:'flex',alignItems:'center',gap:12,cursor:'pointer',transition:'background 0.15s'}} onMouseEnter={e=>e.currentTarget.style.background=C.navyMuted} onMouseLeave={e=>e.currentTarget.style.background='transparent'}><div style={{width:38,height:38,background:makeColor(a.make),borderRadius:8,display:'flex',alignItems:'center',justifyContent:'center',flexShrink:0}}><span style={{fontSize:14,fontWeight:800,color:'#fff'}}>{(a.make||'?').charAt(0).toUpperCase()}</span></div><div style={{flex:1}}><div style={{fontWeight:700,fontSize:13,color:C.navy}}>{[a.year,a.make,a.model,a.series].filter(Boolean).join(' ')||'Untitled'}</div><div style={{display:'flex',gap:10,marginTop:2}}>{a.vin&&<span style={{fontSize:11,fontFamily:'monospace',color:C.textLight}}>{a.vin}</span>}{a.odometer&&<span style={{fontSize:11,color:C.textLight}}>{fmtN(a.odometer)} km</span>}</div></div><ABadge status={a.status}/>{a.carfax&&<ShieldCheck size={14} color={a.carfax.clean?C.green:C.red}/>}{a.appraisedValue&&<div style={{fontSize:14,fontWeight:800,color:C.navy,fontFamily:'monospace'}}>{fmt(a.appraisedValue)}</div>}<div style={{fontSize:11,color:C.textLight,textAlign:'right'}}>{fmtDate(a.createdAt)}</div><ChevronRight size={13} color={C.textLight}/></div>)}</Card>
       )}
     </div>
   );
@@ -2213,7 +2223,7 @@ function InventoryList({vehicles,onAdd,onImport,onEdit}) {
         filtered.map((v,i)=>{
           const days=daysAgo(v.createdAt);const p=pct(v.listPrice,v.marketMid);const aging=days>=30&&v.status==='available';
           return <div key={v.id} onClick={()=>onEdit(v)} style={{padding:'12px 16px',borderBottom:i<filtered.length-1?`1px solid ${C.border}`:'none',display:'flex',alignItems:'center',gap:12,cursor:'pointer',transition:'background 0.15s'}} onMouseEnter={e=>e.currentTarget.style.background=C.navyMuted} onMouseLeave={e=>e.currentTarget.style.background='transparent'}>
-            <div style={{width:44,height:44,background:C.navyMuted,borderRadius:8,display:'flex',alignItems:'center',justifyContent:'center',flexShrink:0,overflow:'hidden'}}>{v.photos?.length>0&&v.photos[0]?.dataUrl?<img src={v.photos[0].dataUrl} style={{width:'100%',height:'100%',objectFit:'cover'}} alt=""/>:<Car size={19} color={C.navy}/>}</div>
+            <div style={{width:44,height:44,borderRadius:8,display:'flex',alignItems:'center',justifyContent:'center',flexShrink:0,overflow:'hidden',background:v.photos?.length>0&&v.photos[0]?.dataUrl?C.navyMuted:makeColor(v.make)}}>{v.photos?.length>0&&v.photos[0]?.dataUrl?<img src={v.photos[0].dataUrl} style={{width:'100%',height:'100%',objectFit:'cover'}} alt=""/>:<span style={{fontSize:16,fontWeight:800,color:'#fff'}}>{(v.make||'?').charAt(0).toUpperCase()}</span>}</div>
             <div style={{flex:1,minWidth:0}}>
               <div style={{display:'flex',alignItems:'center',gap:8,marginBottom:2}}><span style={{fontSize:10,fontFamily:'monospace',color:C.textLight}}>#{v.stockNumber}</span><VBadge status={v.status}/>{aging&&<span style={{fontSize:10,background:C.redBg,color:C.red,borderRadius:4,padding:'1px 6px',fontWeight:600}}>⚠ {days}d on lot</span>}{v.carfax&&<ShieldCheck size={12} color={v.carfax.clean?C.green:C.red}/>}</div>
               <div style={{fontWeight:700,fontSize:13,color:C.navy}}>{[v.year,v.make,v.model,v.series].filter(Boolean).join(' ')||'Untitled'}</div>
@@ -2570,7 +2580,7 @@ function ReportsPage({vehicles,appraisals,dealer,showToast}){
         ${aStats.map(s=>`<tr><td>${esc(s.label)}</td><td class="num">${s.count}</td></tr>`).join('')}
       </tbody></table></div>
       <div class="pp-sec"><h3>Detail</h3><table><thead><tr><th>Date</th><th>Vehicle</th><th>Status</th><th class="num">Odometer</th><th class="num">Offer</th></tr></thead><tbody>
-        ${appraisals.map(a=>`<tr><td>${new Date(a.createdAt).toLocaleDateString('en-CA')}</td><td>${esc([a.year,a.make,a.model,a.series].filter(Boolean).join(' ')||'—')}</td><td>${esc((AS[a.status]||{}).label||'')}</td><td class="num">${a.odometer?fmtN(a.odometer):'—'}</td><td class="num">${a.appraisedValue?fmt(a.appraisedValue):'—'}</td></tr>`).join('')||'<tr><td colspan="5">No appraisals</td></tr>'}
+        ${appraisals.map(a=>`<tr><td>${fmtDate(a.createdAt)}</td><td>${esc([a.year,a.make,a.model,a.series].filter(Boolean).join(' ')||'—')}</td><td>${esc((AS[a.status]||{}).label||'')}</td><td class="num">${a.odometer?fmtN(a.odometer):'—'}</td><td class="num">${a.appraisedValue?fmt(a.appraisedValue):'—'}</td></tr>`).join('')||'<tr><td colspan="5">No appraisals</td></tr>'}
       </tbody></table></div>
       <div class="pp-foot">Generated ${new Date().toLocaleString('en-CA')} · Vantage by ClickDocs</div>`;
     openPrintDoc('Appraisal Summary',body);
