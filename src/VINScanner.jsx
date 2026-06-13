@@ -7,6 +7,20 @@ const NAV='#1C2D5E', TEAL='#00B4A6', GREEN='#1A7A4A', ORANGE='#C05621', RL='#FF3
 
 function isValidVIN(v){ return !!(v && v.length===17 && /^[A-HJ-NPR-Z0-9]{17}$/.test(v.toUpperCase())) }
 
+// Beyond "17 legal chars": a real VIN mixes letters and digits and has a
+// model-year code (position 10) from the valid set. This rejects all-letter
+// strings, mostly-digit strings (plates/dates), and other non-VIN text that
+// happens to be 17 chars long.
+const VIN_YEAR_CODES = 'ABCDEFGHJKLMNPRSTVWXY123456789'   // valid position-10 chars
+function looksLikeVIN(v){
+  if(!isValidVIN(v)) return false
+  const digits = (v.match(/[0-9]/g)||[]).length
+  const letters = (v.match(/[A-Z]/g)||[]).length
+  if(digits < 3 || letters < 3) return false           // must genuinely mix both
+  if(!VIN_YEAR_CODES.includes(v[9])) return false       // position 10 = model year
+  return true
+}
+
 const VIN_VALUES = { A:1,B:2,C:3,D:4,E:5,F:6,G:7,H:8,J:1,K:2,L:3,M:4,N:5,P:7,R:9,S:2,T:3,U:4,V:5,W:6,X:7,Y:8,Z:9,'0':0,'1':1,'2':2,'3':3,'4':4,'5':5,'6':6,'7':7,'8':8,'9':9 }
 const VIN_WEIGHTS = [8,7,6,5,4,3,2,10,0,9,8,7,6,5,4,3,2]
 function passesCheckDigit(vin){
@@ -41,6 +55,7 @@ export default function VINScanner({ onVINDetected, onClose }){
   const doneRef = useRef(false)
   const workerRef = useRef(null)
   const loopRef = useRef(false)
+  const lastCandRef = useRef(null)   // last OCR candidate, for 2-frame stability
   const onDetectedRef = useRef(onVINDetected)
   const onCloseRef = useRef(onClose)
   useEffect(()=>{ onDetectedRef.current=onVINDetected; onCloseRef.current=onClose })
@@ -72,7 +87,8 @@ export default function VINScanner({ onVINDetected, onClose }){
       const raw=result.getText()
       const cleaned=normalizeOCR(raw).replace(/[^A-HJ-NPR-Z0-9]/g,'')
       const cand=isValidVIN(cleaned)?cleaned:extractVIN(raw).vin
-      if(isValidVIN(cand)) accept(cand, passesCheckDigit(cand))
+      // Barcodes are reliable, but still require it to look like a real VIN.
+      if(looksLikeVIN(cand)) accept(cand, passesCheckDigit(cand))
     }).catch(e=>{ console.error('camera',e); setPhase('error') })
 
     ;(async()=>{
@@ -93,11 +109,21 @@ export default function VINScanner({ onVINDetected, onClose }){
                 const { data }=await workerRef.current.recognize(frame)
                 if(!doneRef.current && data?.text){
                   const { vin:cand, verified }=extractVIN(data.text)
-                  if(verified){ setProgress(17); accept(cand,true) }
-                  else {
+                  if(verified && looksLikeVIN(cand)){
+                    // Check digit passes AND structurally a VIN → trust it.
+                    setProgress(17); accept(cand,true)
+                  } else {
                     const run=longestRun(data.text)
                     setProgress(Math.min(17, run.length))   // live feedback
-                    if(isValidVIN(cand)){ accept(cand,false) }
+                    // Only surface an unverified candidate for confirmation if it
+                    // (a) looks structurally like a VIN, and (b) we read the SAME
+                    // string on two consecutive frames (rejects one-frame flukes).
+                    if(looksLikeVIN(cand)){
+                      if(lastCandRef.current===cand){ accept(cand,false) }
+                      else { lastCandRef.current=cand }
+                    } else {
+                      lastCandRef.current=null   // garbage read — reset stability
+                    }
                   }
                 }
               }catch{}
@@ -133,7 +159,7 @@ export default function VINScanner({ onVINDetected, onClose }){
   useEffect(()=>()=>{ if(workerRef.current){ try{ workerRef.current.terminate() }catch{} workerRef.current=null } },[])
 
   function rescan(){
-    doneRef.current=false; setVin(''); setVerified(false); setProgress(0)
+    doneRef.current=false; lastCandRef.current=null; setVin(''); setVerified(false); setProgress(0)
     setPhase('idle'); setTimeout(()=>setPhase('scanning'),80)
   }
 
