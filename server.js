@@ -182,6 +182,21 @@ function percentile(sorted, p) {
 
 // Compute the market band from MAPPED comp objects (price/mileage/days) — i.e.
 // the exact comps shown to the user, so the numbers always match the table.
+// Normalize a drivetrain string to a canonical bucket: 'awd', 'fwd', 'rwd', or null.
+// AWD and 4WD/4x4 are treated as the same "all/four-wheel" bucket for matching.
+function normalizeDrive(s) {
+  const t = (s || '').toString().toLowerCase()
+  if (!t) return null
+  if (/\b(awd|all.?wheel|4wd|4x4|four.?wheel|quattro|4motion|xdrive|4matic)\b/.test(t)) return 'awd'
+  if (/\b(fwd|front.?wheel|2wd|front)\b/.test(t)) return 'fwd'
+  if (/\b(rwd|rear.?wheel)\b/.test(t)) return 'rwd'
+  return null
+}
+// Detect drivetrain from a comp's free-text title/trim.
+function detectDrive(text) {
+  return normalizeDrive(text)
+}
+
 function computeMarketFromComps(comps) {
   const priced = comps.filter(c => Number.isFinite(c.price) && c.price >= 1000)
   if (priced.length === 0) return null
@@ -546,8 +561,29 @@ app.get('/api/market/:vin', async (req, res) => {
     })
     // Split the displayed set: active drives pricing; sold shown separately and
     // filtered to the last 30 days.
-    const activeComps = allComps.filter(c => c.status !== 'dropped')
-    const soldComps = allComps.filter(c => c.status === 'dropped' && (c.days == null || c.days <= SOLD_MAX_AGE_DAYS))
+    let activeComps = allComps.filter(c => c.status !== 'dropped')
+    let soldComps = allComps.filter(c => c.status === 'dropped' && (c.days == null || c.days <= SOLD_MAX_AGE_DAYS))
+
+    // ── Drivetrain-precise trim matching ──
+    // VinAudit's trim match lumps FWD and AWD of the same trim together (e.g.
+    // "Corolla LE FWD" and "Corolla LE AWD"), but drivetrain is a major price
+    // driver. If the caller tells us the subject's drivetrain, drop comps whose
+    // drivetrain clearly differs. Detect comp drivetrain from its title/trim.
+    const subjectDrive = normalizeDrive(req.query.drivetrain)
+    if (subjectDrive) {
+      const matchesDrive = c => {
+        const cd = detectDrive(`${c.title || ''} ${c.trim || ''}`)
+        // keep comps with no detectable drivetrain (benefit of the doubt) and
+        // comps whose drivetrain matches the subject
+        return cd === null || cd === subjectDrive
+      }
+      const beforeA = activeComps.length, beforeS = soldComps.length
+      const fa = activeComps.filter(matchesDrive)
+      const fs = soldComps.filter(matchesDrive)
+      // Only apply the filter if it doesn't wipe out the set (safety: if every
+      // comp got a different drivetrain tag, we likely mis-detected — keep all).
+      if (fa.length >= Math.min(3, beforeA)) { activeComps = fa; soldComps = fs }
+    }
     const comps = [...activeComps, ...soldComps]
 
     // Pricing band computed on the EXACT active comps displayed (deduped, ≥$1000).

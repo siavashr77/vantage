@@ -224,10 +224,11 @@ async function generateDescription(v) {
 }
 
 // Real market data via VinAudit (Canadian comps). Needs vin + dealer postal.
-async function fetchMarketData(vin, postal, radius = 250) {
+async function fetchMarketData(vin, postal, radius = 250, drivetrain = '') {
   if (!vin || vin.length !== 17) throw new Error('Valid VIN required');
   if (!postal) throw new Error('Dealer postal code required (set it in Settings)');
-  const url = `${API_BASE}/api/market/${vin}?postal=${encodeURIComponent(postal)}&radius=${radius}`;
+  let url = `${API_BASE}/api/market/${vin}?postal=${encodeURIComponent(postal)}&radius=${radius}`;
+  if (drivetrain) url += `&drivetrain=${encodeURIComponent(drivetrain)}`;
   // Fetch with one retry — Railway can cold-start, dropping the first request.
   let res;
   for (let attempt = 0; attempt < 2; attempt++) {
@@ -1302,7 +1303,7 @@ function AppraisalForm({initial,onSave,onBack,showToast,onConvert,onFinalize,onU
     if(!postal){showToast('Set your dealer postal code in Settings first','error');return;}
     setMl(true);
     try{
-      const m=await fetchMarketData(a.vin,postal);
+      const m=await fetchMarketData(a.vin,postal,a.searchDistance||250,a.drivetrain||"");
       if(!m.found){showToast(m.message||'No Canadian comps found for this vehicle','warning');setMl(false);return;}
       const note=`${m.meta.comps} comps · ${m.meta.matchMode==='trim'?'trim match':'model match'}${m.meta.widened?' (widened)':''}`;
       setA(p=>{const next=withLog({...p,marketLow:m.marketLow,marketMid:m.marketMid,marketHigh:m.marketHigh,marketAvgPrice:m.marketAvgPrice,activeComps:m.activeComps,marketDaysSupply:m.marketDaysSupply,marketDaySupply:m.marketDaySupply,medianDaysListed:m.medianDaysListed,_soldStats:m.soldStats,marketDataFetched:m.marketDataFetched,_marketMeta:m.meta,_medianCompMileage:m.medianCompMileage,_comps:m.comps,updatedAt:new Date().toISOString()},[logEvent('Market Data',`mid ${fmt(m.marketMid)} · ${note}`,user)]);aRef.current=next;return next;});
@@ -2078,7 +2079,7 @@ function VehicleDetail({vehicle:iv,onSave,onBack,showToast,onShowSticker=()=>{},
     if(!postal){showToast('Set your dealer postal code in Settings first','error');return;}
     setMl(true);
     try{
-      const m=await fetchMarketData(v.vin,postal);
+      const m=await fetchMarketData(v.vin,postal,v.searchDistance||250,v.drivetrain||"");
       if(!m.found){showToast(m.message||'No Canadian comps found','warning');setMl(false);return;}
       const note=`${m.meta.comps} comps · ${m.meta.matchMode==='trim'?'trim match':'model match'}${m.meta.widened?' (widened)':''}`;
       up(withLog({...vRef.current,marketLow:m.marketLow,marketMid:m.marketMid,marketHigh:m.marketHigh,marketAvgPrice:m.marketAvgPrice,activeComps:m.activeComps,marketDaysSupply:m.marketDaysSupply,marketDaySupply:m.marketDaySupply,medianDaysListed:m.medianDaysListed,_soldStats:m.soldStats,marketDataFetched:m.marketDataFetched,_marketMeta:m.meta,_medianCompMileage:m.medianCompMileage,_comps:m.comps},[logEvent('Market Data',`mid ${fmt(m.marketMid)} · ${note}`,user)]));
