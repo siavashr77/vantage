@@ -763,7 +763,7 @@ function VBadge({status}) { const s=VS[status]||VS.pending; return <span style={
 function Toast({message,type,onClose}) {
   useEffect(()=>{const t=setTimeout(onClose,3500);return()=>clearTimeout(t);},[onClose]);
   const c={success:C.green,error:C.red,info:C.navy,warning:C.orange};
-  return <div style={{position:'fixed',bottom:24,right:24,background:C.navy,color:'#fff',borderRadius:8,padding:'12px 18px',display:'flex',alignItems:'center',gap:10,boxShadow:'0 8px 32px rgba(0,0,0,0.25)',zIndex:9999,maxWidth:340,borderLeft:`4px solid ${c[type]||C.teal}`}}><span style={{fontSize:13,flex:1}}>{message}</span><button onClick={onClose} style={{background:'none',border:'none',color:'rgba(255,255,255,0.5)',cursor:'pointer'}}><X size={14}/></button></div>;
+  return <div className="app-toast" style={{position:'fixed',bottom:24,right:24,background:C.navy,color:'#fff',borderRadius:8,padding:'12px 18px',display:'flex',alignItems:'center',gap:10,boxShadow:'0 8px 32px rgba(0,0,0,0.25)',zIndex:9999,maxWidth:340,borderLeft:`4px solid ${c[type]||C.teal}`}}><span style={{fontSize:13,flex:1}}>{message}</span><button onClick={onClose} style={{background:'none',border:'none',color:'rgba(255,255,255,0.5)',cursor:'pointer'}}><X size={14}/></button></div>;
 }
 function CarfaxBadge({carfax,onFetch,loading}) {
   if(loading) return <div style={{display:'inline-flex',alignItems:'center',gap:6,padding:'6px 12px',background:C.navyMuted,borderRadius:6,fontSize:12}}><RefreshCw size={12} color={C.navy} style={{animation:'spin 1s linear infinite'}}/>Fetching Carfax...</div>;
@@ -1650,26 +1650,30 @@ function AppraisalForm({initial,onSave,onBack,showToast,onConvert,onFinalize,onU
     <div>
       {showVINScanner&&<VINScanner onVINDetected={v=>{set('vin',v);setVehExpanded(true);}} onClose={()=>setShowVINScanner(false)}/>}
       <Card style={{marginBottom:12,overflow:'hidden'}}>
-        {/* Title row */}
-        <div style={{padding:'12px 16px',display:'flex',alignItems:'center',gap:12,borderBottom:`1px solid ${C.border}`}}>
-          <button onClick={onBack} style={{background:'none',border:'none',cursor:'pointer',color:C.textLight,display:'flex',alignItems:'center',gap:4,fontSize:13,padding:'4px 0',flexShrink:0}}>
-            <ChevronLeft size={18} color={C.navy}/>
-          </button>
-          <div style={{flex:1,minWidth:0}}>
-            <div style={{fontSize:16,fontWeight:800,color:C.navy,lineHeight:1.2,whiteSpace:'nowrap',overflow:'hidden',textOverflow:'ellipsis'}}>
-              {[a.year,a.make,a.model,a.series].filter(Boolean).join(' ')||'New Appraisal'}
+        {/* Title row — title/VIN on its own line; save + status wrap below on mobile */}
+        <div style={{padding:'12px 16px',borderBottom:`1px solid ${C.border}`}}>
+          <div style={{display:'flex',alignItems:'flex-start',gap:10}}>
+            <button onClick={onBack} style={{background:'none',border:'none',cursor:'pointer',color:C.textLight,display:'flex',alignItems:'center',padding:'2px 0',flexShrink:0}}>
+              <ChevronLeft size={20} color={C.navy}/>
+            </button>
+            <div style={{flex:1,minWidth:0}}>
+              <div style={{fontSize:16,fontWeight:800,color:C.navy,lineHeight:1.2,whiteSpace:'nowrap',overflow:'hidden',textOverflow:'ellipsis'}}>
+                {[a.year,a.make,a.model,a.series].filter(Boolean).join(' ')||'New Appraisal'}
+              </div>
+              {a.vin&&<div style={{display:'flex',alignItems:'center',gap:6,marginTop:3}}>
+                <span style={{fontSize:11,fontFamily:'monospace',color:C.textLight,letterSpacing:0.3}}>{a.vin}</span>
+                <CopyVIN vin={a.vin}/>
+              </div>}
             </div>
-            {a.vin&&<div style={{display:'flex',alignItems:'center',gap:6,marginTop:2}}>
-              <span style={{fontSize:10,fontFamily:'monospace',color:C.textLight}}>{a.vin}</span>
-              <CopyVIN vin={a.vin}/>
-            </div>}
           </div>
-          {/* Inline save status keeps the header self-contained */}
-          <div style={{flexShrink:0}}><SaveStatus isDirty={isDirty} savedAt={savedAt} onSave={forceSave}/></div>
-          {locked&&<span style={{display:'inline-flex',alignItems:'center',gap:4,background:C.purpleBg,color:C.purple,borderRadius:12,padding:'4px 10px',fontSize:11,fontWeight:700,flexShrink:0}}><ShieldCheck size={12}/>Finalized</span>}
-          <select value={a.status} disabled={locked} onChange={e=>set('status',e.target.value)} style={{padding:'6px 10px',border:`1px solid ${C.borderStr}`,borderRadius:7,fontSize:11,fontFamily:'inherit',color:C.textDark,background:locked?C.bgDark:'#fff',cursor:locked?'not-allowed':'pointer',flexShrink:0}}>
-            {Object.entries(AS).map(([k,v])=><option key={k} value={k}>{v.label}</option>)}
-          </select>
+          <div style={{display:'flex',alignItems:'center',gap:8,marginTop:10,flexWrap:'wrap'}}>
+            <div style={{flexShrink:0}}><SaveStatus isDirty={isDirty} savedAt={savedAt} onSave={forceSave}/></div>
+            {locked&&<span style={{display:'inline-flex',alignItems:'center',gap:4,background:C.purpleBg,color:C.purple,borderRadius:12,padding:'4px 10px',fontSize:11,fontWeight:700,flexShrink:0}}><ShieldCheck size={12}/>Finalized</span>}
+            <div style={{flex:1}}/>
+            <select value={a.status} disabled={locked} onChange={e=>set('status',e.target.value)} style={{padding:'7px 10px',border:`1px solid ${C.borderStr}`,borderRadius:7,fontSize:12,fontFamily:'inherit',color:C.textDark,background:locked?C.bgDark:'#fff',cursor:locked?'not-allowed':'pointer',flexShrink:0}}>
+              {Object.entries(AS).map(([k,v])=><option key={k} value={k}>{v.label}</option>)}
+            </select>
+          </div>
         </div>
         {/* Action bar — only the contextual actions, no duplicated save/vehicle info */}
         <div style={{padding:'10px 16px',display:'flex',gap:8,flexWrap:'wrap',alignItems:'center',background:'rgba(28,45,94,0.02)'}}>
@@ -3085,11 +3089,11 @@ export default function Vantage() {
         {[
           {k:'dashboard',l:'Home',I:LayoutDashboard},
           {k:'appraisals',l:'Appraisals',I:ClipboardList},
-          {k:'scan',l:'Scan VIN',I:ScanLine||Camera,special:true},
+          {k:'new',l:'New',I:Plus,special:true},
           {k:'inventory',l:'Inventory',I:Package},
           
         ].map(n=>(
-          <button key={n.k} onClick={()=>n.special?setShowScanner(true):nav(n.k)} style={{display:'flex',flexDirection:'column',alignItems:'center',gap:3,background:n.special?'#1C2D5E':'none',border:'none',borderRadius:n.special?12:0,padding:n.special?'10px 16px':'6px 8px',cursor:'pointer',flex:1,color:n.special?'#fff':cur===n.k?'#1C2D5E':'#8C95A0'}}>
+          <button key={n.k} onClick={()=>n.special?nav('new_appraisal'):nav(n.k)} style={{display:'flex',flexDirection:'column',alignItems:'center',gap:3,background:n.special?'#1C2D5E':'none',border:'none',borderRadius:n.special?12:0,padding:n.special?'10px 16px':'6px 8px',cursor:'pointer',flex:1,color:n.special?'#fff':cur===n.k?'#1C2D5E':'#8C95A0'}}>
             <n.I size={n.special?22:18} color={n.special?'#fff':cur===n.k?'#1C2D5E':'#8C95A0'}/>
             <span style={{fontSize:9,fontWeight:n.special?800:cur===n.k?700:400,letterSpacing:0.3}}>{n.l}</span>
           </button>
@@ -3112,6 +3116,7 @@ export default function Vantage() {
       .cap-only { display: inline-flex !important; }
       .desktop-nav { display: none !important; }
       .mobile-top-bar { display: flex !important; }
+      .app-toast { bottom: 90px !important; right: 12px !important; left: 12px !important; max-width: none !important; }
       .dash-stats { grid-template-columns: repeat(2, 1fr) !important; }
       .dash-tiles { grid-template-columns: repeat(2, 1fr) !important; max-width: 100% !important; }
       .nav-links { display: none !important; }
