@@ -660,7 +660,7 @@ function Toast({message,type,onClose}) {
 }
 function CarfaxBadge({carfax,onFetch,loading}) {
   if(loading) return <div style={{display:'inline-flex',alignItems:'center',gap:6,padding:'6px 12px',background:C.navyMuted,borderRadius:6,fontSize:12}}><RefreshCw size={12} color={C.navy} style={{animation:'spin 1s linear infinite'}}/>Fetching Carfax...</div>;
-  if(!carfax) return <button onClick={onFetch} style={{display:'inline-flex',alignItems:'center',gap:6,padding:'6px 14px',background:C.navy,color:'#fff',border:'none',borderRadius:6,fontSize:12,fontWeight:600,cursor:'pointer'}}><FileSearch size={13}/>Pull Carfax Report</button>;
+  if(!carfax) return <button onClick={onFetch} style={{display:'inline-flex',alignItems:'center',gap:6,padding:'6px 14px',background:C.navy,color:'#fff',border:'none',borderRadius:6,fontSize:12,fontWeight:600,cursor:'pointer'}}><FileSearch size={13}/>Pull History Report</button>;
   return (
     <div style={{background:carfax.clean?C.greenBg:C.redBg,border:`1px solid ${carfax.clean?C.green:C.red}`,borderRadius:8,padding:'10px 14px'}}>
       <div style={{display:'flex',alignItems:'center',gap:8,marginBottom:8}}>
@@ -1331,7 +1331,7 @@ function consumerOfferPrint(a, dealer){
   const expDate=a.offerExpiry?new Date(a.offerExpiry+'T00:00:00'):new Date(Date.now()+7*86400000);
   const expiry=expDate.toLocaleDateString('en-CA',{dateStyle:'long'});
   const row=(k,v)=>v?`<div class="pp-row"><span class="k">${esc(k)}</span><span class="v">${esc(v)}</span></div>`:'';
-  const cfx=a.carfax?`<div class="pp-sec"><h3>Vehicle History (Carfax Canada)</h3><div class="pp-grid">
+  const cfx=a.carfax?`<div class="pp-sec"><h3>Vehicle History</h3><div class="pp-grid">
       ${row('Reported Accidents', a.carfax.accidents)}
       ${row('Previous Owners', a.carfax.owners)}
       ${row('Service Records', a.carfax.service_records)}
@@ -1613,12 +1613,17 @@ function AppraisalForm({initial,onSave,onBack,showToast,onConvert,onFinalize,onU
           <Btn onClick={()=>setShowVINScanner(true)} variant="ghost" size="sm" className="cap-only"><ScanLine size={13}/>Scan</Btn>
           <Btn onClick={decode} disabled={vl||a.vin.length!==17} size="sm"><RefreshCw size={12} style={{animation:vl?'spin 1s linear infinite':undefined}}/>{vl?'...':'Decode'}</Btn>
         </div>
-        {/* No VIN → manual year/make/model/trim picker (always active when VIN empty) */}
-        {!a.vin&&<ManualVehicleEntry data={a} onSet={patch=>{Object.entries(patch).forEach(([k,v])=>set(k,v));}} postal={(onGetDealer?onGetDealer():null)?.postal} onMarket={fetchMktBySpec} busy={ml}/>}
-        {/* Summary or expand */}
-        <VehicleSummary data={a} onEdit={()=>setVehExpanded(p=>!p)}/>
-        {/* Expandable details */}
-        {vehExpanded&&(
+        {/* No VIN → manual year/make/model/trim picker only. Once a VIN is
+            decoded OR the user has picked a vehicle manually, show the summary
+            + editable detail fields instead (no duplicate field sets). */}
+        {!a.vin&&!(a.year&&a.make&&a.model)?(
+          <ManualVehicleEntry data={a} onSet={patch=>{Object.entries(patch).forEach(([k,v])=>set(k,v));}} postal={(onGetDealer?onGetDealer():null)?.postal} onMarket={fetchMktBySpec} busy={ml}/>
+        ):(
+          <>
+            {/* Summary or expand */}
+            <VehicleSummary data={a} onEdit={()=>setVehExpanded(p=>!p)}/>
+            {/* Expandable details */}
+            {vehExpanded&&(
           <div style={{marginTop:10,paddingTop:10,borderTop:`1px solid ${C.navyBorder}`}}>
             <div style={{display:'grid',gridTemplateColumns:'repeat(3,1fr)',gap:8,marginBottom:8}}>
               {[{f:'year',l:'Year',ph:''},{f:'make',l:'Make',ph:''},{f:'model',l:'Model',ph:''},{f:'series',l:'Trim',ph:''},{f:'bodyType',l:'Body',ph:''},{f:'engine',l:'Engine',ph:''},{f:'odometer',l:'Odometer (km)',ph:'',t:'number'},{f:'extColour',l:'Ext. Colour',ph:''},{f:'intColour',l:'Int. Colour',ph:''}].map(x=>(
@@ -1649,6 +1654,8 @@ function AppraisalForm({initial,onSave,onBack,showToast,onConvert,onFinalize,onU
               </div>
             </div>
           </div>
+            )}
+          </>
         )}
         {/* Photos — combined into vehicle section */}
         <div style={{marginTop:12,paddingTop:12,borderTop:`1px solid ${C.navyBorder}`}}>
@@ -1672,7 +1679,6 @@ function AppraisalForm({initial,onSave,onBack,showToast,onConvert,onFinalize,onU
         {a.appraisedValue&&a.marketMid&&(()=>{
           const totalCost=Number(a.appraisedValue)+Number(a.reconCost||0)+Number(a.certCost||0)+Number(a.pack||0);
           const adjPct=Math.round((totalCost/Number(a.marketMid))*100);
-          const grade=calcGrade(a.marketDaysSupply);
           const askingPrice=a.marketMid?Math.round(Number(a.marketMid)*0.98):null;
           const cardBg={background:C.navyMuted,borderRadius:8,padding:'10px 12px',border:`1px solid ${C.border}`};
           const lbl={fontSize:9,color:C.textLight,marginBottom:3,fontWeight:600,textTransform:'uppercase',letterSpacing:0.5};
@@ -1683,7 +1689,6 @@ function AppraisalForm({initial,onSave,onBack,showToast,onConvert,onFinalize,onU
                 <div style={cardBg}><div style={lbl}>All-In Cost</div><div style={{fontSize:15,fontWeight:800,color:C.navy,fontFamily:'monospace'}}>{fmt(totalCost)}</div></div>
                 <div style={cardBg}><div style={lbl}>Proj. Gross</div><div style={{fontSize:15,fontWeight:800,color:projGross!==null&&projGross<0?C.red:C.green,fontFamily:'monospace'}}>{projGross!==null?fmt(projGross):'—'}</div></div>
                 <div style={cardBg}><div style={lbl}>Cost / Market</div><div style={{fontSize:15,fontWeight:800,fontFamily:'monospace',color:adjPct<=92?C.green:adjPct<=100?C.navy:C.red}}>{adjPct}%</div><div style={{fontSize:9,color:C.textLight,marginTop:1}}>Target 85–95%</div></div>
-                {grade&&<div style={cardBg} title="Based on market day supply (how fast this vehicle sells vs. how many are listed) — reflects the market, not your pricing. A = sells fast, D = slow mover."><div style={lbl}>Demand Grade</div><div style={{fontSize:20,fontWeight:900,color:grade.grade==='A'?C.green:grade.grade==='B'?C.blue:grade.grade==='C+'?C.orange:C.red}}>{grade.grade}</div></div>}
                 {askingPrice&&<div style={cardBg}><div style={lbl}>Suggested Retail</div><div style={{fontSize:15,fontWeight:800,color:C.navy,fontFamily:'monospace'}}>{fmt(askingPrice)}</div><div style={{fontSize:9,color:C.textLight,marginTop:1}}>98% of market mid</div></div>}
               </div>
             </div>
@@ -1717,7 +1722,7 @@ function AppraisalForm({initial,onSave,onBack,showToast,onConvert,onFinalize,onU
         {/* RIGHT COLUMN — all other sections scroll past the sticky vehicle panel */}
         <div style={{minWidth:0}}>
 
-      <Sec title="Carfax Canada" icon={ShieldCheck} badge={a.carfax?(a.carfax.clean?'✓ Clean':'⚠ Issues Found'):'Not Pulled'}>
+      <Sec title="Vehicle History" icon={ShieldCheck} badge={a.carfax?(a.carfax.clean?'✓ Clean':'⚠ Issues Found'):'Not Pulled'}>
         <CarfaxBadge carfax={a.carfax} onFetch={pullCarfax} loading={cl}/>
       </Sec>
 
@@ -1792,6 +1797,12 @@ function AppraisalForm({initial,onSave,onBack,showToast,onConvert,onFinalize,onU
                   <span style={{fontSize:13,fontWeight:700,color:C.navy,fontFamily:'monospace'}}>{s.v||s.v===0?s.v:'—'}</span>
                 </div>
               ))}
+              {(()=>{const g=calcGrade(a.marketDaysSupply);if(!g)return null;const desc=g.grade==='A'?'sells fast':g.grade==='B'?'healthy':g.grade==='C+'?'steady':g.grade==='C'?'slowing':'slow mover';return(
+                <div title="Market demand for this vehicle, based on day supply (how fast it sells vs. how many are listed). Reflects the market, not your pricing." style={{background:C.navyMuted,borderRadius:7,padding:'8px 12px',display:'flex',justifyContent:'space-between',alignItems:'center',cursor:'help',gridColumn:'1 / -1'}}>
+                  <span style={{fontSize:11,color:C.textLight,fontWeight:600,display:'inline-flex',alignItems:'center',gap:4}}>Market Demand<Info size={11} color={C.textLight} style={{opacity:0.6}}/></span>
+                  <span style={{display:'inline-flex',alignItems:'center',gap:6}}><span style={{fontSize:11,color:C.textLight}}>{desc}</span><span style={{fontSize:15,fontWeight:900,color:g.grade==='A'?C.green:g.grade==='B'?C.blue:g.grade==='C+'?C.orange:C.red}}>{g.grade}</span></span>
+                </div>
+              );})()}
             </div>
             {/* Live Competitive Set — real VinAudit listings with links */}
             {a._comps&&a._comps.length>0&&<div style={{marginBottom:10}}><CompSet comps={a._comps} myPrice={a.appraisedValue} myKm={a.odometer}/></div>}
@@ -2411,7 +2422,7 @@ function VehicleDetail({vehicle:iv,onSave,onBack,showToast,onShowSticker=()=>{},
         <div>
           {days>=30&&<div style={{background:C.redBg,border:`1px solid ${C.red}`,borderRadius:7,padding:'10px 14px',marginBottom:12,display:'flex',alignItems:'center',gap:8}}><AlertCircle size={14} color={C.red}/><span style={{fontSize:13,color:C.red,fontWeight:600}}>{days} days on lot — price review recommended</span></div>}
 
-          <Sec title="Carfax Canada" icon={ShieldCheck} badge={v.carfax?(v.carfax.clean?'✓ Clean':'⚠ Issues Found'):'Not Pulled'}>
+          <Sec title="Vehicle History" icon={ShieldCheck} badge={v.carfax?(v.carfax.clean?'✓ Clean':'⚠ Issues Found'):'Not Pulled'}>
             <CarfaxBadge carfax={v.carfax} onFetch={pullCfx} loading={cl}/>
           </Sec>
 
