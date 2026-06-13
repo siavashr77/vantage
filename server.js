@@ -182,14 +182,15 @@ function percentile(sorted, p) {
 
 // Compute the market band from MAPPED comp objects (price/mileage/days) — i.e.
 // the exact comps shown to the user, so the numbers always match the table.
-// Normalize a drivetrain string to a canonical bucket: 'awd', 'fwd', 'rwd', or null.
-// AWD and 4WD/4x4 are treated as the same "all/four-wheel" bucket for matching.
+// Normalize a drivetrain string to a canonical bucket: 'awd', '2wd', or null.
+// The meaningful price split is AWD/4WD vs everything else (FWD/RWD/2WD).
+// NHTSA reports "4x2" (two-wheel) and "4x4" (four-wheel); dealers write
+// FWD/AWD/etc. We bucket to awd vs 2wd so a FWD subject excludes AWD comps.
 function normalizeDrive(s) {
   const t = (s || '').toString().toLowerCase()
   if (!t) return null
-  if (/\b(awd|all.?wheel|4wd|4x4|four.?wheel|quattro|4motion|xdrive|4matic)\b/.test(t)) return 'awd'
-  if (/\b(fwd|front.?wheel|2wd|front)\b/.test(t)) return 'fwd'
-  if (/\b(rwd|rear.?wheel)\b/.test(t)) return 'rwd'
+  if (/\b(awd|all.?wheel|4wd|4x4|four.?wheel|quattro|4motion|xdrive|4matic|sh.?awd)\b/.test(t)) return 'awd'
+  if (/\b(fwd|front.?wheel|rwd|rear.?wheel|2wd|4x2|front|rear)\b/.test(t)) return '2wd'
   return null
 }
 // Detect drivetrain from a comp's free-text title/trim.
