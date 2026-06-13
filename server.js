@@ -221,6 +221,32 @@ function trimContains(compTrim, subjectTrim) {
   return want.every(w => tokens.includes(w))
 }
 
+// Remove price outliers so a few loaded/new high-trim units (or a stray cheap
+// salvage) don't distort the band. Uses median ± k·MAD (median absolute
+// deviation), which is robust to skew unlike mean/stddev. Only applied when we
+// have enough comps to make a stable median (>= 8); below that every comp counts.
+// Returns the kept comps (always >= 3 so we never wipe the set on a tight match).
+function filterPriceOutliers(comps) {
+  const priced = comps.filter(c => Number.isFinite(c.price) && c.price >= 1000)
+  if (priced.length < 8) return comps
+  const prices = priced.map(c => c.price).sort((a, b) => a - b)
+  const median = percentile(prices, 0.50)
+  const absDevs = prices.map(p => Math.abs(p - median)).sort((a, b) => a - b)
+  let mad = percentile(absDevs, 0.50)
+  // Guard: if MAD is tiny (very tight cluster), fall back to a % band so we
+  // don't over-trim a legitimately consistent market.
+  const floor = median * 0.18
+  if (!mad || mad < floor) mad = floor
+  const k = 3.0   // keep within 3 MADs of the median (~robust 99% band)
+  const lo = median - k * mad
+  const hi = median + k * mad
+  const kept = comps.filter(c => !Number.isFinite(c.price) || (c.price >= lo && c.price <= hi))
+  // Safety: never trim below 3 comps or below ~60% of the set.
+  const keptPriced = kept.filter(c => Number.isFinite(c.price) && c.price >= 1000)
+  if (keptPriced.length < Math.max(3, Math.floor(priced.length * 0.5))) return comps
+  return kept
+}
+
 function computeMarketFromComps(comps) {
   const priced = comps.filter(c => Number.isFinite(c.price) && c.price >= 1000)
   if (priced.length === 0) return null
@@ -229,9 +255,12 @@ function computeMarketFromComps(comps) {
   const daysArr = priced.map(c => c.days).filter(Number.isFinite).sort((a, b) => a - b)
   return {
     comps: priced.length,
-    low: percentile(prices, 0.10),
+    // Use the interquartile core (25th/50th/75th) so the headline band reflects
+    // the bulk of the market rather than the extreme tails — after outlier
+    // removal this keeps Low/Mid/High consistent with the comps actually shown.
+    low: percentile(prices, 0.25),
     mid: percentile(prices, 0.50),
-    high: percentile(prices, 0.90),
+    high: percentile(prices, 0.75),
     avg: Math.round(prices.reduce((s, p) => s + p, 0) / prices.length),
     medianCompMileage: miles.length ? percentile(miles, 0.50) : null,
     medianDaysSeen: daysArr.length ? percentile(daysArr, 0.50) : null,
@@ -601,6 +630,15 @@ async function buildMarketResponse(active, dropped, ctx, res) {
       const fs = soldComps.filter(matchesTrim)
       if (fa.length >= Math.min(3, beforeA)) { activeComps = fa; soldComps = fs }
     }
+
+    // ── Price-outlier trim ──
+    // After trim/drivetrain matching, drop price outliers (e.g. loaded Lariat/
+    // Platinum or brand-new MSRP units that slipped through an "XLT" match, or a
+    // stray salvage unit) so the headline band, the displayed comps, and the
+    // suggested retail are all consistent with the real used-market cluster.
+    activeComps = filterPriceOutliers(activeComps)
+    soldComps = filterPriceOutliers(soldComps)
+
     const comps = [...activeComps, ...soldComps]
 
     // Pricing band computed on the EXACT active comps displayed (deduped, ≥$1000).
