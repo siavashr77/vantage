@@ -423,7 +423,56 @@ async function fetchCarfax(vin) {
 }
 
 // Live competitive set — renders real VinAudit listings with clickable links.
+// Pulls and shows vehicle history for any comp's VIN (e.g. to check whether a
+// competitor's advertised car has reported accidents). Uses the same backend
+// history route as the subject vehicle — returns mock until Carfax is configured.
+function CompHistoryModal({ vin, onClose }){
+  const [state,setState] = useState({status:'loading'});
+  useEffect(()=>{
+    let cancelled=false;
+    fetchCarfax(vin).then(d=>{ if(!cancelled) setState({status:'done',data:d}); })
+      .catch(()=>{ if(!cancelled) setState({status:'error'}); });
+    return ()=>{cancelled=true;};
+  },[vin]);
+  const d = state.data;
+  return (
+    <div onClick={onClose} style={{position:'fixed',inset:0,background:'rgba(0,0,0,0.5)',zIndex:9998,display:'flex',alignItems:'center',justifyContent:'center',padding:20}}>
+      <div onClick={e=>e.stopPropagation()} style={{background:'#fff',borderRadius:12,maxWidth:380,width:'100%',overflow:'hidden',boxShadow:'0 20px 60px rgba(0,0,0,0.3)'}}>
+        <div style={{padding:'14px 18px',background:C.navy,display:'flex',alignItems:'center',justifyContent:'space-between'}}>
+          <div>
+            <div style={{fontSize:14,fontWeight:800,color:'#fff'}}>Vehicle History</div>
+            <div style={{fontSize:10,fontFamily:'monospace',color:'rgba(255,255,255,0.6)',marginTop:1}}>{vin}</div>
+          </div>
+          <button onClick={onClose} style={{background:'rgba(255,255,255,0.12)',border:'none',borderRadius:7,width:32,height:32,display:'flex',alignItems:'center',justifyContent:'center',cursor:'pointer'}}><X size={16} color="#fff"/></button>
+        </div>
+        <div style={{padding:'18px'}}>
+          {state.status==='loading'&&<div style={{textAlign:'center',padding:'20px',color:C.textLight,fontSize:13}}>Pulling history…</div>}
+          {state.status==='error'&&<div style={{textAlign:'center',padding:'20px',color:C.red,fontSize:13}}>Couldn't pull history for this VIN.</div>}
+          {state.status==='done'&&d&&<>
+            <div style={{display:'flex',alignItems:'center',gap:8,marginBottom:14,padding:'10px 12px',borderRadius:8,background:d.clean?C.greenBg:C.redBg}}>
+              <ShieldCheck size={18} color={d.clean?C.green:C.red}/>
+              <span style={{fontWeight:700,fontSize:13,color:d.clean?C.green:C.red}}>{d.clean?'Clean history reported':'Issues reported'}</span>
+            </div>
+            <div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:10}}>
+              {[['Accidents',d.accidents],['Previous Owners',d.owners],['Service Records',d.service_records],['Last Odometer',d.last_reported_odometer?fmtN(d.last_reported_odometer)+' km':'—']].map(([k,v])=>(
+                <div key={k} style={{background:C.navyMuted,borderRadius:7,padding:'9px 11px'}}>
+                  <div style={{fontSize:9,color:C.textLight,fontWeight:600,textTransform:'uppercase',letterSpacing:0.4,marginBottom:3}}>{k}</div>
+                  <div style={{fontSize:15,fontWeight:800,color:C.navy}}>{v}</div>
+                </div>
+              ))}
+            </div>
+            {d._source==='mock'&&<div style={{marginTop:12,fontSize:10,color:C.textLight,lineHeight:1.5}}>Sample data — connect a Carfax Canada account in Settings to pull real reports.</div>}
+            {d.report_url&&<a href={d.report_url} target="_blank" rel="noopener noreferrer" style={{display:'block',marginTop:12,textAlign:'center',padding:'10px',background:C.navy,color:'#fff',borderRadius:8,fontSize:13,fontWeight:700,textDecoration:'none'}}>Open full report ↗</a>}
+          </>}
+        </div>
+      </div>
+    </div>
+  );
+}
+
 function CompSet({ comps, myPrice, myKm, myDays }) {
+  const [historyVin, setHistoryVin] = useState(null);
+  const onHistory = (vin) => setHistoryVin(vin);
   const [feeState, setFeeState] = useState({});
   const [sort, setSort] = useState({ key: 'price', dir: 'asc' });
   // Both comp sections collapsed by default so they don't fill the page.
@@ -526,7 +575,8 @@ function CompSet({ comps, myPrice, myKm, myDays }) {
                   : <td style={{...cell,whiteSpace:'nowrap',color:c.days>45?C.orange:C.textMid}}>{c.days?c.days:'—'}</td>}
                 <td style={{...cell,color:C.textLight,whiteSpace:'nowrap'}}>{[c.city,c.region].filter(Boolean).join(', ')||'—'}</td>
                 <td style={{...cell,color:C.textDark}}>
-                  <div>{c.url?<a href={c.url} target="_blank" rel="noopener noreferrer" style={{color:C.navy,fontWeight:600,textDecoration:'none',borderBottom:`1px solid ${C.navyBorder}`}}>{c.dealer}</a>:c.dealer}</div>
+                  <div>{c.url?<a href={c.url} target="_blank" rel="noopener noreferrer" style={{color:C.navy,fontWeight:600,textDecoration:'none',borderBottom:`1px solid ${C.navyBorder}`}}>{c.dealer}</a>:c.dealer}{/private/i.test(c.sellerType||'')&&<span style={{marginLeft:6,fontSize:9,fontWeight:700,color:C.purple,background:C.purpleBg,padding:'1px 6px',borderRadius:8,whiteSpace:'nowrap'}}>Private</span>}</div>
+                  {c.vin&&<div style={{marginTop:2,fontSize:10,fontFamily:'monospace',color:C.textMid,letterSpacing:0.3,display:'flex',alignItems:'center',gap:6,flexWrap:'wrap'}}><span>{c.vin}</span><CopyVIN vin={c.vin}/><button onClick={()=>onHistory&&onHistory(c.vin)} style={{fontSize:9,fontWeight:700,color:C.navy,background:C.navyMuted,border:'none',borderRadius:6,padding:'2px 7px',cursor:'pointer',fontFamily:'inherit',whiteSpace:'nowrap'}}>History ↗</button></div>}
                   <div style={{marginTop:2,display:'flex',gap:5,alignItems:'center',flexWrap:'wrap'}}>
                     {c.source&&<span style={{fontSize:9,color:C.textLight,background:C.navyMuted,padding:'1px 6px',borderRadius:8,whiteSpace:'nowrap'}}>{c.source}</span>}{Array.isArray(c.portals)&&c.portals.map(p=><a key={p.name} href={p.url} target="_blank" rel="noopener noreferrer" style={{display:'inline-block',fontSize:9,fontWeight:600,color:C.teal,background:C.tealMuted,padding:'1px 6px',borderRadius:8,whiteSpace:'nowrap',textDecoration:'none',marginRight:4,marginTop:2}}>{p.name}</a>)}
                     {c.feeWarning&&<span title={`Caught adding fees on ${c.feeWarning.count} prior check${c.feeWarning.count>1?'s':''}`} style={{fontSize:9,fontWeight:700,color:C.orange,background:C.orangeBg,padding:'1px 6px',borderRadius:8,whiteSpace:'nowrap'}}>⚠ adds fees ~{fmt(c.feeWarning.avgFee)}</span>}
@@ -574,9 +624,11 @@ function CompSet({ comps, myPrice, myKm, myDays }) {
                 </div>
                 <div style={{marginTop:5,display:'flex',gap:8,alignItems:'center',flexWrap:'wrap'}}>
                   <span style={{fontSize:12,color:C.textDark}}>{c.url?<a href={c.url} target="_blank" rel="noopener noreferrer" style={{color:C.navy,fontWeight:600,textDecoration:'none'}}>{c.dealer}</a>:c.dealer}</span>
+                  {/private/i.test(c.sellerType||'')&&<span style={{fontSize:9,fontWeight:700,color:C.purple,background:C.purpleBg,padding:'1px 6px',borderRadius:8}}>Private</span>}
                   {c.source&&<span style={{fontSize:9,color:C.textLight,background:C.navyMuted,padding:'1px 6px',borderRadius:8}}>{c.source}</span>}
                   {c.feeWarning&&<span style={{fontSize:9,fontWeight:700,color:C.orange,background:C.orangeBg,padding:'1px 6px',borderRadius:8}}>⚠ adds fees</span>}
                 </div>
+                {c.vin&&<div style={{marginTop:4,fontSize:11,fontFamily:'monospace',color:C.textMid,letterSpacing:0.3,display:'flex',alignItems:'center',gap:6,flexWrap:'wrap'}}><span>{c.vin}</span><CopyVIN vin={c.vin}/><button onClick={()=>onHistory&&onHistory(c.vin)} style={{fontSize:10,fontWeight:700,color:C.navy,background:C.navyMuted,border:'none',borderRadius:6,padding:'2px 8px',cursor:'pointer',fontFamily:'inherit'}}>History ↗</button></div>}
                 <div style={{marginTop:6}}>{feeCell(c)}</div>
               </div>
             );
@@ -588,6 +640,7 @@ function CompSet({ comps, myPrice, myKm, myDays }) {
   };
   return (
     <div>
+      {historyVin&&<CompHistoryModal vin={historyVin} onClose={()=>setHistoryVin(null)}/>}
       {active.length>0&&block('Currently Listed', active, 'listed', true, myRank&&<span style={{fontSize:11,fontFamily:'monospace',color:C.teal,background:C.tealMuted,padding:'2px 10px',borderRadius:12}}>Your price ranks #{myRank} of {active.length+1}</span>, 'listed')}
       {sold.length>0&&block('Recently Sold · likely', sold, 'sold', false, <span style={{fontSize:10,color:C.textLight}} title="Listing dropped off the market — usually sold, not guaranteed">last 45 days</span>, 'sold')}
     </div>
