@@ -2884,7 +2884,7 @@ export default function Vantage() {
   return (
     <div style={{minHeight:'100vh',background:C.bg,fontFamily:"'Inter',-apple-system,BlinkMacSystemFont,sans-serif"}}>
       {/* NAV */}
-      <nav style={{background:'#fff',borderBottom:`1px solid ${C.border}`,position:'sticky',top:0,zIndex:200,boxShadow:'0 1px 3px rgba(0,0,0,0.06)'}}>
+      <nav className="desktop-nav" style={{background:'#fff',borderBottom:`1px solid ${C.border}`,position:'sticky',top:0,zIndex:200,boxShadow:'0 1px 3px rgba(0,0,0,0.06)'}}>
         <div style={{maxWidth:1200,margin:'0 auto',padding:'0 24px',height:52,display:'flex',alignItems:'center',gap:20}}>
           <div style={{display:'flex',alignItems:'center',gap:10,flexShrink:0}}>
             {dealer.logo?(
@@ -2932,6 +2932,37 @@ export default function Vantage() {
           </div>
         </div>
       </nav>
+
+      {/* Slim mobile-only top bar (the desktop nav is hidden on phones; the
+          bottom tab bar handles navigation). Respects the iOS status-bar safe area. */}
+      <div className="mobile-top-bar" style={{display:'none',background:'#fff',borderBottom:`1px solid ${C.border}`,position:'sticky',top:0,zIndex:200,alignItems:'center',justifyContent:'space-between',padding:'8px 16px',paddingTop:'calc(8px + env(safe-area-inset-top))',boxShadow:'0 1px 3px rgba(0,0,0,0.06)'}}>
+        <div style={{display:'flex',alignItems:'center',gap:8}}>
+          {dealer.logo?(
+            <img src={dealer.logo} style={{maxHeight:26,objectFit:'contain'}} alt={dealer.name}/>
+          ):(
+            <div style={{width:28,height:28,borderRadius:7,background:C.navy,display:'flex',alignItems:'center',justifyContent:'center'}}><span style={{fontSize:13,fontWeight:900,color:'#fff',fontFamily:'monospace',letterSpacing:-1}}>V</span></div>
+          )}
+          <span style={{fontSize:15,fontWeight:800,color:C.navy,letterSpacing:-0.3}}>Vantage</span>
+        </div>
+        <button onClick={()=>setShowUserMenu(s=>!s)} style={{display:'flex',alignItems:'center',gap:6,background:C.navyMuted,border:`1px solid ${C.navyBorder}`,borderRadius:8,padding:'4px 6px',cursor:'pointer'}}>
+          <div style={{width:26,height:26,background:C.navy,borderRadius:6,display:'flex',alignItems:'center',justifyContent:'center'}}><span style={{fontSize:10,fontWeight:800,color:'#fff'}}>{actingUser.split(' ').map(w=>w[0]).join('').slice(0,2).toUpperCase()}</span></div>
+          <ChevronDown size={12} color={C.textLight}/>
+        </button>
+        {showUserMenu&&(
+          <>
+            <div onClick={()=>setShowUserMenu(false)} style={{position:'fixed',inset:0,zIndex:300}}/>
+            <div style={{position:'absolute',right:12,top:'calc(100% + 4px)',background:'#fff',border:`1px solid ${C.borderStr}`,borderRadius:8,boxShadow:'0 8px 28px rgba(0,0,0,0.16)',minWidth:170,zIndex:301,overflow:'hidden'}}>
+              <div style={{padding:'8px 12px',fontSize:10,fontWeight:700,color:C.textLight,textTransform:'uppercase',letterSpacing:0.5,borderBottom:`1px solid ${C.border}`}}>Acting as</div>
+              {staff.map(u=>(
+                <button key={u} onClick={()=>pickUser(u)} style={{display:'flex',alignItems:'center',gap:8,width:'100%',padding:'9px 12px',background:u===actingUser?C.navyMuted:'none',border:'none',cursor:'pointer',textAlign:'left',fontSize:13,color:C.textDark,fontFamily:'inherit'}}>
+                  <div style={{width:22,height:22,background:u===actingUser?C.navy:C.bgDark,borderRadius:5,display:'flex',alignItems:'center',justifyContent:'center'}}><span style={{fontSize:9,fontWeight:800,color:u===actingUser?'#fff':C.textMid}}>{u.split(' ').map(w=>w[0]).join('').slice(0,2).toUpperCase()}</span></div>
+                  {u}{u===actingUser&&<CheckCircle size={13} color={C.green} style={{marginLeft:'auto'}}/>}
+                </button>
+              ))}
+            </div>
+          </>
+        )}
+      </div>
 
       {/* CONTENT */}
       <div className='content-pad' style={{maxWidth:1200,margin:'0 auto',padding:'24px 24px 60px'}}>
@@ -2982,6 +3013,8 @@ export default function Vantage() {
     /* ── MOBILE RESPONSIVE ── */
     @media (max-width: 768px) {
       .cap-only { display: inline-flex !important; }
+      .desktop-nav { display: none !important; }
+      .mobile-top-bar { display: flex !important; }
       .dash-stats { grid-template-columns: repeat(2, 1fr) !important; }
       .dash-tiles { grid-template-columns: repeat(2, 1fr) !important; max-width: 100% !important; }
       .nav-links { display: none !important; }
