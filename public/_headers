@@ -1,0 +1,8 @@
+# Service worker must never be cached, or app updates won't reach installed PWAs.
+/sw.js
+  Cache-Control: no-cache, no-store, must-revalidate
+  Service-Worker-Allowed: /
+
+/manifest.webmanifest
+  Cache-Control: no-cache
+  Content-Type: application/manifest+json
