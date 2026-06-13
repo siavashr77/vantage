@@ -189,6 +189,71 @@ function parseTrimOptions(rawTrim, rawSeries) {
   return opts
 }
 
+// ── Manual Year/Make/Model/Trim entry (no VIN) ──
+// Curated consumer auto brands (NHTSA's raw "all makes" list is 12k+ entries of
+// trailer/custom shops — unusable for a dropdown). These are the brands a used
+// car dealer actually appraises.
+const MANUAL_MAKES = ['Acura','Alfa Romeo','Audi','BMW','Buick','Cadillac','Chevrolet','Chrysler','Dodge','Fiat','Ford','Genesis','GMC','Honda','Hyundai','Infiniti','Jaguar','Jeep','Kia','Land Rover','Lexus','Lincoln','Maserati','Mazda','Mercedes-Benz','MINI','Mitsubishi','Nissan','Polestar','Porsche','Ram','Subaru','Tesla','Toyota','Volkswagen','Volvo'];
+
+// Cache NHTSA lookups so reopening a dropdown doesn't re-fetch (free API, but
+// still avoid redundant calls).
+const _nhtsaCache = { models: {}, trims: {} };
+
+async function fetchModelsFor(year, make) {
+  if (!year || !make) return [];
+  const key = `${year}|${make}`.toLowerCase();
+  if (_nhtsaCache.models[key]) return _nhtsaCache.models[key];
+  try {
+    const url = `https://vpic.nhtsa.dot.gov/api/vehicles/getmodelsformakeyear/make/${encodeURIComponent(make)}/modelyear/${year}?format=json`;
+    const r = await fetch(url);
+    const d = await r.json();
+    const models = [...new Set((d.Results || []).map(m => m.Model_Name).filter(Boolean))].sort();
+    _nhtsaCache.models[key] = models;
+    return models;
+  } catch { return []; }
+}
+
+// NHTSA can return candidate trims via GetCanadianVehicleSpecifications-style
+// data, but the reliable free path is decodevin trims per model is sparse. We
+// pull trims from the VPIC "GetModelsForMakeYear" + the trim list endpoint.
+async function fetchTrimsFor(year, make, model) {
+  if (!year || !make || !model) return [];
+  const key = `${year}|${make}|${model}`.toLowerCase();
+  if (_nhtsaCache.trims[key]) return _nhtsaCache.trims[key];
+  try {
+    // VPIC doesn't expose a clean trims-by-model endpoint; derive from VinAudit-
+    // independent NHTSA "vehicle types"/series is unreliable. Best free trim
+    // source: NHTSA's "GetCanadianVehicleSpecifications" lacks trims, so we fall
+    // back to an empty list (trim becomes optional text). Kept as a hook so we
+    // can wire a richer source later without touching the UI.
+    _nhtsaCache.trims[key] = [];
+    return [];
+  } catch { return []; }
+}
+
+async function fetchMarketBySpec(specId, postal, radius = 250, drivetrain = '', trim = '') {
+  if (!specId) throw new Error('Year, make and model required');
+  if (!postal) throw new Error('Dealer postal code required (set it in Settings)');
+  let url = `${API_BASE}/api/market-by-spec?spec_id=${encodeURIComponent(specId)}&postal=${encodeURIComponent(postal)}&radius=${radius}`;
+  if (drivetrain) url += `&drivetrain=${encodeURIComponent(drivetrain)}`;
+  if (trim) url += `&trim=${encodeURIComponent(trim)}`;
+  let res;
+  for (let attempt = 0; attempt < 2; attempt++) {
+    try { res = await fetch(url); break; }
+    catch (e) { if (attempt === 1) throw e; await new Promise(r => setTimeout(r, 800)); }
+  }
+  if (!res.ok) throw new Error(`Server error ${res.status}`);
+  return res.json();
+}
+
+// Build a VinAudit spec_id from parts: "2024_toyota_corolla_le" (trim optional).
+function buildSpecId(year, make, model, trim) {
+  const slug = s => (s || '').toString().trim().toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '');
+  const parts = [year, slug(make), slug(model)];
+  if (trim) parts.push(slug(trim));
+  return parts.filter(Boolean).join('_');
+}
+
 async function decodeVIN(vin) {
   const V = vin.toUpperCase();
   const res = await fetch(`https://vpic.nhtsa.dot.gov/api/vehicles/decodevinvalues/${V}?format=json`)
@@ -339,20 +404,12 @@ function recomputeFromComps(comps, opts = {}) {
 
 // Mock Carfax — replace with real API when credentials available
 async function fetchCarfax(vin) {
-  await new Promise(r=>setTimeout(r,1200));
-  const clean = Math.random()>0.3;
-  return {
-    vin, fetchedAt:new Date().toISOString(),
-    accidents: clean?0:Math.floor(1+Math.random()*2),
-    owners: Math.floor(1+Math.random()*3),
-    lien: Math.random()>0.8,
-    odometer_issues: false,
-    total_loss: false,
-    service_records: Math.floor(2+Math.random()*8),
-    last_reported_odometer: Math.round(Number(vin.charCodeAt(5))*800+20000),
-    clean,
-    report_url: `https://www.carfax.ca/vehicle-history-report?vin=${vin}`,
-  };
+  // Calls the backend Carfax route. Returns mock until Carfax credentials are
+  // configured server-side, at which point this same call returns real data
+  // (no frontend change needed).
+  const res = await fetch(`${API_BASE}/api/carfax/${vin}`);
+  if (!res.ok) throw new Error(`Carfax error ${res.status}`);
+  return res.json();
 }
 
 // Live competitive set — renders real VinAudit listings with clickable links.
@@ -495,6 +552,56 @@ function Input({value,onChange,placeholder,type='text',style:sx={}}) {
 function Sel({value,onChange,options,placeholder}) {
   return <select value={value} onChange={e=>onChange(e.target.value)} style={{width:'100%',padding:'8px 12px',background:'#fff',border:`1px solid ${C.borderStr}`,borderRadius:6,fontSize:13,color:value?C.textDark:C.textLight,fontFamily:'inherit',outline:'none',appearance:'none'}}><option value="">{placeholder||'Select...'}</option>{options.map(o=><option key={o.value||o} value={o.value||o}>{o.label||o}</option>)}</select>;
 }
+// Shown when no VIN is entered: typo-proof Year/Make/Model dropdowns (NHTSA),
+// plus an optional Trim. Writes year/make/model/series onto the record and can
+// fetch market data by spec_id (no VIN needed). makes are curated; models load
+// from NHTSA for the chosen year+make.
+function ManualVehicleEntry({ data, onSet, postal, onMarket, busy }) {
+  const [models, setModels] = useState([]);
+  const [loadingModels, setLoadingModels] = useState(false);
+  const years = [];
+  for (let y = new Date().getFullYear() + 1; y >= 1995; y--) years.push(String(y));
+
+  useEffect(() => {
+    let cancelled = false;
+    if (data.year && data.make) {
+      setLoadingModels(true);
+      fetchModelsFor(data.year, data.make).then(ms => { if (!cancelled) { setModels(ms); setLoadingModels(false); } });
+    } else { setModels([]); }
+    return () => { cancelled = true; };
+  }, [data.year, data.make]);
+
+  const canFetch = data.year && data.make && data.model && postal;
+  return (
+    <div style={{marginTop:10,padding:'12px',background:C.navyMuted,borderRadius:8,border:`1px dashed ${C.navyBorder}`}}>
+      <div style={{fontSize:11,fontWeight:700,color:C.navy,marginBottom:8,display:'flex',alignItems:'center',gap:6}}><Car size={13}/>No VIN? Select the vehicle</div>
+      <div style={{display:'grid',gridTemplateColumns:'repeat(2,1fr)',gap:8}}>
+        <div>
+          <label style={{display:'block',fontSize:10,fontWeight:600,color:C.textMid,marginBottom:4}}>Year</label>
+          <Sel value={data.year} onChange={v=>{onSet({year:v,model:'',series:''});}} options={years} placeholder="Select year"/>
+        </div>
+        <div>
+          <label style={{display:'block',fontSize:10,fontWeight:600,color:C.textMid,marginBottom:4}}>Make</label>
+          <Sel value={data.make} onChange={v=>{onSet({make:v,model:'',series:''});}} options={MANUAL_MAKES} placeholder="Select make"/>
+        </div>
+        <div>
+          <label style={{display:'block',fontSize:10,fontWeight:600,color:C.textMid,marginBottom:4}}>Model {loadingModels&&<span style={{color:C.textLight}}>loading…</span>}</label>
+          <Sel value={data.model} onChange={v=>onSet({model:v,series:''})} options={models} placeholder={!data.year||!data.make?'Pick year & make first':(models.length?'Select model':'No models found')}/>
+        </div>
+        <div>
+          <label style={{display:'block',fontSize:10,fontWeight:600,color:C.textMid,marginBottom:4}}>Trim <span style={{color:C.textLight,fontWeight:400}}>(optional)</span></label>
+          <Input value={data.series} onChange={v=>onSet({series:v})} placeholder="e.g. LE, XLT"/>
+        </div>
+      </div>
+      <div style={{display:'flex',alignItems:'center',gap:8,marginTop:10}}>
+        <Btn onClick={onMarket} disabled={!canFetch||busy} size="sm"><TrendingUp size={12} style={{animation:busy?'spin 1s linear infinite':undefined}}/>{busy?'Fetching…':'Fetch Market Data'}</Btn>
+        {!postal&&<span style={{fontSize:10,color:C.orange}}>Set dealer postal in Settings first</span>}
+        {!data.model&&data.year&&data.make&&<span style={{fontSize:10,color:C.textLight}}>Pick a model to continue</span>}
+      </div>
+    </div>
+  );
+}
+
 // Trim picker: when the VIN decode returns multiple candidate trims, show a
 // dropdown (with an "Other…" escape to type a custom value); otherwise a plain
 // editable input. Mirrors vAuto's behaviour when it can't pin the exact trim.
@@ -1376,6 +1483,24 @@ function AppraisalForm({initial,onSave,onBack,showToast,onConvert,onFinalize,onU
     }catch(e){showToast(e.message||'Market data unavailable','error');}
     finally{setMl(false);}
   }
+  // Manual (no-VIN) market fetch using year/make/model/trim → spec_id.
+  async function fetchMktBySpec(){
+    const dealer=onGetDealer?onGetDealer():null;
+    const postal=dealer?.postal;
+    if(!postal){showToast('Set your dealer postal code in Settings first','error');return;}
+    if(!a.year||!a.make||!a.model){showToast('Pick year, make and model','error');return;}
+    setMl(true);
+    try{
+      const specId=buildSpecId(a.year,a.make,a.model,a.series);
+      const m=await fetchMarketBySpec(specId,postal,a.searchDistance||250,a.drivetrain||"",a.series||"");
+      if(!m.found){showToast(m.message||'No Canadian comps found for this vehicle','warning');setMl(false);return;}
+      const note=`${m.meta.comps} comps · ${m.meta.matchMode==='trim'?'trim match':'model match'}`;
+      setA(p=>{const next=withLog({...p,marketLow:m.marketLow,marketMid:m.marketMid,marketHigh:m.marketHigh,marketAvgPrice:m.marketAvgPrice,activeComps:m.activeComps,marketDaysSupply:m.marketDaysSupply,marketDaySupply:m.marketDaySupply,medianDaysListed:m.medianDaysListed,_soldStats:m.soldStats,marketDataFetched:m.marketDataFetched,_marketMeta:m.meta,_medianCompMileage:m.medianCompMileage,_comps:m.comps,updatedAt:new Date().toISOString()},[logEvent('Market Data',`mid ${fmt(m.marketMid)} · ${note} (manual)`,user)]);aRef.current=next;return next;});
+      setIsDirty(true);
+      showToast(`Market: ${note}`,'success');
+    }catch(e){showToast(e.message||'Market data unavailable','error');}
+    finally{setMl(false);}
+  }
   // Auto-fetch ONCE when the VIN first becomes valid and we have no cached comps.
   // After this, criteria changes recompute locally (no further VinAudit calls).
   const autoFetchedRef=useRef(false);
@@ -1421,10 +1546,10 @@ function AppraisalForm({initial,onSave,onBack,showToast,onConvert,onFinalize,onU
         {/* Title row */}
         <div style={{padding:'12px 16px',display:'flex',alignItems:'center',gap:12,borderBottom:`1px solid ${C.border}`}}>
           <button onClick={onBack} style={{background:'none',border:'none',cursor:'pointer',color:C.textLight,display:'flex',alignItems:'center',gap:4,fontSize:13,padding:'4px 0',flexShrink:0}}>
-            <ChevronLeft size={16} color={C.navy}/>
+            <ChevronLeft size={18} color={C.navy}/>
           </button>
           <div style={{flex:1,minWidth:0}}>
-            <div style={{fontSize:16,fontWeight:800,color:C.navy,lineHeight:1.2}}>
+            <div style={{fontSize:16,fontWeight:800,color:C.navy,lineHeight:1.2,whiteSpace:'nowrap',overflow:'hidden',textOverflow:'ellipsis'}}>
               {[a.year,a.make,a.model,a.series].filter(Boolean).join(' ')||'New Appraisal'}
             </div>
             {a.vin&&<div style={{display:'flex',alignItems:'center',gap:6,marginTop:2}}>
@@ -1432,15 +1557,15 @@ function AppraisalForm({initial,onSave,onBack,showToast,onConvert,onFinalize,onU
               <CopyVIN vin={a.vin}/>
             </div>}
           </div>
-          <div style={{display:'flex',gap:6,flexShrink:0,alignItems:'center'}}>
-            {locked&&<span style={{display:'inline-flex',alignItems:'center',gap:4,background:C.purpleBg,color:C.purple,borderRadius:12,padding:'4px 10px',fontSize:11,fontWeight:700}}><ShieldCheck size={12}/>Finalized</span>}
-            <select value={a.status} disabled={locked} onChange={e=>set('status',e.target.value)} style={{padding:'5px 8px',border:`1px solid ${C.borderStr}`,borderRadius:6,fontSize:11,fontFamily:'inherit',color:C.textDark,background:locked?C.bgDark:'#fff',cursor:locked?'not-allowed':'pointer'}}>
-              {Object.entries(AS).map(([k,v])=><option key={k} value={k}>{v.label}</option>)}
-            </select>
-          </div>
+          {/* Inline save status keeps the header self-contained */}
+          <div style={{flexShrink:0}}><SaveStatus isDirty={isDirty} savedAt={savedAt} onSave={forceSave}/></div>
+          {locked&&<span style={{display:'inline-flex',alignItems:'center',gap:4,background:C.purpleBg,color:C.purple,borderRadius:12,padding:'4px 10px',fontSize:11,fontWeight:700,flexShrink:0}}><ShieldCheck size={12}/>Finalized</span>}
+          <select value={a.status} disabled={locked} onChange={e=>set('status',e.target.value)} style={{padding:'6px 10px',border:`1px solid ${C.borderStr}`,borderRadius:7,fontSize:11,fontFamily:'inherit',color:C.textDark,background:locked?C.bgDark:'#fff',cursor:locked?'not-allowed':'pointer',flexShrink:0}}>
+            {Object.entries(AS).map(([k,v])=><option key={k} value={k}>{v.label}</option>)}
+          </select>
         </div>
-        {/* Top action bar — replaces floating save bar */}
-        <div style={{padding:'10px 16px',display:'flex',gap:8,flexWrap:'wrap',background:'rgba(28,45,94,0.02)'}}>
+        {/* Action bar — only the contextual actions, no duplicated save/vehicle info */}
+        <div style={{padding:'10px 16px',display:'flex',gap:8,flexWrap:'wrap',alignItems:'center',background:'rgba(28,45,94,0.02)'}}>
           {locked?(
             <>
               <div style={{flex:'1 1 200px',display:'flex',alignItems:'center',gap:6,fontSize:12,color:C.textMid}}>
@@ -1452,7 +1577,6 @@ function AppraisalForm({initial,onSave,onBack,showToast,onConvert,onFinalize,onU
             </>
           ):(
             <>
-              <SaveStatus isDirty={isDirty} savedAt={savedAt} onSave={forceSave}/>
               {a.year&&a.make&&<button onClick={async()=>{
                 const r=await shareVehicle(aRef.current,null)
                 if(r.copied) showToast('Copied to clipboard','success')
@@ -1489,6 +1613,8 @@ function AppraisalForm({initial,onSave,onBack,showToast,onConvert,onFinalize,onU
           <Btn onClick={()=>setShowVINScanner(true)} variant="ghost" size="sm" className="cap-only"><ScanLine size={13}/>Scan</Btn>
           <Btn onClick={decode} disabled={vl||a.vin.length!==17} size="sm"><RefreshCw size={12} style={{animation:vl?'spin 1s linear infinite':undefined}}/>{vl?'...':'Decode'}</Btn>
         </div>
+        {/* No VIN → manual year/make/model/trim picker (always active when VIN empty) */}
+        {!a.vin&&<ManualVehicleEntry data={a} onSet={patch=>{Object.entries(patch).forEach(([k,v])=>set(k,v));}} postal={(onGetDealer?onGetDealer():null)?.postal} onMarket={fetchMktBySpec} busy={ml}/>}
         {/* Summary or expand */}
         <VehicleSummary data={a} onEdit={()=>setVehExpanded(p=>!p)}/>
         {/* Expandable details */}
@@ -2582,11 +2708,13 @@ export default function Vantage() {
   const saveD=useCallback(d=>{try{localStorage.setItem('vantage_dealer',JSON.stringify(d));}catch{}},[]);
 
   // ── Daily market-data refresh for active inventory ──
-  // Refetches any ACTIVE unit whose market data is >24h old, once on app load,
-  // sequentially (gentle on the VinAudit API). To switch to manual-only later,
-  // set AUTO_DAILY_REFRESH = false (the "Refresh" button on each car still works).
+  // Refetches market data once on app load, ONLY for cars currently being
+  // ADVERTISED (at least one feed active) whose data is >24h old. Cars in recon
+  // or not yet listed don't burn API calls. Manual "Refresh" still works on any
+  // car. To disable entirely, set AUTO_DAILY_REFRESH = false.
   const AUTO_DAILY_REFRESH = true;
   const refreshRan = useRef(false);
+  const isAdvertised = (v) => v.feeds && Object.values(v.feeds).some(f => f && f.active);
   useEffect(()=>{
     if(!AUTO_DAILY_REFRESH || refreshRan.current) return;
     refreshRan.current = true;
@@ -2594,7 +2722,7 @@ export default function Vantage() {
     if(!postal) return; // need dealer postal to fetch local comps
     const DAY = 24*60*60*1000;
     const stale = vehicles.filter(v =>
-      (v.status==='available'||v.status==='in_recon') &&
+      isAdvertised(v) &&                                   // only advertised units
       v.vin && v.vin.length===17 &&
       (!v.marketDataFetched || (Date.now()-new Date(v.marketDataFetched).getTime()) > DAY)
     );
@@ -2604,7 +2732,7 @@ export default function Vantage() {
       for(const v of stale){
         if(cancelled) break;
         try{
-          const m=await fetchMarketData(v.vin, postal);
+          const m=await fetchMarketData(v.vin, postal, v.searchDistance||250, v.drivetrain||"", v.series||"");
           if(m && m.found){
             setVehicles(prev=>{
               const n=prev.map(x=>x.id===v.id?{...x,marketLow:m.marketLow,marketMid:m.marketMid,marketHigh:m.marketHigh,marketAvgPrice:m.marketAvgPrice,activeComps:m.activeComps,marketDaySupply:m.marketDaySupply,medianDaysListed:m.medianDaysListed,_soldStats:m.soldStats,_comps:m.comps,_marketMeta:m.meta,_medianCompMileage:m.medianCompMileage,marketDataFetched:m.marketDataFetched||new Date().toISOString()}:x);
@@ -2788,9 +2916,9 @@ export default function Vantage() {
       <div className='content-pad' style={{maxWidth:1200,margin:'0 auto',padding:'24px 24px 60px'}}>
         {page==='dashboard'&&<Dashboard vehicles={vehicles} appraisals={appraisals} dealer={dealer} onNav={nav} onOpenVehicle={v=>{setActiveV({...v});setPage('vehicle_detail');}} onOpenAppraisal={a=>{setActiveA({...a});setPage('appraisal_form');}}/>}
         {page==='appraisals'&&<AppraisalList appraisals={appraisals} onNew={()=>nav('new_appraisal')} onEdit={a=>{setActiveA({...a});setPage('appraisal_form');}}/>}
-        {page==='appraisal_form'&&activeA&&<AppraisalForm initial={activeA} user={actingUser} onSave={(a,silent=false)=>saveAppraisal(a,silent)} onBack={()=>setPage('appraisals')} showToast={showToast} onConvert={convertToInventory} onFinalize={finalizeAppraisal} onUnlock={unlockAppraisal} onGetDealer={()=>dealer}/>}
+        {page==='appraisal_form'&&activeA&&<AppraisalForm key={activeA.id} initial={activeA} user={actingUser} onSave={(a,silent=false)=>saveAppraisal(a,silent)} onBack={()=>setPage('appraisals')} showToast={showToast} onConvert={convertToInventory} onFinalize={finalizeAppraisal} onUnlock={unlockAppraisal} onGetDealer={()=>dealer}/>}
         {page==='inventory'&&<InventoryList vehicles={vehicles} onAdd={()=>nav('new_vehicle')} onImport={()=>setShowBulkImport(true)} onEdit={v=>{setActiveV({...v});setPage('vehicle_detail');}}/>}
-        {page==='vehicle_detail'&&activeV&&<VehicleDetail vehicle={activeV} user={actingUser} onSave={saveVehicle} onBack={()=>setPage('inventory')} showToast={showToast} onShowSticker={v=>{setActiveV(v);setPage('sticker_detail');}} onGetDealer={()=>dealer}/>}
+        {page==='vehicle_detail'&&activeV&&<VehicleDetail key={activeV.id} vehicle={activeV} user={actingUser} onSave={saveVehicle} onBack={()=>setPage('inventory')} showToast={showToast} onShowSticker={v=>{setActiveV(v);setPage('sticker_detail');}} onGetDealer={()=>dealer}/>}
         {page==='stickers'&&<StickerGenerator vehicles={vehicles} dealer={dealer}/>}
         {page==='sticker_detail'&&activeV&&<div style={{maxWidth:700,margin:'0 auto'}}><StickerGenerator vehicles={vehicles} dealer={dealer} preselected={activeV.id} onBack={()=>setPage('vehicle_detail')}/></div>}
         {page==='reports'&&<ReportsPage vehicles={vehicles} appraisals={appraisals} dealer={dealer} showToast={showToast}/>}

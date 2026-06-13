@@ -316,7 +316,7 @@ function marketDaySupply(activeCount, soldInWindow, windowDays = 45) {
   return Math.round((activeCount / soldInWindow) * windowDays)
 }
 
-async function fetchListings({ vin, match, status, postal, radius, historyDays }) {
+async function fetchListings({ vin, specId, match, status, postal, radius, historyDays }) {
   // VinAudit paginates with `page` (1-based) + `page_size` (default/typical 100).
   // The response includes `query_total` (total matches across all pages), so we
   // page until we've pulled them all. Bounded by MAX_PAGES for latency/cost.
@@ -332,11 +332,17 @@ async function fetchListings({ vin, match, status, postal, radius, historyDays }
       listing_status: status,
       page_size: String(PAGE_SIZE),
       page: String(page),
-      spec_vin: vin,
-      spec_vin_match: match,
       postal,
       radius: String(radius),
     })
+    // Match by VIN spec (similar YMMT) or by an explicit spec_id (manual entry,
+    // no VIN). spec_id takes precedence per VinAudit docs.
+    if (specId) {
+      params.set('spec_id', specId)
+    } else {
+      params.set('spec_vin', vin)
+      params.set('spec_vin_match', match)   // 'trim' (strict) or 'model'
+    }
     if (status === 'dropped' && historyDays) params.set('history_days', String(historyDays))
     const url = `https://marketlistings.vinaudit.com/v1/listings?${params.toString()}`
     const r = await fetch(url)
@@ -505,58 +511,11 @@ function relevantText(text) {
   return (head + '\n...\n' + windows.join('\n...\n')).slice(0, 12000)
 }
 
-app.get('/api/market/:vin', async (req, res) => {
-  const vin = req.params.vin.toUpperCase().trim()
-  const postal = (req.query.postal || '').toString().trim()
-  // Radius up to national coverage (Canada ~5500km wide) so rare cars can pull
-  // comps from anywhere. VinAudit may still cap internally, but we don't clamp.
-  const radius = Math.min(Number(req.query.radius) || 250, 6000)
-  let historyDays = Number(req.query.history_days) || 60
-
-  if (vin.length !== 17) return res.status(400).json({ error: 'VIN must be 17 characters' })
-  if (!postal) return res.status(400).json({ error: 'postal code required' })
-  if (!VINAUDIT_KEY || VINAUDIT_KEY === 'YOUR_VINAUDIT_API_KEY_HERE') {
-    return res.status(400).json({ error: 'VinAudit API key not configured.' })
-  }
-
-  try {
-    // Try strict (trim) match first; widen to model if too few comps.
-    let match = 'trim'
-    let active = [], dropped = []
-    try {
-      ;[active, dropped] = await Promise.all([
-        fetchListings({ vin, match, status: 'active', postal, radius }),
-        fetchListings({ vin, match, status: 'dropped', postal, radius, historyDays }),
-      ])
-    } catch (e) {
-      // trim match can error on sparse specs — fall through to model
-      active = []; dropped = []
-    }
-
-    let widened = false
-    if (active.length + dropped.length < MIN_COMPS) {
-      match = 'model'
-      widened = true
-      ;[active, dropped] = await Promise.all([
-        fetchListings({ vin, match, status: 'active', postal, radius }),
-        fetchListings({ vin, match, status: 'dropped', postal, radius, historyDays }),
-      ])
-    }
-
-    // History widening (fallback only): keep archived/sold comps to the last
-    // 60 days when recent data is sufficient; reach further back ONLY if the set
-    // is still too sparse — so we never surface year-old sales unnecessarily.
-    let historyWidened = false
-    for (const step of [180, 365]) {
-      if (active.length + dropped.length >= MIN_COMPS) break
-      if (step <= historyDays) continue
-      historyDays = step
-      historyWidened = true
-      dropped = await fetchListings({ vin, match, status: 'dropped', postal, radius, historyDays })
-    }
-
-    // Blend: dropped (closer to transacted) + active (current asking),
-    // then collapse duplicate VINs so stats and comps count UNIQUE cars.
+// Shared market-response builder: takes already-fetched active/dropped listing
+// arrays plus context, runs dedup/filter/band, and sends the JSON response.
+// Used by both the VIN endpoint and the manual spec_id endpoint.
+async function buildMarketResponse(active, dropped, ctx, res) {
+  const { req, radius, match, widened, historyWidened, historyDays } = ctx
     const blended = [...dropped, ...active]
     const deduped = dedupeByVin(blended)
 
@@ -700,8 +659,100 @@ app.get('/api/market/:vin', async (req, res) => {
         ...(rawHostsDebug ? { rawHostsDebug } : {}),
       },
     })
+}
+
+app.get('/api/market/:vin', async (req, res) => {
+  const vin = req.params.vin.toUpperCase().trim()
+  const postal = (req.query.postal || '').toString().trim()
+  // Radius up to national coverage (Canada ~5500km wide) so rare cars can pull
+  // comps from anywhere. VinAudit may still cap internally, but we don't clamp.
+  const radius = Math.min(Number(req.query.radius) || 250, 6000)
+  let historyDays = Number(req.query.history_days) || 60
+
+  if (vin.length !== 17) return res.status(400).json({ error: 'VIN must be 17 characters' })
+  if (!postal) return res.status(400).json({ error: 'postal code required' })
+  if (!VINAUDIT_KEY || VINAUDIT_KEY === 'YOUR_VINAUDIT_API_KEY_HERE') {
+    return res.status(400).json({ error: 'VinAudit API key not configured.' })
+  }
+
+  try {
+    // Try strict (trim) match first; widen to model if too few comps.
+    let match = 'trim'
+    let active = [], dropped = []
+    try {
+      ;[active, dropped] = await Promise.all([
+        fetchListings({ vin, match, status: 'active', postal, radius }),
+        fetchListings({ vin, match, status: 'dropped', postal, radius, historyDays }),
+      ])
+    } catch (e) {
+      // trim match can error on sparse specs — fall through to model
+      active = []; dropped = []
+    }
+
+    let widened = false
+    if (active.length + dropped.length < MIN_COMPS) {
+      match = 'model'
+      widened = true
+      ;[active, dropped] = await Promise.all([
+        fetchListings({ vin, match, status: 'active', postal, radius }),
+        fetchListings({ vin, match, status: 'dropped', postal, radius, historyDays }),
+      ])
+    }
+
+    // History widening (fallback only): keep archived/sold comps to the last
+    // 60 days when recent data is sufficient; reach further back ONLY if the set
+    // is still too sparse — so we never surface year-old sales unnecessarily.
+    let historyWidened = false
+    for (const step of [180, 365]) {
+      if (active.length + dropped.length >= MIN_COMPS) break
+      if (step <= historyDays) continue
+      historyDays = step
+      historyWidened = true
+      dropped = await fetchListings({ vin, match, status: 'dropped', postal, radius, historyDays })
+    }
+
+    // Blend: dropped (closer to transacted) + active (current asking),
+    // then collapse duplicate VINs so stats and comps count UNIQUE cars.
+    await buildMarketResponse(active, dropped, { req, radius, match, widened, historyWidened, historyDays }, res)
   } catch (err) {
     console.error('VinAudit market error:', err.message)
+    res.status(500).json({ error: 'Market data failed: ' + err.message })
+  }
+})
+
+// Manual market lookup by year/make/model/trim (no VIN). The client builds a
+// spec_id like "2024_toyota_corolla_le" (or partial: "2024_toyota_corolla").
+app.get('/api/market-by-spec', async (req, res) => {
+  const specId = (req.query.spec_id || '').toString().trim().toLowerCase()
+  const postal = (req.query.postal || '').toString().trim()
+  const radius = Math.min(Number(req.query.radius) || 250, 6000)
+  let historyDays = Number(req.query.history_days) || 60
+
+  if (!specId) return res.status(400).json({ error: 'spec_id required (year_make_model[_trim])' })
+  if (!postal) return res.status(400).json({ error: 'postal code required' })
+  if (!VINAUDIT_KEY || VINAUDIT_KEY === 'YOUR_VINAUDIT_API_KEY_HERE') {
+    return res.status(400).json({ error: 'VinAudit API key not configured.' })
+  }
+
+  try {
+    let active = [], dropped = []
+    ;[active, dropped] = await Promise.all([
+      fetchListings({ specId, status: 'active', postal, radius }),
+      fetchListings({ specId, status: 'dropped', postal, radius, historyDays }),
+    ])
+    // History widening if sparse.
+    let historyWidened = false
+    for (const step of [180, 365]) {
+      if (active.length + dropped.length >= MIN_COMPS) break
+      if (step <= historyDays) continue
+      historyDays = step; historyWidened = true
+      dropped = await fetchListings({ specId, status: 'dropped', postal, radius, historyDays })
+    }
+    // spec_id is already trim-precise; match label reflects whether a trim was given.
+    const match = specId.split('_').length >= 4 ? 'trim' : 'model'
+    await buildMarketResponse(active, dropped, { req, radius, match, widened: false, historyWidened, historyDays }, res)
+  } catch (err) {
+    console.error('VinAudit spec market error:', err.message)
     res.status(500).json({ error: 'Market data failed: ' + err.message })
   }
 })
@@ -778,6 +829,58 @@ app.get('/api/health', (req, res) => {
     vinDecode: 'NHTSA — free',
     marketData: VINAUDIT_KEY && VINAUDIT_KEY !== 'YOUR_VINAUDIT_API_KEY_HERE' ? 'configured' : 'not configured',
     aiDescriptions: ANTHROPIC_KEY && ANTHROPIC_KEY !== 'YOUR_ANTHROPIC_API_KEY_HERE' ? 'configured' : 'not configured'
+  })
+})
+
+// ── Carfax Canada (mock now, structured for the real API) ──
+// When you sign a Carfax Canada data agreement you'll get an endpoint + key.
+// Set CARFAX_API_KEY (and adjust the request below to their spec). Until then,
+// this returns deterministic mock data so the UI works. The frontend calls this
+// route, so wiring the real API later requires NO frontend changes.
+const CARFAX_API_KEY = process.env.CARFAX_API_KEY || ''
+app.get('/api/carfax/:vin', async (req, res) => {
+  const vin = (req.params.vin || '').toUpperCase().trim()
+  if (vin.length !== 17) return res.status(400).json({ error: 'VIN must be 17 characters' })
+
+  // ── REAL API (enable when credentials exist) ──
+  if (CARFAX_API_KEY) {
+    try {
+      // NOTE: replace URL/params/field-mapping with Carfax Canada's actual spec.
+      // const r = await fetch(`https://api.carfax.ca/...?vin=${vin}`, {
+      //   headers: { Authorization: `Bearer ${CARFAX_API_KEY}` }
+      // })
+      // const d = await r.json()
+      // return res.json({ vin, fetchedAt:new Date().toISOString(),
+      //   accidents: d.accidentCount, owners: d.ownerCount, lien: d.hasLien,
+      //   odometer_issues: d.odometerProblem, total_loss: d.totalLoss,
+      //   service_records: d.serviceRecordCount,
+      //   last_reported_odometer: d.lastOdometer,
+      //   clean: d.accidentCount===0 && !d.odometerProblem && !d.totalLoss,
+      //   report_url: d.reportUrl, _source:'carfax' })
+      // For now, fall through to mock even if a key is set but code above is stubbed.
+    } catch (e) {
+      console.error('Carfax API error:', e.message)
+      // fall through to mock on error so the UI still functions
+    }
+  }
+
+  // ── MOCK (deterministic from VIN so the same car returns the same report) ──
+  const seed = vin.split('').reduce((s, c) => s + c.charCodeAt(0), 0)
+  const rnd = (n) => (seed * 9301 + 49297) % n
+  const accidents = rnd(10) < 7 ? 0 : 1 + (rnd(3) % 2)
+  const clean = accidents === 0
+  res.json({
+    vin, fetchedAt: new Date().toISOString(),
+    accidents,
+    owners: 1 + (rnd(5) % 3),
+    lien: rnd(10) > 8,
+    odometer_issues: false,
+    total_loss: false,
+    service_records: 2 + (rnd(13) % 8),
+    last_reported_odometer: Math.round(vin.charCodeAt(5) * 800 + 20000),
+    clean,
+    report_url: `https://www.carfax.ca/vehicle-history-report?vin=${vin}`,
+    _source: 'mock',
   })
 })
 
