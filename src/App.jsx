@@ -1602,7 +1602,7 @@ function AppraisalForm({initial,onSave,onBack,showToast,onConvert,onFinalize,onU
       {/* Two-column layout: sticky Vehicle panel on the left, everything else right */}
       <div className="two-col" style={{display:'grid',gridTemplateColumns:'minmax(300px, 360px) 1fr',gap:14,alignItems:'start'}}>
         {/* LEFT RAIL — sticks to viewport as the right column scrolls */}
-        <div className="appraisal-left" style={{position:'sticky',top:14,alignSelf:'start',maxHeight:'calc(100vh - 28px)',overflowY:'auto',overflowX:'hidden',paddingBottom:8}}>
+        <div className="appraisal-left" style={{position:'sticky',top:64,alignSelf:'start',maxHeight:'calc(100vh - 76px)',overflowY:'auto',overflowX:'hidden',paddingBottom:8}}>
       <Sec title="Vehicle" icon={Car} accent>
         {/* VIN row */}
         <div style={{display:'flex',gap:8,marginBottom:10,alignItems:'center'}}>
@@ -2320,7 +2320,7 @@ function VehicleDetail({vehicle:iv,onSave,onBack,showToast,onShowSticker=()=>{},
       <div className="two-col" style={{display:'grid',gridTemplateColumns:'minmax(340px,400px) 1fr',gap:14,alignItems:'start'}}>
 
         {/* ── LEFT RAIL (floating) ── */}
-        <div className="appraisal-left" style={{position:'sticky',top:14,alignSelf:'start',maxHeight:'calc(100vh - 28px)',overflowY:'auto',overflowX:'hidden',paddingBottom:8}}>
+        <div className="appraisal-left" style={{position:'sticky',top:64,alignSelf:'start',maxHeight:'calc(100vh - 76px)',overflowY:'auto',overflowX:'hidden',paddingBottom:8}}>
 
           <Sec title="Vehicle" icon={Car} accent>
             <div style={{display:'flex',gap:8,marginBottom:10}}>
