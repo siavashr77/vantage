@@ -1610,18 +1610,22 @@ function AppraisalForm({initial,onSave,onBack,showToast,onConvert,onFinalize,onU
   }
   // Auto-fetch ONCE when the VIN first becomes valid and we have no cached comps.
   // After this, criteria changes recompute locally (no further VinAudit calls).
+  // Auto-fetch ONCE after the vehicle is DECODED (make present), so the trim and
+  // drivetrain are available to tighten the comp match. Firing on bare VIN alone
+  // sent an empty trim → model-only match → the whole model's price range.
   const autoFetchedRef=useRef(false);
   useEffect(()=>{
     if(locked) return;
     if(a.vin?.length!==17){ autoFetchedRef.current=false; return; }
     if(a._comps || a.marketMid) return;
     if(autoFetchedRef.current) return;
+    if(!a.make) return;                 // wait until decode has populated the vehicle
     const dealer=onGetDealer?onGetDealer():null;
     if(!dealer?.postal) return;
     autoFetchedRef.current=true;
     fetchMkt();
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  },[a.vin]);
+  },[a.vin,a.make]);
   // Recompute market numbers from CACHED comps when criteria change — no API call.
   function recompute(partial){
     const next={...aRef.current,...partial};
