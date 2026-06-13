@@ -485,7 +485,7 @@ function CompSet({ comps, myPrice, myKm, myDays }) {
         </div>
         {badge}
       </div>
-      {isOpen&&<div style={{overflowX:'auto'}}>
+      {isOpen&&<><div className="comp-table-wrap" style={{overflowX:'auto'}}>
         <table style={{width:'100%',borderCollapse:'collapse',fontSize:12}}>
           <thead><tr style={{background:C.navyMuted}}>{[
             {label:'Price',key:'price'},
@@ -538,7 +538,51 @@ function CompSet({ comps, myPrice, myKm, myDays }) {
             );});})()}
           </tbody>
         </table>
-      </div>}
+      </div>
+      {/* Mobile: stacked cards instead of a horizontally-scrolling table */}
+      <div className="comp-cards" style={{display:'none',flexDirection:'column'}}>
+        {(()=>{
+          const mine = (showMine && mode==='listed') ? {__mine:true,price:mp||null,mileage:myKm?Number(myKm):null,days:myDays?Number(myDays):null,id:'__myvehicle'} : null;
+          const merged = mine ? [...rows, mine] : rows;
+          return sortRows(merged,mode).map((c,i)=>{
+            if(c.__mine){
+              return (
+                <div key="__myvehicle" style={{padding:'10px 14px',borderTop:`1px solid ${C.border}`,background:C.tealMuted,borderLeft:`3px solid ${C.teal}`}}>
+                  <div style={{display:'flex',justifyContent:'space-between',alignItems:'center'}}>
+                    <span style={{fontWeight:800,color:C.teal,fontSize:13}}>★ Your Vehicle</span>
+                    <span style={{fontFamily:'monospace',fontWeight:800,color:C.teal,fontSize:15}}>{mp?fmt(mp):'No price'}</span>
+                  </div>
+                  <div style={{display:'flex',gap:12,marginTop:4,fontSize:11,color:C.teal}}>
+                    <span>{myKm?fmtN(myKm)+' km':'— km'}</span>{myDays&&<span>{myDays} days</span>}
+                  </div>
+                </div>
+              );
+            }
+            const ago=mode==='sold'?soldAgo(c.dropDate):null;
+            return (
+              <div key={c.id||i} style={{padding:'11px 14px',borderTop:`1px solid ${C.border}`}}>
+                <div style={{display:'flex',justifyContent:'space-between',alignItems:'baseline',gap:8}}>
+                  <span style={{fontFamily:'monospace',fontWeight:700,fontSize:15,color:C.textDark}}>{fmt(c.price)}{c.certified&&<span style={{marginLeft:6,fontSize:9,fontWeight:700,color:C.green,background:C.greenBg,padding:'1px 5px',borderRadius:8}}>CPO</span>}</span>
+                  {c.url&&<a href={c.url} target="_blank" rel="noopener noreferrer" style={{display:'inline-flex',alignItems:'center',gap:3,color:C.navy,fontSize:12,fontWeight:600,textDecoration:'none',flexShrink:0}}><ExternalLink size={13}/>View</a>}
+                </div>
+                <div style={{display:'flex',gap:12,marginTop:4,fontSize:12,color:C.textMid,fontFamily:'monospace'}}>
+                  <span>{c.mileage?fmtN(c.mileage)+' km':'— km'}</span>
+                  {mode==='sold'
+                    ? <span style={{color:ago!=null&&ago<=14?C.green:C.textMid}}>{ago!=null?`sold ${ago}d ago`:'—'}</span>
+                    : <span style={{color:c.days>45?C.orange:C.textMid}}>{c.days?`${c.days} days`:'—'}</span>}
+                  <span style={{color:C.textLight,fontFamily:'inherit'}}>{[c.city,c.region].filter(Boolean).join(', ')||'—'}</span>
+                </div>
+                <div style={{marginTop:5,display:'flex',gap:8,alignItems:'center',flexWrap:'wrap'}}>
+                  <span style={{fontSize:12,color:C.textDark}}>{c.url?<a href={c.url} target="_blank" rel="noopener noreferrer" style={{color:C.navy,fontWeight:600,textDecoration:'none'}}>{c.dealer}</a>:c.dealer}</span>
+                  {c.source&&<span style={{fontSize:9,color:C.textLight,background:C.navyMuted,padding:'1px 6px',borderRadius:8}}>{c.source}</span>}
+                  {c.feeWarning&&<span style={{fontSize:9,fontWeight:700,color:C.orange,background:C.orangeBg,padding:'1px 6px',borderRadius:8}}>⚠ adds fees</span>}
+                </div>
+                <div style={{marginTop:6}}>{feeCell(c)}</div>
+              </div>
+            );
+          });
+        })()}
+      </div></>}
     </div>
     );
   };
@@ -3026,6 +3070,8 @@ export default function Vantage() {
       .field-third { flex: 1 1 100% !important; }
       .sticky-bar { padding: 10px 14px !important; }
       .comp-table { font-size: 11px !important; }
+      .comp-table-wrap { display: none !important; }
+      .comp-cards { display: flex !important; }
       .stat-grid-4 { grid-template-columns: repeat(2, 1fr) !important; }
       .two-col { grid-template-columns: 1fr !important; }
       .appraisal-left { position: static !important; max-height: none !important; overflow: visible !important; }
