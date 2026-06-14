@@ -2722,13 +2722,13 @@ function VehicleDetail({vehicle:iv,onSave,onBack,showToast,onShowSticker=()=>{},
             )}
 
             {/* Photos — combined into vehicle section */}
-            <div style={{marginTop:12,paddingTop:12,borderTop:`1px solid ${C.navyBorder}`}}>
-              <div style={{fontSize:11,fontWeight:700,color:C.navy,marginBottom:8,display:'flex',alignItems:'center',gap:6}}><Camera size={13}/>Photos {v.photos?.length>0?`(${v.photos.length})`:''}</div>
-              <div style={{display:'flex',gap:8,marginBottom:10,flexWrap:'wrap'}}>
-                <label className="cap-only" style={{display:'inline-flex',alignItems:'center',gap:6,padding:'8px 16px',background:C.navy,color:'#fff',borderRadius:6,fontSize:13,fontWeight:600,cursor:'pointer'}}><Camera size={13}/>Take Photo<input type="file" accept="image/*" capture="environment" style={{display:'none'}} onChange={photo} multiple/></label>
-                <label style={{display:'inline-flex',alignItems:'center',gap:6,padding:'8px 16px',background:'#fff',color:C.textMid,border:`1px solid ${C.borderStr}`,borderRadius:6,fontSize:13,fontWeight:600,cursor:'pointer'}}><Upload size={13}/>Upload<input type="file" accept="image/*" style={{display:'none'}} onChange={photo} multiple/></label>
+            <div style={{marginTop:10,paddingTop:10,borderTop:`1px solid ${C.navyBorder}`}}>
+              <div style={{fontSize:11,fontWeight:700,color:C.navy,marginBottom:6,display:'flex',alignItems:'center',gap:6}}><Camera size={13}/>Photos {v.photos?.length>0?`(${v.photos.length})`:''}</div>
+              <div style={{display:'flex',gap:8,marginBottom:8,flexWrap:'wrap'}}>
+                <label className="cap-only" style={{display:'inline-flex',alignItems:'center',gap:6,padding:'6px 14px',background:C.navy,color:'#fff',borderRadius:6,fontSize:13,fontWeight:600,cursor:'pointer'}}><Camera size={13}/>Take Photo<input type="file" accept="image/*" capture="environment" style={{display:'none'}} onChange={photo} multiple/></label>
+                <label style={{display:'inline-flex',alignItems:'center',gap:6,padding:'6px 14px',background:'#fff',color:C.textMid,border:`1px solid ${C.borderStr}`,borderRadius:6,fontSize:13,fontWeight:600,cursor:'pointer'}}><Upload size={13}/>Upload<input type="file" accept="image/*" style={{display:'none'}} onChange={photo} multiple/></label>
               </div>
-              {v.photos?.length>0?<div style={{display:'grid',gridTemplateColumns:'repeat(auto-fill,minmax(110px,1fr))',gap:8}}>{(v.photos||[]).map(p=><div key={p.id} style={{position:'relative',borderRadius:7,overflow:'hidden',border:`1px solid ${C.border}`}}><img src={p.dataUrl} style={{width:'100%',height:80,objectFit:'cover',display:'block'}} alt=""/><div style={{padding:'3px 5px',background:'#fff'}}><select value={p.category} onChange={e=>up({photos:v.photos.map(ph=>ph.id===p.id?{...ph,category:e.target.value}:ph)})} style={{width:'100%',fontSize:10,border:'none',background:'none',fontFamily:'inherit'}}>{['Front','Rear','Driver Side','Pass. Side','Interior','Odometer','Engine','Damage','Misc'].map(c=><option key={c}>{c}</option>)}</select></div><button onClick={()=>up({photos:v.photos.filter(ph=>ph.id!==p.id)})} style={{position:'absolute',top:3,right:3,background:'rgba(0,0,0,0.6)',border:'none',borderRadius:'50%',width:20,height:20,display:'flex',alignItems:'center',justifyContent:'center',cursor:'pointer'}}><X size={10} color="white"/></button></div>)}</div>:<div style={{padding:'20px',background:C.navyMuted,borderRadius:7,textAlign:'center',border:`1.5px dashed ${C.navyBorder}`}}><div style={{fontSize:12,color:C.textLight}}>No photos yet</div></div>}
+              {v.photos?.length>0?<div style={{display:'grid',gridTemplateColumns:'repeat(auto-fill,minmax(110px,1fr))',gap:8}}>{(v.photos||[]).map(p=><div key={p.id} style={{position:'relative',borderRadius:7,overflow:'hidden',border:`1px solid ${C.border}`}}><img src={p.dataUrl} style={{width:'100%',height:72,objectFit:'cover',display:'block'}} alt=""/><div style={{padding:'3px 5px',background:'#fff'}}><select value={p.category} onChange={e=>up({photos:v.photos.map(ph=>ph.id===p.id?{...ph,category:e.target.value}:ph)})} style={{width:'100%',fontSize:10,border:'none',background:'none',fontFamily:'inherit'}}>{['Front','Rear','Driver Side','Pass. Side','Interior','Odometer','Engine','Damage','Misc'].map(c=><option key={c}>{c}</option>)}</select></div><button onClick={()=>up({photos:v.photos.filter(ph=>ph.id!==p.id)})} style={{position:'absolute',top:3,right:3,background:'rgba(0,0,0,0.6)',border:'none',borderRadius:'50%',width:20,height:20,display:'flex',alignItems:'center',justifyContent:'center',cursor:'pointer'}}><X size={10} color="white"/></button></div>)}</div>:<div style={{padding:'20px',background:C.navyMuted,borderRadius:7,textAlign:'center',border:`1.5px dashed ${C.navyBorder}`}}><div style={{fontSize:12,color:C.textLight}}>No photos yet</div></div>}
             </div>
           </Sec>
 
@@ -2810,14 +2810,14 @@ function VehicleDetail({vehicle:iv,onSave,onBack,showToast,onShowSticker=()=>{},
           </Sec>
 
           <Sec title="Market Intelligence" icon={BarChart2} tone="blue">
-            <div style={{display:'flex',justifyContent:'flex-end',marginBottom:10}}>
+            <div style={{display:'flex',justifyContent:'flex-end',marginBottom:6}}>
               <Btn onClick={refMkt} disabled={ml} variant="ghost" size="sm"><RefreshCw size={11} style={{animation:ml?'spin 1s linear infinite':undefined}}/> Refresh</Btn>
             </div>
-            <div style={{display:'flex',gap:10,flexWrap:'wrap',marginBottom:12,alignItems:'flex-end'}}>
+            <div style={{display:'flex',gap:10,flexWrap:'wrap',marginBottom:8,alignItems:'flex-end'}}>
               <div>
                 <label style={{display:'block',fontSize:10,fontWeight:600,color:C.textMid,marginBottom:4}}>Distance</label>
                 <div style={{display:'flex',alignItems:'center',gap:4}}>
-                  <select value={v.searchDistance||150} onChange={e=>up({searchDistance:e.target.value})} style={{padding:'6px 8px',background:'#fff',border:`1px solid ${C.borderStr}`,borderRadius:6,fontSize:12,fontFamily:'inherit',outline:'none'}}>
+                  <select value={v.searchDistance||150} onChange={e=>up({searchDistance:e.target.value})} style={{padding:'5px 8px',background:'#fff',border:`1px solid ${C.borderStr}`,borderRadius:6,fontSize:12,fontFamily:'inherit',outline:'none'}}>
                     {DISTANCE_OPTS.map(d=><option key={d} value={d}>{d}</option>)}
                   </select>
                   <span style={{fontSize:10,color:C.textLight}}>km</span>
@@ -2826,23 +2826,23 @@ function VehicleDetail({vehicle:iv,onSave,onBack,showToast,onShowSticker=()=>{},
               <div>
                 <label style={{display:'block',fontSize:10,fontWeight:600,color:C.textMid,marginBottom:4}}>KM Range</label>
                 <div style={{display:'flex',alignItems:'center',gap:4}}>
-                  <input type="number" value={v.odoFrom||''} onChange={e=>up({odoFrom:e.target.value})} placeholder="From" style={{width:70,padding:'6px 8px',background:'#fff',border:`1px solid ${C.borderStr}`,borderRadius:6,fontSize:11,fontFamily:'inherit',outline:'none'}}/>
+                  <input type="number" value={v.odoFrom||''} onChange={e=>up({odoFrom:e.target.value})} placeholder="From" style={{width:70,padding:'5px 8px',background:'#fff',border:`1px solid ${C.borderStr}`,borderRadius:6,fontSize:11,fontFamily:'inherit',outline:'none'}}/>
                   <span style={{fontSize:10,color:C.textLight}}>–</span>
-                  <input type="number" value={v.odoTo||''} onChange={e=>up({odoTo:e.target.value})} placeholder="To" style={{width:70,padding:'6px 8px',background:'#fff',border:`1px solid ${C.borderStr}`,borderRadius:6,fontSize:11,fontFamily:'inherit',outline:'none'}}/>
+                  <input type="number" value={v.odoTo||''} onChange={e=>up({odoTo:e.target.value})} placeholder="To" style={{width:70,padding:'5px 8px',background:'#fff',border:`1px solid ${C.borderStr}`,borderRadius:6,fontSize:11,fontFamily:'inherit',outline:'none'}}/>
                 </div>
               </div>
             </div>
             {!v.marketMid?<div style={{textAlign:'center',padding:'12px 0'}}><Btn onClick={refMkt} disabled={ml}><TrendingUp size={13}/>{ml?'Loading...':'Fetch Market Data'}</Btn></div>:(
               <div>
-                <div style={{display:'grid',gridTemplateColumns:'repeat(3,1fr)',gap:8,marginBottom:10}}>{[{l:'Market Low',v:fmt(v.marketLow),c:C.green,t:'10th percentile of active comparable listing prices'},{l:'Market Mid',v:fmt(v.marketMid),c:C.navy,t:'Median of active comparable listing prices'},{l:'Market High',v:fmt(v.marketHigh),c:C.orange,t:'90th percentile of active comparable listing prices'}].map(s=><div key={s.l} title={s.t} style={{background:C.navyMuted,borderRadius:7,padding:'10px 12px',textAlign:'center',cursor:'help'}}><div style={{fontSize:10,color:C.textLight,fontWeight:600,marginBottom:2,display:'inline-flex',alignItems:'center',gap:3}}>{s.l}<Info size={10} color={C.textLight} style={{opacity:0.6}}/></div><div style={{fontSize:16,fontWeight:800,color:s.c,fontFamily:'monospace'}}>{s.v}</div></div>)}</div>
-                <div style={{display:'grid',gridTemplateColumns:'repeat(2,1fr)',gap:8,marginBottom:10}}>
+                <div style={{display:'grid',gridTemplateColumns:'repeat(3,1fr)',gap:8,marginBottom:8}}>{[{l:'Market Low',v:fmt(v.marketLow),c:C.green,t:'10th percentile of active comparable listing prices'},{l:'Market Mid',v:fmt(v.marketMid),c:C.navy,t:'Median of active comparable listing prices'},{l:'Market High',v:fmt(v.marketHigh),c:C.orange,t:'90th percentile of active comparable listing prices'}].map(s=><div key={s.l} title={s.t} style={{background:C.navyMuted,borderRadius:7,padding:'7px 10px',textAlign:'center',cursor:'help'}}><div style={{fontSize:10,color:C.textLight,fontWeight:600,marginBottom:2,display:'inline-flex',alignItems:'center',gap:3}}>{s.l}<Info size={10} color={C.textLight} style={{opacity:0.6}}/></div><div style={{fontSize:15,fontWeight:800,color:s.c,fontFamily:'monospace'}}>{s.v}</div></div>)}</div>
+                <div style={{display:'grid',gridTemplateColumns:'repeat(2,1fr)',gap:8,marginBottom:8}}>
                   {[
                     {l:'Active Comps',v:v._marketMeta?v._marketMeta.activeCount:v.activeComps,t:'Unique active comparable listings'},
                     {l:'Market Day Supply',v:(v.marketDaySupply!=null)?v.marketDaySupply:null,t:'Days to sell current active inventory at recent sales rate (active ÷ sold × 45)'},
                     {l:'Median Days Listed',v:(v.medianDaysListed!=null?v.medianDaysListed:v.marketDaysSupply)??null,t:'Median days a current comp has been listed'},
                     {l:'Median Comp KM',v:v._medianCompMileage?fmtN(v._medianCompMileage)+' km':(v.marketAvgOdometer?fmtN(v.marketAvgOdometer)+' km':null),t:'Median odometer across active comps'},
                   ].map(s=>(
-                    <div key={s.l} title={s.t} style={{background:'#fff',borderRadius:7,padding:'7px 10px',border:`1px solid ${C.border}`,display:'flex',justifyContent:'space-between',cursor:'help'}}>
+                    <div key={s.l} title={s.t} style={{background:'#fff',borderRadius:7,padding:'5px 9px',border:`1px solid ${C.border}`,display:'flex',justifyContent:'space-between',cursor:'help'}}>
                       <span style={{fontSize:10,color:C.textLight,display:'inline-flex',alignItems:'center',gap:3}}>{s.l}<Info size={10} color={C.textLight} style={{opacity:0.6}}/></span>
                       <span style={{fontSize:11,fontWeight:700,color:C.navy,fontFamily:'monospace'}}>{s.v||s.v===0?s.v:'—'}</span>
                     </div>
@@ -2851,14 +2851,14 @@ function VehicleDetail({vehicle:iv,onSave,onBack,showToast,onShowSticker=()=>{},
                 {v._soldStats&&v._soldStats.count>0&&(()=>{
                   const s=v._soldStats;
                   return(
-                    <div style={{background:'#fff',border:`1px solid ${C.border}`,borderRadius:8,overflow:'hidden',marginBottom:10}}>
-                      <div style={{padding:'7px 10px',background:C.navyMuted,borderBottom:`1px solid ${C.border}`,fontSize:10,fontWeight:700,color:C.navy,display:'flex',justifyContent:'space-between',alignItems:'center'}}>
+                    <div style={{background:'#fff',border:`1px solid ${C.border}`,borderRadius:8,overflow:'hidden',marginBottom:8}}>
+                      <div style={{padding:'6px 10px',background:C.navyMuted,borderBottom:`1px solid ${C.border}`,fontSize:10,fontWeight:700,color:C.navy,display:'flex',justifyContent:'space-between',alignItems:'center'}}>
                         <span>Recently Sold — Comparable Market</span>
                         <span style={{fontSize:9,color:C.textLight,fontWeight:500}}>excluded from pricing</span>
                       </div>
                       <div style={{display:'grid',gridTemplateColumns:'repeat(4,1fr)'}}>
                         {[{l:'Sold',v:s.count},{l:'Avg Days to Sell',v:s.avgDts!=null?s.avgDts:'—'},{l:'Avg Sold Price',v:s.avgPrice!=null?fmt(s.avgPrice):'—'},{l:'Avg KM',v:s.avgOdo!=null?fmtN(s.avgOdo):'—'}].map((c,i)=>(
-                          <div key={c.l} style={{padding:'8px 8px',borderRight:i<3?`1px solid ${C.border}`:'none',textAlign:'center'}}>
+                          <div key={c.l} style={{padding:'6px 8px',borderRight:i<3?`1px solid ${C.border}`:'none',textAlign:'center'}}>
                             <div style={{fontSize:9,fontWeight:600,color:C.textLight,marginBottom:3}}>{c.l}</div>
                             <div style={{fontSize:12,fontWeight:800,color:C.navy,fontFamily:'monospace'}}>{c.v}</div>
                           </div>
@@ -2867,7 +2867,7 @@ function VehicleDetail({vehicle:iv,onSave,onBack,showToast,onShowSticker=()=>{},
                     </div>
                   );
                 })()}
-                {v.listPrice&&<div style={{background:'#fff',borderRadius:7,padding:'10px',textAlign:'center',border:`1px solid ${C.border}`}}><div style={{fontSize:9,color:C.textLight,fontWeight:600,marginBottom:6,letterSpacing:1,textTransform:'uppercase'}}>Market Position</div><GaugeSmall price={v.listPrice} mid={v.marketMid}/></div>}
+                {v.listPrice&&<div style={{background:'#fff',borderRadius:7,padding:'8px 10px',textAlign:'center',border:`1px solid ${C.border}`}}><div style={{fontSize:9,color:C.textLight,fontWeight:600,marginBottom:4,letterSpacing:1,textTransform:'uppercase'}}>Market Position</div><GaugeSmall price={v.listPrice} mid={v.marketMid}/></div>}
               </div>
             )}
             {comps.length>0
