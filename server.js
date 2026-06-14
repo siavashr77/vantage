@@ -13,7 +13,7 @@ const PORT = process.env.PORT || 3001
 // (e.g. https://your-site.netlify.app). If unset, allow all (local dev).
 const ALLOWED_ORIGIN = process.env.ALLOWED_ORIGIN || ''
 app.use(cors(ALLOWED_ORIGIN ? { origin: ALLOWED_ORIGIN } : {}))
-app.use(express.json())
+app.use(express.json({ limit: '12mb' }))
 
 // ── Postgres dealer-fee ledger ───────────────────────────────────────
 // Railway injects DATABASE_URL when a Postgres service is attached.
@@ -68,6 +68,17 @@ if (DATABASE_URL) {
   // Add columns that may not exist on an already-created table (safe, idempotent).
   pool.query(`ALTER TABLE pending_leads ADD COLUMN IF NOT EXISTS thin_market BOOLEAN DEFAULT false`)
     .catch(e => console.error('Leads alter error:', e.message))
+  // Customer-reported detail (appraiser context only — does NOT affect the offer).
+  pool.query(`ALTER TABLE pending_leads
+      ADD COLUMN IF NOT EXISTS condition_opinion TEXT,
+      ADD COLUMN IF NOT EXISTS known_issues TEXT,
+      ADD COLUMN IF NOT EXISTS tire_condition TEXT,
+      ADD COLUMN IF NOT EXISTS brake_condition TEXT,
+      ADD COLUMN IF NOT EXISTS ownership TEXT,
+      ADD COLUMN IF NOT EXISTS lien_holder TEXT,
+      ADD COLUMN IF NOT EXISTS lien_balance INTEGER,
+      ADD COLUMN IF NOT EXISTS photos JSONB`)
+    .catch(e => console.error('Leads detail-cols alter error:', e.message))
 
   // 24h market cache — keyed by VIN-or-spec + FSA. Lets the widget return an
   // instant offer (and the prefetch warm it) without re-paginating VinAudit.
@@ -1080,6 +1091,22 @@ app.post('/api/leads', async (req, res) => {
     const thinMarket = (Number(market.compCount) || 0) < MIN_OFFER_COMPS
     const extremeKm = sb.kmExtreme === true
 
+    // Customer-reported detail — appraiser context only, does NOT affect the offer.
+    const clean = v => (v == null ? null : String(v).trim().slice(0, 2000) || null)
+    const conditionOpinion = clean(b.conditionOpinion)
+    const knownIssues = clean(b.knownIssues)
+    const tireCondition = clean(b.tireCondition)
+    const brakeCondition = clean(b.brakeCondition)
+    const ownership = clean(b.ownership)
+    const lienHolder = clean(b.lienHolder)
+    const lienBalance = b.lienBalance != null && b.lienBalance !== '' ? Math.round(Number(b.lienBalance)) : null
+    // Photos: array of compressed data-URLs from the widget. Cap count + total size.
+    let photos = Array.isArray(b.photos) ? b.photos.filter(p => typeof p === 'string' && p.startsWith('data:image')) : []
+    photos = photos.slice(0, 12)
+    // Guard against oversized payloads (compressed client-side, but double-check).
+    const totalBytes = photos.reduce((s, p) => s + p.length, 0)
+    if (totalBytes > 8 * 1024 * 1024) photos = photos.slice(0, 6) // hard cap ~8MB
+
     const breakdown = {
       reasons: sb.reasons,
       targetRetail: sb.targetRetail,
@@ -1098,12 +1125,17 @@ app.post('/api/leads', async (req, res) => {
           `INSERT INTO pending_leads
             (dealer_key,vin,year,make,model,trim,odometer,postal,accident,accident_amount,
              customer_name,customer_email,customer_phone,offer_amount,base_offer,accident_deduction,
-             offer_breakdown,market_mid,confidence,thin_market,status,source)
-           VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,'pending','widget')
+             offer_breakdown,market_mid,confidence,thin_market,
+             condition_opinion,known_issues,tire_condition,brake_condition,ownership,lien_holder,lien_balance,photos,
+             status,source)
+           VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,
+             $21,$22,$23,$24,$25,$26,$27,$28,'pending','widget')
            RETURNING id`,
           [(b.dealer || '').toString().trim(), vin, year, make, model, trim, odometer, postal,
            accident, accidentAmount, name, email, phone, offer, sb.suggested, deduction,
-           JSON.stringify(breakdown), market.mid, confidence, thinMarket]
+           JSON.stringify(breakdown), market.mid, confidence, thinMarket,
+           conditionOpinion, knownIssues, tireCondition, brakeCondition, ownership, lienHolder, lienBalance,
+           photos.length ? JSON.stringify(photos) : null]
         )
         leadId = ins.rows[0]?.id || null
       } catch (e) { console.error('lead insert error:', e.message) }

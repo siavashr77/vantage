@@ -1312,6 +1312,17 @@ function LeadsInbox({leads,loading,onRefresh,onOpen,onDismiss}){
                       {lead.customer_phone&&<a href={`tel:${lead.customer_phone}`} style={{display:'flex',alignItems:'center',gap:5,fontSize:13,color:C.teal,fontWeight:600,textDecoration:'none'}}>📞 {lead.customer_phone}</a>}
                       {lead.customer_email&&<a href={`mailto:${lead.customer_email}`} style={{display:'flex',alignItems:'center',gap:5,fontSize:13,color:C.teal,fontWeight:600,textDecoration:'none'}}><Mail size={13}/>{lead.customer_email}</a>}
                     </div>
+                    {/* Customer-reported detail chips (appraiser context) */}
+                    {(lead.condition_opinion||lead.tire_condition||lead.brake_condition||lead.ownership||(lead.photos&&lead.photos.length)||lead.known_issues)&&(
+                      <div style={{display:'flex',gap:6,marginTop:10,flexWrap:'wrap'}}>
+                        {lead.condition_opinion&&<span style={{fontSize:11,background:C.navyMuted,color:C.textMid,padding:'2px 8px',borderRadius:6}}>Condition: <b style={{color:C.navy}}>{lead.condition_opinion}</b></span>}
+                        {lead.tire_condition&&<span style={{fontSize:11,background:C.navyMuted,color:C.textMid,padding:'2px 8px',borderRadius:6}}>Tires: {lead.tire_condition}</span>}
+                        {lead.brake_condition&&<span style={{fontSize:11,background:C.navyMuted,color:C.textMid,padding:'2px 8px',borderRadius:6}}>Brakes: {lead.brake_condition}</span>}
+                        {lead.ownership&&<span style={{fontSize:11,background:lead.ownership==='owned'?C.greenBg:C.orangeBg,color:lead.ownership==='owned'?C.green:C.orange,padding:'2px 8px',borderRadius:6,fontWeight:600,textTransform:'capitalize'}}>{lead.ownership}{lead.lien_balance!=null?` · $${Number(lead.lien_balance).toLocaleString('en-CA')} owing`:''}</span>}
+                        {lead.photos&&lead.photos.length>0&&<span style={{fontSize:11,background:C.blueBg,color:C.blue,padding:'2px 8px',borderRadius:6,fontWeight:600}}>📷 {lead.photos.length} photo{lead.photos.length>1?'s':''}</span>}
+                      </div>
+                    )}
+                    {lead.known_issues&&<div style={{fontSize:12,color:C.textMid,marginTop:8,background:C.orangeBg,borderRadius:6,padding:'6px 10px'}}><b style={{color:C.orange}}>Reported issues:</b> {lead.known_issues}</div>}
                   </div>
                   {/* Offer / range / specialist */}
                   <div style={{textAlign:'right',flexShrink:0}}>
@@ -3216,7 +3227,20 @@ export default function Vantage() {
     a.marketMid=lead.market_mid||null;
     a.accidentVisible=!!lead.accident;
     a._leadId=lead.id;
+    // Customer-reported condition → appraisal fields (appraiser verifies).
+    if(lead.known_issues) a.mechanical=lead.known_issues;
+    if(lead.tire_condition) a.tires=lead.tire_condition;
+    // Ownership / lien → lien fields.
+    if(lead.lien_holder) a.lienHolder=lead.lien_holder;
+    if(lead.lien_balance!=null) a.lienPayoff=String(lead.lien_balance);
+    // Photos uploaded by the customer → appraisal photos (already compressed).
+    if(Array.isArray(lead.photos)&&lead.photos.length){
+      a.photos=lead.photos.map((dataUrl,i)=>({id:`lead-${lead.id}-${i}`,dataUrl,category:'Customer'}));
+    }
     a.notes=`Customer-submitted lead via widget on ${fmtDate(lead.created_at)}.`+
+      (lead.condition_opinion?` Customer rates condition: ${lead.condition_opinion}.`:'')+
+      (lead.brake_condition?` Brakes: ${lead.brake_condition}.`:'')+
+      (lead.ownership?` Ownership: ${lead.ownership}${lead.lien_balance!=null?` (balance ~$${Number(lead.lien_balance).toLocaleString('en-CA')})`:''}.`:'')+
       (lead.thin_market?' [Flagged: thin market — specialist follow-up]':'')+
       (lead.offer_amount?` Instant offer shown: $${Number(lead.offer_amount).toLocaleString('en-CA')}.`:'');
     a.comments=[{ts:new Date().toISOString(),user:'System',text:`Imported from customer lead #${lead.id}. Customer contact: ${lead.customer_email||''} ${lead.customer_phone||''}`.trim()}];

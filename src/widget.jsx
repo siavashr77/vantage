@@ -25,6 +25,27 @@ const C = {
 
 const fmt = n => n != null ? `$${Number(n).toLocaleString('en-CA')}` : ''
 
+// Compress an image File → a small JPEG data-URL (max 1200px, ~0.7 quality) so
+// photos travel light to the backend and into the appraisal.
+function compressImage(file, maxDim = 1200, quality = 0.7) {
+  return new Promise((resolve, reject) => {
+    const img = new Image()
+    const url = URL.createObjectURL(file)
+    img.onload = () => {
+      URL.revokeObjectURL(url)
+      let { width, height } = img
+      if (width > height && width > maxDim) { height = Math.round(height * maxDim / width); width = maxDim }
+      else if (height > maxDim) { width = Math.round(width * maxDim / height); height = maxDim }
+      const canvas = document.createElement('canvas')
+      canvas.width = width; canvas.height = height
+      canvas.getContext('2d').drawImage(img, 0, 0, width, height)
+      resolve(canvas.toDataURL('image/jpeg', quality))
+    }
+    img.onerror = () => { URL.revokeObjectURL(url); reject(new Error('image load failed')) }
+    img.src = url
+  })
+}
+
 // Tell the embedding page our height so the iframe can auto-resize (embed.js
 // listens for this).
 function postHeight() {
@@ -75,6 +96,17 @@ function Widget() {
   const [odometer, setOdometer] = useState('')
   const [accident, setAccident] = useState(null)   // null | true | false
   const [accidentAmount, setAccidentAmount] = useState('')
+
+  // Condition & ownership (appraiser info — does NOT affect the offer)
+  const [conditionOpinion, setConditionOpinion] = useState('')
+  const [knownIssues, setKnownIssues] = useState('')
+  const [tireCondition, setTireCondition] = useState('')
+  const [brakeCondition, setBrakeCondition] = useState('')
+  const [ownership, setOwnership] = useState('')        // owned | financed | leased
+  const [lienHolder, setLienHolder] = useState('')
+  const [lienBalance, setLienBalance] = useState('')
+  const [photos, setPhotos] = useState([])             // compressed data-URLs
+  const [photoBusy, setPhotoBusy] = useState(false)
 
   // Contact
   const [name, setName] = useState('')
@@ -171,6 +203,15 @@ function Widget() {
       accident: accident === true,
       accidentAmount: accident === true && accidentAmount ? Number(accidentAmount) : null,
       customerName: name.trim(), customerEmail: email.trim(), customerPhone: phone.trim(),
+      // Appraiser info (does not affect the offer)
+      conditionOpinion: conditionOpinion || null,
+      knownIssues: knownIssues.trim() || null,
+      tireCondition: tireCondition || null,
+      brakeCondition: brakeCondition || null,
+      ownership: ownership || null,
+      lienHolder: (ownership === 'financed' || ownership === 'leased') ? (lienHolder.trim() || null) : null,
+      lienBalance: (ownership === 'financed' || ownership === 'leased') && lienBalance ? Number(lienBalance) : null,
+      photos,
       dealer: DEALER,
     }
     try {
@@ -184,6 +225,21 @@ function Widget() {
       setError('Something went wrong submitting your details. Please try again.')
     } finally { setSubmitting(false) }
   }
+
+  // Compress + add uploaded photos (cap at 12).
+  async function onPhotos(e) {
+    const files = Array.from(e.target.files || [])
+    if (!files.length) return
+    setPhotoBusy(true)
+    try {
+      const out = []
+      for (const f of files.slice(0, 12)) {
+        try { out.push(await compressImage(f)) } catch {}
+      }
+      setPhotos(prev => [...prev, ...out].slice(0, 12))
+    } finally { setPhotoBusy(false); e.target.value = '' }
+  }
+  const removePhoto = i => setPhotos(prev => prev.filter((_, idx) => idx !== i))
 
   // ── styles ──
   const wrap = { maxWidth: 440, margin: '0 auto', padding: 20, color: C.textDark }
@@ -308,6 +364,82 @@ function Widget() {
                   <div style={{ fontSize: 11, color: C.textLight, marginTop: 6 }}>Leave blank if you're not sure — we'll confirm later.</div>
                 </div>
               )}
+
+              {/* Condition opinion */}
+              <div style={{ marginTop: 16 }}>
+                <label style={label}>How would you rate the overall condition?</label>
+                <div style={{ display: 'flex', gap: 6 }}>
+                  {['Excellent', 'Good', 'Fair', 'Poor'].map(o => (
+                    <button key={o} onClick={() => setConditionOpinion(o)} style={{ flex: 1, padding: '10px 4px', borderRadius: 9, cursor: 'pointer', fontWeight: 600, fontSize: 13, border: `1.5px solid ${conditionOpinion === o ? C.teal : C.border}`, background: conditionOpinion === o ? C.tealMuted : '#fff', color: C.navy }}>{o}</button>
+                  ))}
+                </div>
+              </div>
+
+              {/* Known issues */}
+              <div style={{ marginTop: 16 }}>
+                <label style={label}>Any known damage or mechanical issues? <span style={{ color: C.textLight, fontWeight: 400 }}>(optional)</span></label>
+                <textarea style={{ ...input, minHeight: 64, resize: 'vertical' }} value={knownIssues} onChange={e => setKnownIssues(e.target.value)} placeholder="e.g. small dent on rear bumper, AC needs recharge…" />
+              </div>
+
+              {/* Tires + brakes */}
+              <div style={{ display: 'flex', gap: 12, marginTop: 16 }}>
+                <div style={{ flex: 1 }}>
+                  <label style={label}>Tire condition</label>
+                  <select style={input} value={tireCondition} onChange={e => setTireCondition(e.target.value)}>
+                    <option value="">Select</option>
+                    {['New', 'Good', 'Worn', 'Needs replacing'].map(o => <option key={o} value={o}>{o}</option>)}
+                  </select>
+                </div>
+                <div style={{ flex: 1 }}>
+                  <label style={label}>Brake condition</label>
+                  <select style={input} value={brakeCondition} onChange={e => setBrakeCondition(e.target.value)}>
+                    <option value="">Select</option>
+                    {['New', 'Good', 'Worn', 'Needs replacing'].map(o => <option key={o} value={o}>{o}</option>)}
+                  </select>
+                </div>
+              </div>
+
+              {/* Ownership / lien */}
+              <div style={{ marginTop: 16 }}>
+                <label style={label}>Do you own it, or is there a loan or lease?</label>
+                <div style={{ display: 'flex', gap: 6 }}>
+                  {[['owned', 'Owned'], ['financed', 'Financed'], ['leased', 'Leased']].map(([v, l]) => (
+                    <button key={v} onClick={() => setOwnership(v)} style={{ flex: 1, padding: '10px 4px', borderRadius: 9, cursor: 'pointer', fontWeight: 600, fontSize: 13, border: `1.5px solid ${ownership === v ? C.teal : C.border}`, background: ownership === v ? C.tealMuted : '#fff', color: C.navy }}>{l}</button>
+                  ))}
+                </div>
+              </div>
+              {(ownership === 'financed' || ownership === 'leased') && (
+                <div style={{ display: 'flex', gap: 12, marginTop: 12 }}>
+                  <div style={{ flex: 1.4 }}>
+                    <label style={label}>Lender <span style={{ color: C.textLight, fontWeight: 400 }}>(if known)</span></label>
+                    <input style={input} value={lienHolder} onChange={e => setLienHolder(e.target.value)} placeholder="e.g. TD Auto Finance" />
+                  </div>
+                  <div style={{ flex: 1 }}>
+                    <label style={label}>Balance owing</label>
+                    <input style={input} type="number" value={lienBalance} onChange={e => setLienBalance(e.target.value)} placeholder="$" />
+                  </div>
+                </div>
+              )}
+
+              {/* Photos */}
+              <div style={{ marginTop: 16 }}>
+                <label style={label}>Photos <span style={{ color: C.textLight, fontWeight: 400 }}>(optional — helps us finalize faster)</span></label>
+                <label style={{ ...btnGhost, display: 'inline-flex', alignItems: 'center', justifyContent: 'center', gap: 8, width: 'auto', padding: '10px 16px', cursor: 'pointer' }}>
+                  {photoBusy ? 'Processing…' : '📷 Add photos'}
+                  <input type="file" accept="image/*" multiple style={{ display: 'none' }} onChange={onPhotos} />
+                </label>
+                {photos.length > 0 && (
+                  <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8, marginTop: 10 }}>
+                    {photos.map((p, i) => (
+                      <div key={i} style={{ position: 'relative', width: 64, height: 64, borderRadius: 8, overflow: 'hidden', border: `1px solid ${C.border}` }}>
+                        <img src={p} style={{ width: '100%', height: '100%', objectFit: 'cover' }} alt="" />
+                        <button onClick={() => removePhoto(i)} style={{ position: 'absolute', top: 2, right: 2, background: 'rgba(0,0,0,0.6)', color: '#fff', border: 'none', borderRadius: '50%', width: 18, height: 18, fontSize: 11, cursor: 'pointer', lineHeight: 1 }}>×</button>
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </div>
+
               <div style={{ display: 'flex', gap: 8, marginTop: 20 }}>
                 <button style={btnGhost} onClick={() => setStep('vehicle')}>Back</button>
                 <button style={btn} onClick={() => { setError(''); setStep('contact') }} disabled={accident === null}>Next</button>
