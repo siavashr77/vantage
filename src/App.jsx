@@ -11,6 +11,7 @@ import {
 } from "lucide-react";
 import VINScanner from './VINScanner.jsx'
 import { computeSuggestedBuy, confidenceFrom, LUXURY_MAKES } from '../shared/suggestedBuy.js'
+import { useNavigate, useLocation } from 'react-router-dom'
 import * as XLSX from 'xlsx'
 
 
@@ -3145,6 +3146,8 @@ function ReportsPage({vehicles,appraisals,dealer,showToast}){
 // ─── MAIN APP ─────────────────────────────────────────────────────────
 export default function Vantage() {
   const [page,setPage]=useState('dashboard');
+  const navigate=useNavigate();
+  const location=useLocation();
   const [vehicles,setVehicles]=useState(SEED);
   const [appraisals,setAppraisals]=useState([]);
   const [dealer,setDealer]=useState(DEFAULT_DEALER);
@@ -3179,6 +3182,67 @@ export default function Vantage() {
     loadLeads();
   },[loadLeads]);
 
+  // ─── URL ROUTING ───────────────────────────────────────────────────────
+  // Each page (and each appraisal/vehicle/lead) has its own URL. We keep the
+  // existing page/activeA/activeV state model and sync it with the address bar.
+  // Map a page (+ optional active record) → a URL path.
+  function urlForPage(pg, rec){
+    switch(pg){
+      case 'dashboard': return '/';
+      case 'leads': return '/leads';
+      case 'appraisals': return '/appraisals';
+      case 'inventory': return '/inventory';
+      case 'reports': return '/reports';
+      case 'settings': return '/settings';
+      case 'stickers': return '/stickers';
+      case 'appraisal_form': return rec?.id?`/appraisal/${rec.id}`:'/appraisals';
+      case 'vehicle_detail': return rec?.id?`/inventory/${rec.id}`:'/inventory';
+      case 'sticker_detail': return rec?.id?`/inventory/${rec.id}/sticker`:'/inventory';
+      default: return '/';
+    }
+  }
+  // Navigate: update the URL (which drives the render via the effect below).
+  const goto=useCallback((pg,rec)=>{
+    const url=urlForPage(pg,rec);
+    if(location.pathname!==url) navigate(url);
+    setPage(pg);
+  },[navigate,location.pathname]);
+
+  // Derive page + active record FROM the URL. Runs on direct loads, refresh,
+  // and back/forward. Resolves :id paths into activeA/activeV once data is loaded.
+  useEffect(()=>{
+    const p=location.pathname.replace(/\/+$/,'')||'/';
+    const seg=p.split('/').filter(Boolean);
+    if(p==='/'){ setPage('dashboard'); return; }
+    const top=seg[0];
+    if(['leads','appraisals','inventory','reports','settings','stickers'].includes(top) && seg.length===1){
+      setPage(top); return;
+    }
+    if(top==='appraisal' && seg[1]){
+      const a=appraisals.find(x=>String(x.id)===seg[1]);
+      if(a){ setActiveA(prev=>prev&&prev.id===a.id?prev:{...a}); setPage('appraisal_form'); }
+      else { setPage('appraisals'); } // unknown id (e.g. not in this browser) → list
+      return;
+    }
+    if(top==='inventory' && seg[1]){
+      const v=vehicles.find(x=>String(x.id)===seg[1]);
+      if(v){ setActiveV(prev=>prev&&prev.id===v.id?prev:{...v}); setPage(seg[2]==='sticker'?'sticker_detail':'vehicle_detail'); }
+      else { setPage('inventory'); }
+      return;
+    }
+    if(top==='lead' && seg[1]){
+      // Lead deep-link: open it as a pre-filled appraisal once leads are loaded.
+      const l=leads.find(x=>String(x.id)===seg[1]);
+      if(l){ openLeadRef.current?.(l); }
+      return;
+    }
+    setPage('dashboard');
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  },[location.pathname,appraisals,vehicles,leads]);
+
+  // openLead is defined later; hold a ref so the URL effect can call it.
+  const openLeadRef=useRef(null);
+
   // Staff list comes from dealer settings; falls back to a sensible default.
   const staff=(dealer.staff&&dealer.staff.length>0)?dealer.staff:['Manager','Sales','Appraiser'];
   const actingUser=currentUser||staff[0]||'Staff';
@@ -3188,7 +3252,7 @@ export default function Vantage() {
     const a = blankAppraisal();
     a.vin = vin.toUpperCase();
     setActiveA(a);
-    setPage('appraisal_form');
+    goto('appraisal_form', a);
     showToast('VIN scanned — tap Decode VIN to populate details', 'success');
   }
 
@@ -3207,8 +3271,8 @@ export default function Vantage() {
   // Jump to the existing record the duplicate warning points at.
   function openExistingDup(match){
     if(!match) return;
-    if(match.kind==='inventory'){ setActiveV({...match.ref}); setPage('vehicle_detail'); }
-    else { setActiveA({...match.ref}); setPage('appraisal_form'); }
+    if(match.kind==='inventory'){ setActiveV({...match.ref}); goto('vehicle_detail', match.ref); }
+    else { setActiveA({...match.ref}); goto('appraisal_form', match.ref); }
   }
 
   // Open a customer lead as a PRE-FILLED appraisal: map the lead's vehicle +
@@ -3245,10 +3309,12 @@ export default function Vantage() {
       (lead.offer_amount?` Instant offer shown: $${Number(lead.offer_amount).toLocaleString('en-CA')}.`:'');
     a.comments=[{ts:new Date().toISOString(),user:'System',text:`Imported from customer lead #${lead.id}. Customer contact: ${lead.customer_email||''} ${lead.customer_phone||''}`.trim()}];
     setActiveA(a);
-    setPage('appraisal_form');
+    goto('appraisal_form', a);
     if(lead.id) updateLeadStatus(lead.id,'converted');
     showToast('Lead opened as appraisal — verify details and finalize','success');
   }
+  // Let the URL effect call openLead for /lead/:id deep-links.
+  openLeadRef.current=openLead;
 
   useEffect(()=>{
     try{const d=JSON.parse(localStorage.getItem('vantage_vehicles'));if(d&&d.length>0)setVehicles(d);}catch{}
@@ -3307,9 +3373,9 @@ export default function Vantage() {
   function pickUser(u){setCurrentUser(u);setShowUserMenu(false);try{localStorage.setItem('vantage_user',u);}catch{}}
 
   function nav(action) {
-    if(action==='new_appraisal'){setActiveA(blankAppraisal());setPage('appraisal_form');}
-    else if(action==='new_vehicle'){setActiveV(blankVehicle());setPage('vehicle_detail');}
-    else{setPage(action);}
+    if(action==='new_appraisal'){const a=blankAppraisal();setActiveA(a);goto('appraisal_form',a);}
+    else if(action==='new_vehicle'){const v=blankVehicle();setActiveV(v);goto('vehicle_detail',v);}
+    else{goto(action);}
   }
   function saveAppraisal(a,silent=false){
     setAppraisals(prev=>{
@@ -3318,7 +3384,7 @@ export default function Vantage() {
       const n=e?prev.map(x=>x.id===a.id?merged:x):[merged,...prev];
       saveA(n);return n;
     });
-    if(!silent){setPage('appraisals');showToast('Appraisal saved','success');}
+    if(!silent){goto('appraisals');showToast('Appraisal saved','success');}
   }
   function convertToInventory(a){
     const ua=withLog({...a,status:'purchased',updatedAt:new Date().toISOString()},[logEvent('Status',AS.purchased.label,actingUser,(AS[a.status]||{}).label||'')]);
@@ -3339,7 +3405,7 @@ export default function Vantage() {
     }
     nv.log=[logEvent('VehicleCreated','Created from appraisal',actingUser)];
     setVehicles(prev=>{const n=[nv,...prev];saveV(n);return n;});
-    setActiveV(nv);setPage('vehicle_detail');
+    setActiveV(nv);goto('vehicle_detail',nv);
     showToast(`${[a.year,a.make,a.model].filter(Boolean).join(' ')} moved to inventory`,'success');
   }
   // ── Bulk import / sync apply ──
@@ -3411,7 +3477,7 @@ export default function Vantage() {
       const n=e?prev.map(x=>x.id===v.id?merged:x):[merged,...prev];
       saveV(n);return n;
     });
-    if(!silent){setPage('inventory');showToast('Vehicle saved','success');}
+    if(!silent){goto('inventory');showToast('Vehicle saved','success');}
   }
   function saveDealer(d){setDealer(d);saveD(d);}
   function finalizeAppraisal(a){
@@ -3515,14 +3581,14 @@ export default function Vantage() {
 
       {/* CONTENT */}
       <div className='content-pad' style={{maxWidth:1200,margin:'0 auto',padding:'24px 24px 60px'}}>
-        {page==='dashboard'&&<Dashboard vehicles={vehicles} appraisals={appraisals} dealer={dealer} onNav={nav} onOpenVehicle={v=>{setActiveV({...v});setPage('vehicle_detail');}} onOpenAppraisal={a=>{setActiveA({...a});setPage('appraisal_form');}}/>}
+        {page==='dashboard'&&<Dashboard vehicles={vehicles} appraisals={appraisals} dealer={dealer} onNav={nav} onOpenVehicle={v=>{setActiveV({...v});goto('vehicle_detail',v);}} onOpenAppraisal={a=>{setActiveA({...a});goto('appraisal_form',a);}}/>}
         {page==='leads'&&<LeadsInbox leads={leads} loading={leadsLoading} onRefresh={loadLeads} onOpen={openLead} onDismiss={id=>updateLeadStatus(id,'dismissed')}/>}
-        {page==='appraisals'&&<AppraisalList appraisals={appraisals} onNew={()=>nav('new_appraisal')} onEdit={a=>{setActiveA({...a});setPage('appraisal_form');}}/>}
-        {page==='appraisal_form'&&activeA&&<AppraisalForm key={activeA.id} initial={activeA} user={actingUser} onSave={(a,silent=false)=>saveAppraisal(a,silent)} onBack={()=>setPage('appraisals')} showToast={showToast} onConvert={convertToInventory} onFinalize={finalizeAppraisal} onUnlock={unlockAppraisal} onGetDealer={()=>dealer} onCheckDup={checkDuplicate} onOpenExisting={openExistingDup}/>}
-        {page==='inventory'&&<InventoryList vehicles={vehicles} onAdd={()=>nav('new_vehicle')} onImport={()=>setShowBulkImport(true)} onEdit={v=>{setActiveV({...v});setPage('vehicle_detail');}}/>}
-        {page==='vehicle_detail'&&activeV&&<VehicleDetail key={activeV.id} vehicle={activeV} user={actingUser} onSave={saveVehicle} onBack={()=>setPage('inventory')} showToast={showToast} onShowSticker={v=>{setActiveV(v);setPage('sticker_detail');}} onGetDealer={()=>dealer}/>}
+        {page==='appraisals'&&<AppraisalList appraisals={appraisals} onNew={()=>nav('new_appraisal')} onEdit={a=>{setActiveA({...a});goto('appraisal_form',a);}}/>}
+        {page==='appraisal_form'&&activeA&&<AppraisalForm key={activeA.id} initial={activeA} user={actingUser} onSave={(a,silent=false)=>saveAppraisal(a,silent)} onBack={()=>goto('appraisals')} showToast={showToast} onConvert={convertToInventory} onFinalize={finalizeAppraisal} onUnlock={unlockAppraisal} onGetDealer={()=>dealer} onCheckDup={checkDuplicate} onOpenExisting={openExistingDup}/>}
+        {page==='inventory'&&<InventoryList vehicles={vehicles} onAdd={()=>nav('new_vehicle')} onImport={()=>setShowBulkImport(true)} onEdit={v=>{setActiveV({...v});goto('vehicle_detail',v);}}/>}
+        {page==='vehicle_detail'&&activeV&&<VehicleDetail key={activeV.id} vehicle={activeV} user={actingUser} onSave={saveVehicle} onBack={()=>goto('inventory')} showToast={showToast} onShowSticker={v=>{setActiveV(v);goto('sticker_detail',v);}} onGetDealer={()=>dealer}/>}
         {page==='stickers'&&<StickerGenerator vehicles={vehicles} dealer={dealer}/>}
-        {page==='sticker_detail'&&activeV&&<div style={{maxWidth:700,margin:'0 auto'}}><StickerGenerator vehicles={vehicles} dealer={dealer} preselected={activeV.id} onBack={()=>setPage('vehicle_detail')}/></div>}
+        {page==='sticker_detail'&&activeV&&<div style={{maxWidth:700,margin:'0 auto'}}><StickerGenerator vehicles={vehicles} dealer={dealer} preselected={activeV.id} onBack={()=>goto('vehicle_detail',activeV)}/></div>}
         {page==='reports'&&<ReportsPage vehicles={vehicles} appraisals={appraisals} dealer={dealer} showToast={showToast}/>}
         {page==='settings'&&<DealerSettings dealer={dealer} onSave={saveDealer} showToast={showToast}/>}
       </div>
