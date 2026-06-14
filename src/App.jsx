@@ -2711,50 +2711,7 @@ function VehicleDetail({vehicle:iv,onSave,onBack,showToast,onShowSticker=()=>{},
           </Sec>
 
           {/* Pricing (inventory-specific) */}
-          <Sec title="Pricing" icon={DollarSign} accent>
-            <div style={{display:'grid',gridTemplateColumns:'repeat(3,1fr)',gap:8,marginBottom:10}}>
-              {[{f:'listPrice',l:'List Price ($)'},{f:'unitCost',l:'Unit Cost ($)'},{f:'reconCost',l:'Recon ($)'}].map(x=>(
-                <div key={x.f} style={{minWidth:0}}>
-                  <label style={{display:'block',fontSize:10,fontWeight:600,color:C.textMid,marginBottom:4}}>{x.l}</label>
-                  <input type="number" value={v[x.f]||''} onChange={e=>up({[x.f]:e.target.value})} style={{width:'100%',padding:'8px 10px',background:'#fff',border:`1px solid ${C.borderStr}`,borderRadius:6,fontSize:13,color:C.textDark,fontFamily:'inherit',outline:'none',boxSizing:'border-box',fontWeight:x.f==='listPrice'?700:400}}/>
-                </div>
-              ))}
-            </div>
-            {/* Suggested List Price — a SUGGESTION the dealer confirms (like the
-                appraisal amount), never auto-applied since it goes into a live ad. */}
-            {v.suggestedListPrice>0&&String(v.listPrice||'')!==String(v.suggestedListPrice)&&(()=>{
-              const posPct=Number((onGetDealer?onGetDealer():null)?.marketPositionPct)||97;
-              const basisText=v.suggestedListBasis==='market'?`${posPct}% of market mid ${fmt(v.marketMid)}`:'cost + recon + target gross';
-              return(
-                <div style={{marginBottom:12,background:C.tealMuted,border:`1px solid ${C.teal}`,borderRadius:10,padding:'12px 14px'}}>
-                  <div style={{display:'flex',alignItems:'center',justifyContent:'space-between',flexWrap:'wrap',gap:8}}>
-                    <div style={{display:'flex',alignItems:'center',gap:8}}>
-                      <Sparkles size={15} color={C.teal}/>
-                      <span style={{fontSize:11,fontWeight:800,color:C.teal,textTransform:'uppercase',letterSpacing:0.5}}>Suggested List Price</span>
-                    </div>
-                    <span style={{fontSize:20,fontWeight:800,color:C.teal,fontFamily:'monospace'}}>{fmt(v.suggestedListPrice)}</span>
-                  </div>
-                  <div style={{marginTop:6,fontSize:11,color:C.textMid,lineHeight:1.4}}>Based on {basisText}{v.suggestedListBasis==='cost-up'?' (market was below your margin floor)':''}.</div>
-                  <button onClick={()=>up({listPrice:String(v.suggestedListPrice)})} style={{marginTop:10,background:C.teal,color:'#fff',border:'none',borderRadius:7,padding:'8px 14px',fontSize:12,fontWeight:700,cursor:'pointer'}}>Use this price →</button>
-                  <div style={{marginTop:8,fontSize:9.5,color:C.textLight,fontStyle:'italic'}}>A suggestion based on your pricing strategy and the market — set your own price above if you prefer.</div>
-                </div>
-              );
-            })()}
-            {v.listPrice&&v.unitCost&&(()=>{
-              const gross=Number(v.listPrice)-Number(v.unitCost||0)-Number(v.reconCost||0);
-              const adjPct=v.marketMid?Math.round((Number(v.listPrice)/Number(v.marketMid))*100):null;
-              const cardBg={background:C.navyMuted,borderRadius:8,padding:'10px 12px',border:`1px solid ${C.border}`};
-              const lbl={fontSize:9,color:C.textLight,marginBottom:3,fontWeight:600,textTransform:'uppercase',letterSpacing:0.5};
-              return(
-                <div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:8}}>
-                  <div style={cardBg}><div style={lbl}>Gross Margin</div><div style={{fontSize:15,fontWeight:800,color:gross>0?C.green:C.red,fontFamily:'monospace'}}>{fmt(gross)}</div></div>
-                  <div style={cardBg}><div style={lbl}>Days on Lot</div><div style={{fontSize:15,fontWeight:800,color:C.navy,fontFamily:'monospace'}}>{days}</div></div>
-                  <div style={cardBg}><div style={lbl}>Price Rank</div><div style={{fontSize:15,fontWeight:800,color:C.navy,fontFamily:'monospace'}}>{myRank?`#${myRank} of ${comps.length+1}`:'—'}</div></div>
-                  <div style={cardBg}><div style={lbl}>% of Market</div><div style={{fontSize:15,fontWeight:800,fontFamily:'monospace',color:adjPct?(adjPct<=95?C.green:adjPct<=102?C.navy:C.red):C.textLight}}>{adjPct?`${adjPct}%`:'—'}</div></div>
-                </div>
-              );
-            })()}
-          </Sec>
+          {/* Pricing moved to top of right column (above Vehicle History) */}
 
           {/* Advertising / Feeds (inventory-specific) */}
           <Sec title="Advertising" icon={Radio} open={false} badge={v.feeds&&Object.values(v.feeds).some(f=>f&&f.active)?'Live':null}>
@@ -2781,11 +2738,56 @@ function VehicleDetail({vehicle:iv,onSave,onBack,showToast,onShowSticker=()=>{},
         <div>
           {days>=30&&<div style={{background:C.redBg,border:`1px solid ${C.red}`,borderRadius:7,padding:'10px 14px',marginBottom:12,display:'flex',alignItems:'center',gap:8}}><AlertCircle size={14} color={C.red}/><span style={{fontSize:13,color:C.red,fontWeight:600}}>{days} days on lot — price review recommended</span></div>}
 
+          <Sec title="Pricing" icon={DollarSign} accent>
+            <div style={{display:'grid',gridTemplateColumns:'repeat(auto-fit,minmax(135px,1fr))',gap:10,marginBottom:10}}>
+              {[{f:'listPrice',l:'List Price ($)'},{f:'unitCost',l:'Unit Cost ($)'},{f:'reconCost',l:'Recon ($)'}].map(x=>(
+                <div key={x.f} style={{minWidth:0}}>
+                  <label style={{display:'block',fontSize:10,fontWeight:600,color:x.f==='listPrice'?C.teal:C.textMid,marginBottom:4}}>{x.l}</label>
+                  <input type="number" value={v[x.f]||''} onChange={e=>up({[x.f]:e.target.value})} style={{width:'100%',padding:'8px 10px',background:'#fff',border:`1px solid ${C.borderStr}`,borderRadius:6,fontSize:13,color:C.textDark,fontFamily:'inherit',outline:'none',boxSizing:'border-box',fontWeight:x.f==='listPrice'?700:400}}/>
+                </div>
+              ))}
+            </div>
+            {/* Suggested List Price — a SUGGESTION the dealer confirms (like the
+                appraisal amount), never auto-applied since it goes into a live ad. */}
+            {v.suggestedListPrice>0&&String(v.listPrice||'')!==String(v.suggestedListPrice)&&(()=>{
+              const posPct=Number((onGetDealer?onGetDealer():null)?.marketPositionPct)||97;
+              const basisText=v.suggestedListBasis==='market'?`${posPct}% of market mid ${fmt(v.marketMid)}`:'cost + recon + target gross';
+              return(
+                <div style={{marginBottom:12,maxWidth:480,background:C.tealMuted,border:`1px solid ${C.teal}`,borderRadius:10,padding:'12px 14px'}}>
+                  <div style={{display:'flex',alignItems:'center',justifyContent:'space-between',flexWrap:'wrap',gap:8}}>
+                    <div style={{display:'flex',alignItems:'center',gap:8}}>
+                      <Sparkles size={15} color={C.teal}/>
+                      <span style={{fontSize:11,fontWeight:800,color:C.teal,textTransform:'uppercase',letterSpacing:0.5}}>Suggested List Price</span>
+                    </div>
+                    <span style={{fontSize:20,fontWeight:800,color:C.teal,fontFamily:'monospace'}}>{fmt(v.suggestedListPrice)}</span>
+                  </div>
+                  <div style={{marginTop:6,fontSize:11,color:C.textMid,lineHeight:1.4}}>Based on {basisText}{v.suggestedListBasis==='cost-up'?' (market was below your margin floor)':''}.</div>
+                  <button onClick={()=>up({listPrice:String(v.suggestedListPrice)})} style={{marginTop:10,background:C.teal,color:'#fff',border:'none',borderRadius:7,padding:'8px 14px',fontSize:12,fontWeight:700,cursor:'pointer'}}>Use this price →</button>
+                  <div style={{marginTop:8,fontSize:9.5,color:C.textLight,fontStyle:'italic'}}>A suggestion based on your pricing strategy and the market — set your own price above if you prefer.</div>
+                </div>
+              );
+            })()}
+            {v.listPrice&&v.unitCost&&(()=>{
+              const gross=Number(v.listPrice)-Number(v.unitCost||0)-Number(v.reconCost||0);
+              const adjPct=v.marketMid?Math.round((Number(v.listPrice)/Number(v.marketMid))*100):null;
+              const cardBg={background:C.navyMuted,borderRadius:8,padding:'10px 12px',border:`1px solid ${C.border}`};
+              const lbl={fontSize:9,color:C.textLight,marginBottom:3,fontWeight:600,textTransform:'uppercase',letterSpacing:0.5};
+              return(
+                <div style={{display:'grid',gridTemplateColumns:'repeat(auto-fit,minmax(120px,1fr))',gap:8}}>
+                  <div style={cardBg}><div style={lbl}>Gross Margin</div><div style={{fontSize:15,fontWeight:800,color:gross>0?C.green:C.red,fontFamily:'monospace'}}>{fmt(gross)}</div></div>
+                  <div style={cardBg}><div style={lbl}>Days on Lot</div><div style={{fontSize:15,fontWeight:800,color:C.navy,fontFamily:'monospace'}}>{days}</div></div>
+                  <div style={cardBg}><div style={lbl}>Price Rank</div><div style={{fontSize:15,fontWeight:800,color:C.navy,fontFamily:'monospace'}}>{myRank?`#${myRank} of ${comps.length+1}`:'—'}</div></div>
+                  <div style={cardBg}><div style={lbl}>% of Market</div><div style={{fontSize:15,fontWeight:800,fontFamily:'monospace',color:adjPct?(adjPct<=95?C.green:adjPct<=102?C.navy:C.red):C.textLight}}>{adjPct?`${adjPct}%`:'—'}</div></div>
+                </div>
+              );
+            })()}
+          </Sec>
+
           <Sec title="Vehicle History" icon={ShieldCheck} tone="purple" badge={v.carfax?(v.carfax.clean?'✓ Clean':'⚠ Issues Found'):'Not Pulled'}>
             <CarfaxBadge carfax={v.carfax} onFetch={pullCfx} loading={cl}/>
           </Sec>
 
-          <Sec title="Market Intelligence" icon={BarChart2} accent>
+          <Sec title="Market Intelligence" icon={BarChart2} tone="blue">
             <div style={{display:'flex',justifyContent:'flex-end',marginBottom:10}}>
               <Btn onClick={refMkt} disabled={ml} variant="ghost" size="sm"><RefreshCw size={11} style={{animation:ml?'spin 1s linear infinite':undefined}}/> Refresh</Btn>
             </div>
