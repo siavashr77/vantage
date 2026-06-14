@@ -10,6 +10,7 @@ import {
   FileSearch, Mail, ExternalLink, ScanLine, Edit3, Share2, Info, Copy, Check
 } from "lucide-react";
 import VINScanner from './VINScanner.jsx'
+import { computeSuggestedBuy, confidenceFrom, LUXURY_MAKES } from '../shared/suggestedBuy.js'
 import * as XLSX from 'xlsx'
 
 
@@ -1661,75 +1662,9 @@ function VehicleSummary({data,onEdit}){
 // purchase price, and returns a plain-English rationale. Deterministic math —
 // no AI call. The dealer's strategy lives in dealer settings; everything is a
 // SUGGESTION the user can override.
-const LUXURY_MAKES = new Set(['land rover','range rover','jaguar','bmw','mercedes-benz','mercedes','audi','porsche','lexus','infiniti','acura','cadillac','volvo','genesis','maserati','bentley','tesla','lincoln','alfa romeo']);
-function computeSuggestedBuy(a, dealer) {
-  const mid = Number(a.marketMid);
-  if (!mid || mid <= 0) return null;
-  const d = dealer || {};
-  const positionPct = Number(d.marketPositionPct) || 97;
-  // Per-appraisal override takes priority over the dealer default — lets the
-  // appraiser demand a higher gross on expensive/slow units.
-  const overrideGross = a.targetGrossOverride !== '' && a.targetGrossOverride != null ? Number(a.targetGrossOverride) : null;
-  const baseGross = overrideGross != null && overrideGross > 0 ? overrideGross : (Number(d.targetGross) || 2500);
-  // Recon: use what's entered on the appraisal; else the dealer's average.
-  const reconEntered = a.reconCost !== '' && a.reconCost != null;
-  let recon = reconEntered ? Number(a.reconCost) : (Number(d.avgRecon) || 0);
-  const otherCosts = Number(a.certCost || 0) + Number(a.pack || 0);
-
-  const reasons = [];
-
-  // 1) Target retail = market mid × dealer's position.
-  const targetRetail = Math.round(mid * (positionPct / 100));
-  reasons.push(`Retail target ${fmt(targetRetail)} (${positionPct}% of market mid ${fmt(mid)})`);
-
-  // 2) Margin scales with how slow the segment is moving. More day-supply =
-  //    longer hold = demand more gross to cover carrying cost.
-  let gross = baseGross;
-  if (overrideGross != null && overrideGross > 0) {
-    reasons.push(`Using your ${fmt(overrideGross)} target gross (override)`);
-  }
-  const mds = Number(a.marketDaysSupply);
-  if (Number.isFinite(mds) && mds > 0) {
-    if (mds >= 90) { gross = baseGross + 1500; reasons.push(`+$1,500 gross — slow market (${mds}-day supply), longer hold`); }
-    else if (mds >= 60) { gross = baseGross + 1000; reasons.push(`+$1,000 gross — softer market (${mds}-day supply)`); }
-    else if (mds <= 30) { gross = Math.max(1000, baseGross - 500); reasons.push(`−$500 gross — fast mover (${mds}-day supply), turns quickly`); }
-  }
-
-  // 3) Luxury makes carry more reconditioning risk. If the user hasn't entered
-  //    their own recon, bump the assumed recon (and flag it either way).
-  const isLux = LUXURY_MAKES.has(String(a.make || '').toLowerCase());
-  if (isLux) {
-    if (!reconEntered) { recon = Math.max(recon, 2500); reasons.push(`Recon assumed ${fmt(recon)} — luxury make, higher recon risk`); }
-    else { reasons.push('Luxury make — verify recon covers higher parts/labour'); }
-  }
-
-  // 4) Carfax (when present): reported accidents/issues pull the buy down.
-  let historyAdj = 0;
-  if (a.carfax && a.carfax.clean === false) {
-    historyAdj = -Math.round(targetRetail * 0.05);
-    reasons.push(`${fmt(historyAdj)} — reported history issues (Carfax)`);
-  }
-
-  // Suggested buy = retail − gross − recon − other costs + history adj.
-  const suggested = Math.round(targetRetail - gross - recon - otherCosts + historyAdj);
-  if (suggested <= 0) return null;
-
-  return {
-    suggested,
-    targetRetail,
-    gross,
-    recon,
-    reasons,
-    confidence: confidenceFrom(a),
-  };
-}
-// Confidence from comp depth + data quality.
-function confidenceFrom(a) {
-  const n = Number(a.activeComps) || (a._comps ? a._comps.length : 0);
-  if (n >= 12) return 'High';
-  if (n >= 6) return 'Medium';
-  return 'Low';
-}
+// computeSuggestedBuy, confidenceFrom, and LUXURY_MAKES now live in the SHARED
+// brain (../shared/suggestedBuy.js) so this appraisal page and the customer
+// widget compute the IDENTICAL number. Imported at the top of this file.
 
 function AppraisalForm({initial,onSave,onBack,showToast,onConvert,onFinalize,onUnlock,user='Staff',onGetDealer}) {
   const [a,setA]=useState(initial);

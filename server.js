@@ -3,6 +3,7 @@ import cors from 'cors'
 import fetch from 'node-fetch'
 import { readFileSync } from 'fs'
 import pg from 'pg'
+import { computeSuggestedBuy, confidenceFrom, accidentDeduction } from './shared/suggestedBuy.js'
 
 const app = express()
 // Railway (and most hosts) inject PORT; fall back to 3001 for local dev.
@@ -908,73 +909,15 @@ ${pageText}`
 // number Vantage shows the appraiser (no consumer haircut), then apply ONE
 // exception: a customer-declared accident deducts per the claim-$ rule.
 
-// Server-side money formatter (mirrors the client's fmt used in rationale text).
+// Server-side money formatter (mirrors the client's fmt used in breakdown text).
 function fmtMoney(n) {
   if (n == null || !Number.isFinite(Number(n))) return '$—'
   return '$' + Math.round(Number(n)).toLocaleString('en-CA')
 }
 
-// Luxury makes carry more recon risk — identical set to the client.
-const LUXURY_MAKES_SRV = new Set(['land rover','range rover','jaguar','bmw','mercedes-benz','mercedes','audi','porsche','lexus','infiniti','acura','cadillac','volvo','genesis','maserati','bentley','tesla','lincoln','alfa romeo'])
-
-// PORT of the client computeSuggestedBuy (src/App.jsx). Keep in sync. Takes the
-// vehicle/appraisal-shaped object `a` (needs marketMid, marketDaysSupply, make,
-// optional reconCost/certCost/pack/targetGrossOverride/carfax) and dealer config.
-function computeSuggestedBuySrv(a, dealer) {
-  const mid = Number(a.marketMid)
-  if (!mid || mid <= 0) return null
-  const d = dealer || {}
-  const positionPct = Number(d.marketPositionPct) || 97
-  const overrideGross = a.targetGrossOverride !== '' && a.targetGrossOverride != null ? Number(a.targetGrossOverride) : null
-  const baseGross = overrideGross != null && overrideGross > 0 ? overrideGross : (Number(d.targetGross) || 2500)
-  const reconEntered = a.reconCost !== '' && a.reconCost != null
-  let recon = reconEntered ? Number(a.reconCost) : (Number(d.avgRecon) || 0)
-  const otherCosts = Number(a.certCost || 0) + Number(a.pack || 0)
-
-  const reasons = []
-  const targetRetail = Math.round(mid * (positionPct / 100))
-  reasons.push(`Retail target ${fmtMoney(targetRetail)} (${positionPct}% of market mid ${fmtMoney(mid)})`)
-
-  let gross = baseGross
-  const mds = Number(a.marketDaysSupply)
-  if (Number.isFinite(mds) && mds > 0) {
-    if (mds >= 90) { gross = baseGross + 1500; reasons.push(`+$1,500 gross — slow market (${mds}-day supply)`) }
-    else if (mds >= 60) { gross = baseGross + 1000; reasons.push(`+$1,000 gross — softer market (${mds}-day supply)`) }
-    else if (mds <= 30) { gross = Math.max(1000, baseGross - 500); reasons.push(`−$500 gross — fast mover (${mds}-day supply)`) }
-  }
-
-  const isLux = LUXURY_MAKES_SRV.has(String(a.make || '').toLowerCase())
-  if (isLux && !reconEntered) { recon = Math.max(recon, 2500); reasons.push(`Recon assumed ${fmtMoney(recon)} — luxury make`) }
-
-  let historyAdj = 0
-  if (a.carfax && a.carfax.clean === false) {
-    historyAdj = -Math.round(targetRetail * 0.05)
-    reasons.push(`${fmtMoney(historyAdj)} — reported history issues (Carfax)`)
-  }
-
-  const suggested = Math.round(targetRetail - gross - recon - otherCosts + historyAdj)
-  if (suggested <= 0) return null
-  return { suggested, targetRetail, gross, recon, reasons }
-}
-
-function confidenceFromCount(n) {
-  if (n >= 12) return 'High'
-  if (n >= 6) return 'Medium'
-  return 'Low'
-}
-
-// Accident deduction (the ONLY consumer-side adjustment). Customer-declared:
-//   amount < $3,000  → flat −$500
-//   amount ≥ $3,000  → −⅓ of the claim/estimate amount
-//   accident but no amount → −$500 floor
-// (When both a claim and an estimate exist for one incident, the appraiser uses
-//  the CLAIM value at Carfax time — the widget collects a single figure.)
-function accidentDeduction(declared, amount) {
-  if (!declared) return 0
-  const amt = Number(amount)
-  if (!Number.isFinite(amt) || amt <= 0) return 500
-  return amt < 3000 ? 500 : Math.round(amt / 3)
-}
+// Offer math now lives in the SHARED brain (shared/suggestedBuy.js) so the widget
+// and Vantage's appraisal page compute the identical number. Imported at top of
+// file as computeSuggestedBuy / confidenceFrom / accidentDeduction.
 
 // Default dealer config mirrors the client DEFAULT_DEALER pricing strategy.
 // (Single-dealer for now; later this is looked up by dealer_key.)
@@ -1111,8 +1054,8 @@ app.post('/api/leads', async (req, res) => {
       return res.status(422).json({ error: 'Not enough market data to generate an instant offer for this vehicle. A specialist will follow up.' })
     }
 
-    // Suggested buy — IDENTICAL to Vantage (no consumer haircut).
-    const sb = computeSuggestedBuySrv(
+    // Suggested buy — IDENTICAL to Vantage (shared brain, no consumer haircut).
+    const sb = computeSuggestedBuy(
       { marketMid: market.mid, marketDaysSupply: market.mds, make },
       WIDGET_DEALER
     )
@@ -1123,7 +1066,7 @@ app.post('/api/leads', async (req, res) => {
     const accidentAmount = b.accidentAmount != null && b.accidentAmount !== '' ? Number(b.accidentAmount) : null
     const deduction = accidentDeduction(accident, accidentAmount)
     const offer = Math.max(0, sb.suggested - deduction)
-    const confidence = confidenceFromCount(market.compCount)
+    const confidence = confidenceFrom({ activeComps: market.compCount })
     // Thin-market gate: below MIN_OFFER_COMPS active comps the number is too
     // volatile to show a customer. We still compute + persist it (your team sees
     // it internally) but the widget gets a "specialist will follow up" message.
