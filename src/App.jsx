@@ -1939,14 +1939,16 @@ function AppraisalForm({initial,onSave,onBack,showToast,onConvert,onFinalize,onU
         <div style={{minWidth:0}}>
 
       <Sec title="Offer & Pricing" icon={DollarSign} accent>
-        <div style={{display:'flex',gap:10,flexWrap:'wrap',marginBottom:12}}>
-          <Field label="Recon Cost ($)"><Input value={a.reconCost} onChange={v=>set('reconCost',v)} type="number" /></Field>
-          <Field label="Cert / Transport ($)"><Input value={a.certCost||''} onChange={v=>set('certCost',v)} type="number" /></Field>
-          <Field label="Pack ($)"><Input value={a.pack||''} onChange={v=>set('pack',v)} type="number" /></Field>
-          <Field label="Target Gross Override ($)"><Input value={a.targetGrossOverride||''} onChange={v=>set('targetGrossOverride',v)} type="number" placeholder="optional"/><div style={{fontSize:9,color:C.textLight,marginTop:2,lineHeight:1.3}}>Override the gross for this car. Pricier units usually warrant more — unless they turn fast (e.g. Toyota/Lexus).</div></Field>
-          <Field label="Your Offer / Appraised Value"><Input value={a.appraisedValue} onChange={v=>set('appraisedValue',v)} type="number" placeholder="Enter your offer" style={{fontSize:15,fontWeight:700}}/></Field>
-          <Field label="Offer Valid Until"><Input value={a.offerExpiry||''} onChange={v=>set('offerExpiry',v)} type="date"/>{a.offerExpiry&&<div style={{fontSize:9,color:C.textLight,marginTop:2}}>Expires {fmtDate(a.offerExpiry)}</div>}</Field>
+        <div style={{display:'grid',gridTemplateColumns:'repeat(auto-fit,minmax(135px,1fr))',gap:10,marginBottom:12,alignItems:'start'}}>
+          <div style={{minWidth:0}}><label style={{display:'block',fontSize:11,fontWeight:600,color:C.textMid,marginBottom:5}}>Recon Cost ($)</label><Input value={a.reconCost} onChange={v=>set('reconCost',v)} type="number" /></div>
+          <div style={{minWidth:0}}><label style={{display:'block',fontSize:11,fontWeight:600,color:C.textMid,marginBottom:5}}>Cert / Transport ($)</label><Input value={a.certCost||''} onChange={v=>set('certCost',v)} type="number" /></div>
+          <div style={{minWidth:0}}><label style={{display:'block',fontSize:11,fontWeight:600,color:C.textMid,marginBottom:5}}>Pack ($)</label><Input value={a.pack||''} onChange={v=>set('pack',v)} type="number" /></div>
+          <div style={{minWidth:0}}><label style={{display:'block',fontSize:11,fontWeight:600,color:C.textMid,marginBottom:5}}>Offer Valid Until</label><Input value={a.offerExpiry||''} onChange={v=>set('offerExpiry',v)} type="date"/></div>
+          <div style={{minWidth:0}}><label style={{display:'block',fontSize:11,fontWeight:600,color:C.textMid,marginBottom:5}}>Gross Override ($)</label><Input value={a.targetGrossOverride||''} onChange={v=>set('targetGrossOverride',v)} type="number" placeholder="optional"/></div>
+          <div style={{minWidth:0}}><label style={{display:'block',fontSize:11,fontWeight:600,color:C.teal,marginBottom:5}}>Your Offer ($)</label><Input value={a.appraisedValue} onChange={v=>set('appraisedValue',v)} type="number" placeholder="Enter offer" style={{fontSize:15,fontWeight:700}}/></div>
         </div>
+        {a.targetGrossOverride&&<div style={{fontSize:9,color:C.textLight,marginTop:-6,marginBottom:10,lineHeight:1.3}}>Override the gross for this car. Pricier units usually warrant more — unless they turn fast (e.g. Toyota/Lexus).</div>}
+        {a.offerExpiry&&<div style={{fontSize:9,color:C.textLight,marginTop:-6,marginBottom:10}}>Offer expires {fmtDate(a.offerExpiry)}</div>}
         {/* Suggested Buy — appears once market data is loaded, before/after the
             user enters their own offer. Always a suggestion; user decides. */}
         {a.marketMid&&(()=>{
@@ -1955,7 +1957,7 @@ function AppraisalForm({initial,onSave,onBack,showToast,onConvert,onFinalize,onU
           if(!sb) return null;
           const confColor=sb.confidence==='High'?C.green:sb.confidence==='Medium'?C.navy:C.orange;
           return(
-            <div style={{marginBottom:12,background:C.tealMuted,border:`1px solid ${C.teal}`,borderRadius:10,padding:'12px 14px'}}>
+            <div style={{marginBottom:12,maxWidth:480,background:C.tealMuted,border:`1px solid ${C.teal}`,borderRadius:10,padding:'12px 14px'}}>
               <div style={{display:'flex',alignItems:'center',justifyContent:'space-between',flexWrap:'wrap',gap:8}}>
                 <div style={{display:'flex',alignItems:'center',gap:8}}>
                   <Sparkles size={15} color={C.teal}/>
