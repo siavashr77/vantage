@@ -166,6 +166,19 @@ export function priceAtMileage(comps, subjectKm, medianMid) {
   };
 }
 
+// Target gross scales with the car's price — you need more margin on an
+// expensive unit than a cheap one (carrying cost, risk, slower turn at the top).
+// Brackets through $80k, then 10% of price above that so it never plateaus.
+export function tieredGross(marketPrice) {
+  const p = Number(marketPrice);
+  if (!Number.isFinite(p) || p <= 0) return 2500;   // safe default
+  if (p < 15000) return 1500;
+  if (p < 30000) return 2500;
+  if (p < 50000) return 3500;
+  if (p < 80000) return 5000;
+  return Math.round(p * 0.10);                       // $80k+ → 10% of price
+}
+
 // Appraise BACKWARD from dealer target retail to a suggested purchase price.
 // `a`: appraisal/vehicle-shaped object (marketMid, marketDaysSupply, make,
 //      optional reconCost/certCost/pack/targetGrossOverride/carfax/activeComps).
@@ -176,10 +189,10 @@ export function computeSuggestedBuy(a, dealer) {
   if (!mid || mid <= 0) return null;
   const d = dealer || {};
   const positionPct = Number(d.marketPositionPct) || 97;
-  // Per-appraisal override takes priority over the dealer default — lets the
-  // appraiser demand a higher gross on expensive/slow units.
+  // Per-appraisal override takes priority over everything — lets the appraiser
+  // demand a specific gross on a given unit. The price-based tier (below, once we
+  // know the market price) is the default when there's no override.
   const overrideGross = a.targetGrossOverride !== '' && a.targetGrossOverride != null ? Number(a.targetGrossOverride) : null;
-  const baseGross = overrideGross != null && overrideGross > 0 ? overrideGross : (Number(d.targetGross) || 2500);
   // Recon: use what's entered on the appraisal; else the dealer's average.
   const reconEntered = a.reconCost !== '' && a.reconCost != null;
   let recon = reconEntered ? Number(a.reconCost) : (Number(d.avgRecon) || 0);
@@ -216,11 +229,16 @@ export function computeSuggestedBuy(a, dealer) {
   const targetRetail = Math.round(basisPrice * (positionPct / 100));
   reasons.push(`Retail target ${fmt(targetRetail)} (${positionPct}% of ${fmt(basisPrice)})`);
 
-  // 2) Margin scales with how slow the segment is moving. More day-supply =
-  //    longer hold = demand more gross to cover carrying cost.
+  // 2) Base target gross. Override wins; otherwise scale gross with the car's
+  //    market price (more margin on expensive units). Then MDS adjusts on top.
+  const baseGross = (overrideGross != null && overrideGross > 0)
+    ? overrideGross
+    : tieredGross(basisPrice);
   let gross = baseGross;
   if (overrideGross != null && overrideGross > 0) {
     reasons.push(`Using your ${fmt(overrideGross)} target gross (override)`);
+  } else {
+    reasons.push(`Base gross ${fmt(baseGross)} — scaled to ${fmt(basisPrice)} vehicle`);
   }
   const mds = Number(a.marketDaysSupply);
   if (Number.isFinite(mds) && mds > 0) {
