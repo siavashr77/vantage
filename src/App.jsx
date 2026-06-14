@@ -1811,30 +1811,18 @@ function AppraisalForm({initial,onSave,onBack,showToast,onConvert,onFinalize,onU
     <div>
       {showVINScanner&&<VINScanner onVINDetected={v=>{set('vin',v);setVehExpanded(true);}} onClose={()=>setShowVINScanner(false)}/>}
       <Card style={{marginBottom:12,overflow:'hidden'}}>
-        {/* Title row — title/VIN on its own line; save + status wrap below on mobile */}
-        <div style={{padding:'12px 16px',borderBottom:`1px solid ${C.border}`}}>
-          <div style={{display:'flex',alignItems:'flex-start',gap:10}}>
-            <button onClick={onBack} style={{background:'none',border:'none',cursor:'pointer',color:C.textLight,display:'flex',alignItems:'center',padding:'2px 0',flexShrink:0}}>
-              <ChevronLeft size={20} color={C.navy}/>
-            </button>
-            <div style={{flex:1,minWidth:0}}>
-              <div style={{fontSize:16,fontWeight:800,color:C.navy,lineHeight:1.2,whiteSpace:'nowrap',overflow:'hidden',textOverflow:'ellipsis'}}>
-                {[a.year,a.make,a.model,a.series].filter(Boolean).join(' ')||'New Appraisal'}
-              </div>
-              {a.vin&&<div style={{display:'flex',alignItems:'center',gap:6,marginTop:3}}>
-                <span style={{fontSize:11,fontFamily:'monospace',color:C.textLight,letterSpacing:0.3}}>{a.vin}</span>
-                <CopyVIN vin={a.vin}/>
-              </div>}
-            </div>
+        {/* Compact single-row header (matches inventory top bar) */}
+        <div style={{padding:'12px 16px',borderBottom:`1px solid ${C.border}`,display:'flex',alignItems:'center',gap:10,flexWrap:'wrap'}}>
+          <button onClick={onBack} style={{display:'flex',alignItems:'center',gap:4,background:'none',border:`1px solid ${C.borderStr}`,borderRadius:7,padding:'8px 12px',fontSize:12,fontWeight:600,color:C.textMid,cursor:'pointer',fontFamily:'inherit',flexShrink:0}}><ChevronLeft size={14}/>Back</button>
+          <div style={{display:'flex',alignItems:'center',gap:8,minWidth:0,flex:'1 1 220px'}}>
+            <span style={{fontSize:15,fontWeight:800,color:C.navy,whiteSpace:'nowrap',overflow:'hidden',textOverflow:'ellipsis'}}>{[a.year,a.make,a.model,a.series].filter(Boolean).join(' ')||'New Appraisal'}</span>
+            {a.vin&&<><span style={{fontSize:11,fontFamily:'monospace',color:C.textLight,letterSpacing:0.3,whiteSpace:'nowrap',flexShrink:0}}>{a.vin}</span><CopyVIN vin={a.vin}/></>}
           </div>
-          <div style={{display:'flex',alignItems:'center',gap:8,marginTop:10,flexWrap:'wrap'}}>
-            <div style={{flexShrink:0}}><SaveStatus isDirty={isDirty} savedAt={savedAt} onSave={forceSave}/></div>
-            {locked&&<span style={{display:'inline-flex',alignItems:'center',gap:4,background:C.purpleBg,color:C.purple,borderRadius:12,padding:'4px 10px',fontSize:11,fontWeight:700,flexShrink:0}}><ShieldCheck size={12}/>Finalized</span>}
-            <div style={{flex:1}}/>
-            <select value={a.status} disabled={locked} onChange={e=>set('status',e.target.value)} style={{padding:'7px 10px',border:`1px solid ${C.borderStr}`,borderRadius:7,fontSize:12,fontFamily:'inherit',color:C.textDark,background:locked?C.bgDark:'#fff',cursor:locked?'not-allowed':'pointer',flexShrink:0}}>
-              {Object.entries(AS).map(([k,v])=><option key={k} value={k}>{v.label}</option>)}
-            </select>
-          </div>
+          <div style={{flexShrink:0}}><SaveStatus isDirty={isDirty} savedAt={savedAt} onSave={forceSave}/></div>
+          {locked&&<span style={{display:'inline-flex',alignItems:'center',gap:4,background:C.purpleBg,color:C.purple,borderRadius:12,padding:'4px 10px',fontSize:11,fontWeight:700,flexShrink:0}}><ShieldCheck size={12}/>Finalized</span>}
+          <select value={a.status} disabled={locked} onChange={e=>set('status',e.target.value)} style={{padding:'7px 10px',border:`1px solid ${C.borderStr}`,borderRadius:7,fontSize:12,fontFamily:'inherit',color:C.textDark,background:locked?C.bgDark:'#fff',cursor:locked?'not-allowed':'pointer',flexShrink:0}}>
+            {Object.entries(AS).map(([k,v])=><option key={k} value={k}>{v.label}</option>)}
+          </select>
         </div>
         {/* Action bar — only the contextual actions, no duplicated save/vehicle info */}
         <div style={{padding:'10px 16px',display:'flex',gap:8,flexWrap:'wrap',alignItems:'center',background:'rgba(28,45,94,0.02)'}}>
@@ -1940,6 +1928,16 @@ function AppraisalForm({initial,onSave,onBack,showToast,onConvert,onFinalize,onU
         </div>
       </Sec>
 
+      <Sec title="Notes" icon={FileText} open={false}>
+        <textarea value={a.notes} onChange={e=>set('notes',e.target.value)} placeholder="Recon items, special options, condition observations..." rows={4} style={{width:'100%',padding:'10px 12px',background:'#fff',border:`1px solid ${C.borderStr}`,borderRadius:7,fontSize:13,fontFamily:'inherit',resize:'vertical',outline:'none',boxSizing:'border-box',lineHeight:1.6,color:C.textDark}}/>
+      </Sec>
+      {/* Offer & Pricing moved to top of right column (above Vehicle History) */}
+
+        </div>{/* end LEFT RAIL */}
+
+        {/* RIGHT COLUMN — all other sections scroll past the sticky vehicle panel */}
+        <div style={{minWidth:0}}>
+
       <Sec title="Offer & Pricing" icon={DollarSign} accent>
         <div style={{display:'flex',gap:10,flexWrap:'wrap',marginBottom:12}}>
           <Field label="Recon Cost ($)"><Input value={a.reconCost} onChange={v=>set('reconCost',v)} type="number" /></Field>
@@ -1982,7 +1980,7 @@ function AppraisalForm({initial,onSave,onBack,showToast,onConvert,onFinalize,onU
           const lbl={fontSize:9,color:C.textLight,marginBottom:3,fontWeight:600,textTransform:'uppercase',letterSpacing:0.5};
           return(
             <div style={{marginTop:4}}>
-              <div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:8,marginBottom:8}}>
+              <div style={{display:'grid',gridTemplateColumns:'repeat(auto-fit,minmax(120px,1fr))',gap:8,marginBottom:8}}>
                 <div style={cardBg}><div style={lbl}>Your Offer</div><div style={{fontSize:15,fontWeight:800,color:C.navy,fontFamily:'monospace'}}>{fmt(a.appraisedValue)}</div></div>
                 <div style={cardBg}><div style={lbl}>All-In Cost</div><div style={{fontSize:15,fontWeight:800,color:C.navy,fontFamily:'monospace'}}>{fmt(totalCost)}</div></div>
                 <div style={cardBg}><div style={lbl}>Proj. Gross</div><div style={{fontSize:15,fontWeight:800,color:projGross!==null&&projGross<0?C.red:C.green,fontFamily:'monospace'}}>{projGross!==null?fmt(projGross):'—'}</div></div>
@@ -2009,16 +2007,6 @@ function AppraisalForm({initial,onSave,onBack,showToast,onConvert,onFinalize,onU
           </div>
         </div>
       </Sec>
-
-      <Sec title="Notes" icon={FileText} open={false}>
-        <textarea value={a.notes} onChange={e=>set('notes',e.target.value)} placeholder="Recon items, special options, condition observations..." rows={4} style={{width:'100%',padding:'10px 12px',background:'#fff',border:`1px solid ${C.borderStr}`,borderRadius:7,fontSize:13,fontFamily:'inherit',resize:'vertical',outline:'none',boxSizing:'border-box',lineHeight:1.6,color:C.textDark}}/>
-      </Sec>
-      {/* Moved into floating panel: Photos, Notes, Offer & Pricing */}
-
-        </div>{/* end LEFT RAIL */}
-
-        {/* RIGHT COLUMN — all other sections scroll past the sticky vehicle panel */}
-        <div style={{minWidth:0}}>
 
       <Sec title="Vehicle History" icon={ShieldCheck} badge={a.carfax?(a.carfax.clean?'✓ Clean':'⚠ Issues Found'):'Not Pulled'}>
         <CarfaxBadge carfax={a.carfax} onFetch={pullCarfax} loading={cl}/>
