@@ -2810,9 +2810,6 @@ function VehicleDetail({vehicle:iv,onSave,onBack,showToast,onShowSticker=()=>{},
           </Sec>
 
           <Sec title="Market Intelligence" icon={BarChart2} tone="blue">
-            <div style={{display:'flex',justifyContent:'flex-end',marginBottom:6}}>
-              <Btn onClick={refMkt} disabled={ml} variant="ghost" size="sm"><RefreshCw size={11} style={{animation:ml?'spin 1s linear infinite':undefined}}/> Refresh</Btn>
-            </div>
             <div style={{display:'flex',gap:10,flexWrap:'wrap',marginBottom:8,alignItems:'flex-end'}}>
               <div>
                 <label style={{display:'block',fontSize:10,fontWeight:600,color:C.textMid,marginBottom:4}}>Distance</label>
@@ -2830,6 +2827,9 @@ function VehicleDetail({vehicle:iv,onSave,onBack,showToast,onShowSticker=()=>{},
                   <span style={{fontSize:10,color:C.textLight}}>–</span>
                   <input type="number" value={v.odoTo||''} onChange={e=>up({odoTo:e.target.value})} placeholder="To" style={{width:70,padding:'5px 8px',background:'#fff',border:`1px solid ${C.borderStr}`,borderRadius:6,fontSize:11,fontFamily:'inherit',outline:'none'}}/>
                 </div>
+              </div>
+              <div style={{marginLeft:'auto'}}>
+                <Btn onClick={refMkt} disabled={ml} variant="ghost" size="sm"><RefreshCw size={11} style={{animation:ml?'spin 1s linear infinite':undefined}}/> Refresh</Btn>
               </div>
             </div>
             {!v.marketMid?<div style={{textAlign:'center',padding:'12px 0'}}><Btn onClick={refMkt} disabled={ml}><TrendingUp size={13}/>{ml?'Loading...':'Fetch Market Data'}</Btn></div>:(
