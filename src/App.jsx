@@ -1775,11 +1775,12 @@ function VehicleSummary({data,onEdit}){
 // brain (../shared/suggestedBuy.js) so this appraisal page and the customer
 // widget compute the IDENTICAL number. Imported at the top of this file.
 
-function AppraisalForm({initial,onSave,onBack,showToast,onConvert,onFinalize,onUnlock,user='Staff',onGetDealer}) {
+function AppraisalForm({initial,onSave,onBack,showToast,onConvert,onFinalize,onUnlock,user='Staff',onGetDealer,onCheckDup,onOpenExisting}) {
   const [a,setA]=useState(initial);
   const [vl,setVl]=useState(false);
   const [ml,setMl]=useState(false);
   const [cl,setCl]=useState(false);
+  const [dupMatch,setDupMatch]=useState(null);   // existing active appraisal/inventory for this VIN
   const locked=!!a.finalizedAt;
   const [vehExpanded,setVehExpanded]=useState(!initial?.year);
   const [showVINScanner,setShowVINScanner]=useState(false);
@@ -1813,7 +1814,10 @@ function AppraisalForm({initial,onSave,onBack,showToast,onConvert,onFinalize,onU
     showToast('Saved','success');
   }
 
-  async function decode(){if(a.vin.length!==17){showToast('Enter a valid 17-character VIN','error');return;}setVl(true);try{const d=await decodeVIN(a.vin.toUpperCase());setA(p=>{const next={...p,...d,updatedAt:new Date().toISOString()};aRef.current=next;return next;});setIsDirty(true);setVehExpanded(true);showToast(`Decoded: ${[d.year,d.make,d.model].filter(Boolean).join(' ')||'partial — review fields'}`,'success');}catch{showToast('Could not decode — enter manually','error');}finally{setVl(false);}}
+  async function decode(){if(a.vin.length!==17){showToast('Enter a valid 17-character VIN','error');return;}setVl(true);try{const d=await decodeVIN(a.vin.toUpperCase());setA(p=>{const next={...p,...d,updatedAt:new Date().toISOString()};aRef.current=next;return next;});setIsDirty(true);setVehExpanded(true);showToast(`Decoded: ${[d.year,d.make,d.model].filter(Boolean).join(' ')||'partial — review fields'}`,'success');
+    // Duplicate check: does this VIN already have an active appraisal or sit in inventory?
+    if(onCheckDup){const m=onCheckDup(a.vin.toUpperCase(),a.id);setDupMatch(m||null);}
+  }catch{showToast('Could not decode — enter manually','error');}finally{setVl(false);}}
   async function fetchMkt(){
     if(a.vin.length!==17){showToast('Decode VIN first','error');return;}
     const dealer=onGetDealer?onGetDealer():null;
@@ -1941,6 +1945,27 @@ function AppraisalForm({initial,onSave,onBack,showToast,onConvert,onFinalize,onU
           )}
         </div>
       </Card>
+
+      {/* Duplicate-VIN warning — this car already has an active appraisal or is in
+          inventory. Soft warning (never blocks); offers a jump to the existing record. */}
+      {dupMatch&&(
+        <div style={{background:C.orangeBg,border:`1.5px solid ${C.orange}`,borderRadius:10,padding:'12px 16px',marginBottom:14,display:'flex',alignItems:'center',gap:12,flexWrap:'wrap'}}>
+          <AlertTriangle size={20} color={C.orange} style={{flexShrink:0}}/>
+          <div style={{flex:1,minWidth:200}}>
+            <div style={{fontSize:14,fontWeight:700,color:C.navy}}>This VIN is already in your system</div>
+            <div style={{fontSize:12,color:C.textMid,marginTop:2}}>
+              {dupMatch.kind==='inventory'
+                ? `${dupMatch.label} is already in inventory${dupMatch.stock?` (Stock #${dupMatch.stock})`:''}.`
+                : `There's already an active appraisal for ${dupMatch.label}${dupMatch.who?` by ${dupMatch.who}`:''}.`}
+              {' '}You can continue, but you may be duplicating an existing record.
+            </div>
+          </div>
+          <div style={{display:'flex',gap:8}}>
+            <Btn size="sm" variant="primary" onClick={()=>onOpenExisting&&onOpenExisting(dupMatch)}><ArrowRight size={13}/>Open existing</Btn>
+            <Btn size="sm" variant="ghost" onClick={()=>setDupMatch(null)}>Continue anyway</Btn>
+          </div>
+        </div>
+      )}
 
       {/* Two-column layout: sticky Vehicle panel on the left, everything else right */}
       <div className="two-col" style={{display:'grid',gridTemplateColumns:'minmax(300px, 360px) 1fr',gap:14,alignItems:'start'}}>
@@ -3156,6 +3181,25 @@ export default function Vantage() {
     showToast('VIN scanned — tap Decode VIN to populate details', 'success');
   }
 
+  // Duplicate-VIN detector. Returns a match if this VIN already has an ACTIVE
+  // (non-finalized) appraisal or sits in current inventory — excluding the
+  // appraisal being edited. Soft signal only; the form decides how to surface it.
+  function checkDuplicate(vin, currentId){
+    const V=(vin||'').toUpperCase().trim();
+    if(V.length!==17) return null;
+    const appr=appraisals.find(x=>x.id!==currentId && (x.vin||'').toUpperCase()===V && !x.finalizedAt && x.status!=='purchased');
+    if(appr) return {kind:'appraisal',id:appr.id,label:[appr.year,appr.make,appr.model].filter(Boolean).join(' ')||V,who:appr.appraiser||'',ref:appr};
+    const veh=vehicles.find(x=>(x.vin||'').toUpperCase()===V);
+    if(veh) return {kind:'inventory',id:veh.id,label:[veh.year,veh.make,veh.model].filter(Boolean).join(' ')||V,stock:veh.stockNumber||'',ref:veh};
+    return null;
+  }
+  // Jump to the existing record the duplicate warning points at.
+  function openExistingDup(match){
+    if(!match) return;
+    if(match.kind==='inventory'){ setActiveV({...match.ref}); setPage('vehicle_detail'); }
+    else { setActiveA({...match.ref}); setPage('appraisal_form'); }
+  }
+
   // Open a customer lead as a PRE-FILLED appraisal: map the lead's vehicle +
   // contact + market data into a blank appraisal so the appraiser works it with
   // everything already there. Marks the lead converted.
@@ -3450,7 +3494,7 @@ export default function Vantage() {
         {page==='dashboard'&&<Dashboard vehicles={vehicles} appraisals={appraisals} dealer={dealer} onNav={nav} onOpenVehicle={v=>{setActiveV({...v});setPage('vehicle_detail');}} onOpenAppraisal={a=>{setActiveA({...a});setPage('appraisal_form');}}/>}
         {page==='leads'&&<LeadsInbox leads={leads} loading={leadsLoading} onRefresh={loadLeads} onOpen={openLead} onDismiss={id=>updateLeadStatus(id,'dismissed')}/>}
         {page==='appraisals'&&<AppraisalList appraisals={appraisals} onNew={()=>nav('new_appraisal')} onEdit={a=>{setActiveA({...a});setPage('appraisal_form');}}/>}
-        {page==='appraisal_form'&&activeA&&<AppraisalForm key={activeA.id} initial={activeA} user={actingUser} onSave={(a,silent=false)=>saveAppraisal(a,silent)} onBack={()=>setPage('appraisals')} showToast={showToast} onConvert={convertToInventory} onFinalize={finalizeAppraisal} onUnlock={unlockAppraisal} onGetDealer={()=>dealer}/>}
+        {page==='appraisal_form'&&activeA&&<AppraisalForm key={activeA.id} initial={activeA} user={actingUser} onSave={(a,silent=false)=>saveAppraisal(a,silent)} onBack={()=>setPage('appraisals')} showToast={showToast} onConvert={convertToInventory} onFinalize={finalizeAppraisal} onUnlock={unlockAppraisal} onGetDealer={()=>dealer} onCheckDup={checkDuplicate} onOpenExisting={openExistingDup}/>}
         {page==='inventory'&&<InventoryList vehicles={vehicles} onAdd={()=>nav('new_vehicle')} onImport={()=>setShowBulkImport(true)} onEdit={v=>{setActiveV({...v});setPage('vehicle_detail');}}/>}
         {page==='vehicle_detail'&&activeV&&<VehicleDetail key={activeV.id} vehicle={activeV} user={actingUser} onSave={saveVehicle} onBack={()=>setPage('inventory')} showToast={showToast} onShowSticker={v=>{setActiveV(v);setPage('sticker_detail');}} onGetDealer={()=>dealer}/>}
         {page==='stickers'&&<StickerGenerator vehicles={vehicles} dealer={dealer}/>}
