@@ -1234,6 +1234,115 @@ function DealerSettings({dealer,onSave,showToast}) {
 }
 
 // ─── DASHBOARD ────────────────────────────────────────────────────────
+// ─── CUSTOMER LEADS INBOX ─────────────────────────────────────────────
+// Warm leads from the widget. Differentiated from regular appraisals and sorted
+// by urgency: specialist-needed first, then oldest-unworked (speed-to-lead).
+function timeAgo(iso){
+  const ms=Date.now()-new Date(iso).getTime();
+  const m=Math.floor(ms/60000), h=Math.floor(m/60), d=Math.floor(h/24);
+  if(m<1) return 'just now';
+  if(m<60) return `${m}m ago`;
+  if(h<24) return `${h}h ago`;
+  return `${d}d ago`;
+}
+// Urgency tier from how long a lead has sat unworked (speed-to-lead matters most
+// in the first hour). Specialist-needed leads are always elevated.
+function leadUrgency(lead){
+  const ms=Date.now()-new Date(lead.created_at).getTime();
+  const h=ms/3600000;
+  const specialist=lead.thin_market || lead.offer_amount==null;
+  if(specialist || h>=24) return {level:'high',label:specialist?'Needs callback':'⚠ Over 1 day',color:C.red,bg:C.redBg};
+  if(h>=4) return {level:'med',label:'Follow up soon',color:C.orange,bg:C.orangeBg};
+  return {level:'new',label:'New',color:C.green,bg:C.greenBg};
+}
+function LeadsInbox({leads,loading,onRefresh,onOpen,onDismiss}){
+  // Sort: specialist/high urgency first, then oldest first within a tier.
+  const sorted=[...leads].sort((a,b)=>{
+    const ua=leadUrgency(a), ub=leadUrgency(b);
+    const rank={high:0,med:1,new:2};
+    if(rank[ua.level]!==rank[ub.level]) return rank[ua.level]-rank[ub.level];
+    return new Date(a.created_at)-new Date(b.created_at); // oldest unworked first
+  });
+  const specialistCount=leads.filter(l=>l.thin_market||l.offer_amount==null).length;
+
+  return (
+    <div style={{maxWidth:760,margin:'0 auto'}}>
+      <div style={{display:'flex',alignItems:'center',justifyContent:'space-between',marginBottom:4}}>
+        <div>
+          <h2 style={{fontSize:18,fontWeight:800,color:C.navy,display:'flex',alignItems:'center',gap:8}}><Zap size={18} color={C.orange}/>Customer Leads</h2>
+          <p style={{fontSize:13,color:C.textLight}}>{leads.length} pending{specialistCount>0?` · ${specialistCount} need a callback`:''}</p>
+        </div>
+        <Btn variant="ghost" size="sm" onClick={onRefresh}><RefreshCw size={12} style={{animation:loading?'spin 1s linear infinite':undefined}}/> Refresh</Btn>
+      </div>
+      <div style={{fontSize:12,color:C.textMid,background:C.orangeBg,border:`1px solid ${C.orange}33`,borderRadius:8,padding:'8px 12px',marginBottom:16,display:'flex',alignItems:'center',gap:8}}>
+        <Sparkles size={14} color={C.orange}/> These are warm leads — customers who requested an instant offer. Contact them fast.
+      </div>
+
+      {leads.length===0?(
+        <Card style={{padding:'48px',textAlign:'center'}}>
+          <Zap size={32} color={C.navyBorder} style={{marginBottom:10}}/>
+          <div style={{fontSize:14,fontWeight:700,color:C.textMid}}>No pending leads</div>
+          <div style={{fontSize:12,color:C.textLight,marginTop:4}}>New customer submissions from your widget will appear here.</div>
+        </Card>
+      ):(
+        <div style={{display:'flex',flexDirection:'column',gap:12}}>
+          {sorted.map(lead=>{
+            const u=leadUrgency(lead);
+            const specialist=lead.thin_market||lead.offer_amount==null;
+            return (
+              <div key={lead.id} style={{background:'#fff',borderRadius:12,border:`1px solid ${C.border}`,borderLeft:`4px solid ${u.color}`,padding:16,boxShadow:'0 1px 3px rgba(0,0,0,0.05)'}}>
+                <div style={{display:'flex',justifyContent:'space-between',alignItems:'flex-start',gap:12}}>
+                  <div style={{flex:1,minWidth:0}}>
+                    {/* Urgency + time */}
+                    <div style={{display:'flex',alignItems:'center',gap:8,marginBottom:8,flexWrap:'wrap'}}>
+                      <span style={{background:u.bg,color:u.color,fontSize:10,fontWeight:800,padding:'2px 8px',borderRadius:20,textTransform:'uppercase',letterSpacing:0.4}}>{u.label}</span>
+                      <span style={{fontSize:11,color:C.textLight}}>{timeAgo(lead.created_at)}</span>
+                      <span style={{background:C.purpleBg,color:C.purple,fontSize:9,fontWeight:700,padding:'2px 7px',borderRadius:20,textTransform:'uppercase',letterSpacing:0.4}}>Customer</span>
+                    </div>
+                    {/* Vehicle */}
+                    <div style={{fontSize:15,fontWeight:800,color:C.navy}}>{lead.year} {lead.make} {lead.model} {lead.trim?<span style={{fontWeight:500,color:C.textMid}}>{lead.trim}</span>:null}</div>
+                    <div style={{fontSize:12,color:C.textMid,marginTop:2}}>
+                      {lead.odometer?`${Number(lead.odometer).toLocaleString('en-CA')} km`:'km not provided'}
+                      {lead.vin?` · VIN ${lead.vin}`:''}
+                      {lead.accident?<span style={{color:C.orange}}> · Reported accident</span>:''}
+                    </div>
+                    {/* Contact — prominent for callback */}
+                    <div style={{display:'flex',gap:14,marginTop:10,flexWrap:'wrap'}}>
+                      <div style={{display:'flex',alignItems:'center',gap:5,fontSize:13,fontWeight:600,color:C.navy}}><User size={13} color={C.textLight}/>{lead.customer_name}</div>
+                      {lead.customer_phone&&<a href={`tel:${lead.customer_phone}`} style={{display:'flex',alignItems:'center',gap:5,fontSize:13,color:C.teal,fontWeight:600,textDecoration:'none'}}>📞 {lead.customer_phone}</a>}
+                      {lead.customer_email&&<a href={`mailto:${lead.customer_email}`} style={{display:'flex',alignItems:'center',gap:5,fontSize:13,color:C.teal,fontWeight:600,textDecoration:'none'}}><Mail size={13}/>{lead.customer_email}</a>}
+                    </div>
+                  </div>
+                  {/* Offer / range / specialist */}
+                  <div style={{textAlign:'right',flexShrink:0}}>
+                    {specialist?(
+                      <div style={{background:C.redBg,borderRadius:8,padding:'8px 12px'}}>
+                        <div style={{fontSize:10,color:C.red,fontWeight:700,textTransform:'uppercase'}}>Needs quote</div>
+                        <div style={{fontSize:11,color:C.textMid,maxWidth:120,marginTop:2}}>{lead.thin_market?'Thin market':'Mileage flag'}</div>
+                      </div>
+                    ):(
+                      <div>
+                        <div style={{fontSize:10,color:C.textLight,fontWeight:600,textTransform:'uppercase'}}>Instant offer shown</div>
+                        <div style={{fontSize:20,fontWeight:800,color:C.green,fontFamily:'monospace'}}>{lead.offer_amount?`$${Number(lead.offer_amount).toLocaleString('en-CA')}`:'—'}</div>
+                        {lead.confidence&&<div style={{fontSize:10,color:C.textLight}}>{lead.confidence} confidence</div>}
+                      </div>
+                    )}
+                  </div>
+                </div>
+                {/* Actions */}
+                <div style={{display:'flex',gap:8,marginTop:14,paddingTop:12,borderTop:`1px solid ${C.border}`}}>
+                  <Btn size="sm" variant="teal" onClick={()=>onOpen(lead)}><ArrowRight size={13}/>Work this lead</Btn>
+                  <Btn size="sm" variant="ghost" onClick={()=>onDismiss(lead.id)}><X size={13}/>Dismiss</Btn>
+                </div>
+              </div>
+            );
+          })}
+        </div>
+      )}
+    </div>
+  );
+}
+
 function Dashboard({vehicles,appraisals,dealer,onNav,onOpenVehicle,onOpenAppraisal}) {
   const avail=vehicles.filter(v=>v.status==='available').length;
   const recon=vehicles.filter(v=>v.status==='in_recon').length;
@@ -3010,7 +3119,29 @@ export default function Vantage() {
   const [showScanner,setShowScanner]=useState(false);
   const [currentUser,setCurrentUser]=useState('');
   const [showUserMenu,setShowUserMenu]=useState(false);
+  // Customer leads from the widget (pending appraisals). Fetched from the backend.
+  const [leads,setLeads]=useState([]);
+  const [leadsLoading,setLeadsLoading]=useState(false);
   const showToast=useCallback((m,t='info')=>setToast({message:m,type:t}),[]);
+
+  // Pull pending customer leads from the backend. Polls so new submissions show up.
+  const loadLeads=useCallback(async()=>{
+    setLeadsLoading(true);
+    try{
+      const r=await fetch(`${API_BASE}/api/leads?status=pending`);
+      const d=await r.json();
+      if(d&&Array.isArray(d.leads)) setLeads(d.leads);
+    }catch{/* backend may be cold-starting; leave as-is */}
+    finally{setLeadsLoading(false);}
+  },[]);
+
+  // Mark a lead worked (converted/dismissed) on the backend, then refresh.
+  const updateLeadStatus=useCallback(async(id,status)=>{
+    try{
+      await fetch(`${API_BASE}/api/leads/${id}`,{method:'PATCH',headers:{'Content-Type':'application/json'},body:JSON.stringify({status})});
+    }catch{}
+    loadLeads();
+  },[loadLeads]);
 
   // Staff list comes from dealer settings; falls back to a sensible default.
   const staff=(dealer.staff&&dealer.staff.length>0)?dealer.staff:['Manager','Sales','Appraiser'];
@@ -3025,12 +3156,41 @@ export default function Vantage() {
     showToast('VIN scanned — tap Decode VIN to populate details', 'success');
   }
 
+  // Open a customer lead as a PRE-FILLED appraisal: map the lead's vehicle +
+  // contact + market data into a blank appraisal so the appraiser works it with
+  // everything already there. Marks the lead converted.
+  function openLead(lead){
+    const a=blankAppraisal();
+    a.source='Customer Lead';
+    a.vin=lead.vin||'';
+    a.year=lead.year||''; a.make=lead.make||''; a.model=lead.model||''; a.series=lead.trim||'';
+    a.odometer=lead.odometer!=null?String(lead.odometer):'';
+    a.firstName=(lead.customer_name||'').split(' ')[0]||'';
+    a.lastName=(lead.customer_name||'').split(' ').slice(1).join(' ')||'';
+    a.email=lead.customer_email||''; a.phone=lead.customer_phone||'';
+    a.postal=lead.postal||'';
+    a.marketMid=lead.market_mid||null;
+    a.accidentVisible=!!lead.accident;
+    a._leadId=lead.id;
+    a.notes=`Customer-submitted lead via widget on ${fmtDate(lead.created_at)}.`+
+      (lead.thin_market?' [Flagged: thin market — specialist follow-up]':'')+
+      (lead.offer_amount?` Instant offer shown: $${Number(lead.offer_amount).toLocaleString('en-CA')}.`:'');
+    a.comments=[{ts:new Date().toISOString(),user:'System',text:`Imported from customer lead #${lead.id}. Customer contact: ${lead.customer_email||''} ${lead.customer_phone||''}`.trim()}];
+    setActiveA(a);
+    setPage('appraisal_form');
+    if(lead.id) updateLeadStatus(lead.id,'converted');
+    showToast('Lead opened as appraisal — verify details and finalize','success');
+  }
+
   useEffect(()=>{
     try{const d=JSON.parse(localStorage.getItem('vantage_vehicles'));if(d&&d.length>0)setVehicles(d);}catch{}
     try{const d=JSON.parse(localStorage.getItem('vantage_appraisals'));if(d)setAppraisals(d);}catch{}
     try{const d=JSON.parse(localStorage.getItem('vantage_dealer'));if(d)setDealer(d);}catch{}
     try{const u=localStorage.getItem('vantage_user');if(u)setCurrentUser(u);}catch{}
-  },[]);
+    loadLeads();
+    const t=setInterval(loadLeads,60000); // poll for new customer leads
+    return ()=>clearInterval(t);
+  },[loadLeads]);
 
   const saveV=useCallback(l=>{try{localStorage.setItem('vantage_vehicles',JSON.stringify(l));}catch{}},[]);
   const saveA=useCallback(l=>{try{localStorage.setItem('vantage_appraisals',JSON.stringify(l));}catch{}},[]);
@@ -3199,7 +3359,7 @@ export default function Vantage() {
     showToast('Appraisal unlocked','info');
   }
 
-  const navItems=[{k:'dashboard',l:'Dashboard',I:LayoutDashboard},{k:'appraisals',l:'Appraisals',I:ClipboardList,badge:appraisals.filter(a=>a.status==='in_progress').length||null},{k:'inventory',l:'Inventory',I:Package},{k:'reports',l:'Reports',I:BarChart2},{k:'settings',l:'Settings',I:Settings}];
+  const navItems=[{k:'dashboard',l:'Dashboard',I:LayoutDashboard},{k:'leads',l:'Leads',I:Zap,badge:leads.length||null,badgeColor:C.orange},{k:'appraisals',l:'Appraisals',I:ClipboardList,badge:appraisals.filter(a=>a.status==='in_progress').length||null},{k:'inventory',l:'Inventory',I:Package},{k:'reports',l:'Reports',I:BarChart2},{k:'settings',l:'Settings',I:Settings}];
   const cur=page.split('_')[0];
 
   return (
@@ -3222,7 +3382,7 @@ export default function Vantage() {
             {navItems.map(n=>(
               <button key={n.k} onClick={()=>nav(n.k)} style={{padding:'6px 12px',background:cur===n.k?C.navyMuted:'none',border:'none',borderRadius:6,color:cur===n.k?C.navy:C.textLight,fontWeight:cur===n.k?700:500,fontSize:13,cursor:'pointer',display:'flex',alignItems:'center',gap:5,fontFamily:'inherit',transition:'all 0.15s',position:'relative'}}>
                 <n.I size={13}/>{n.l}
-                {n.badge>0&&<span style={{background:C.navy,color:'#fff',borderRadius:10,padding:'1px 6px',fontSize:10,fontWeight:700,marginLeft:2}}>{n.badge}</span>}
+                {n.badge>0&&<span style={{background:n.badgeColor||C.navy,color:'#fff',borderRadius:10,padding:'1px 6px',fontSize:10,fontWeight:700,marginLeft:2}}>{n.badge}</span>}
               </button>
             ))}
           </div>
@@ -3288,6 +3448,7 @@ export default function Vantage() {
       {/* CONTENT */}
       <div className='content-pad' style={{maxWidth:1200,margin:'0 auto',padding:'24px 24px 60px'}}>
         {page==='dashboard'&&<Dashboard vehicles={vehicles} appraisals={appraisals} dealer={dealer} onNav={nav} onOpenVehicle={v=>{setActiveV({...v});setPage('vehicle_detail');}} onOpenAppraisal={a=>{setActiveA({...a});setPage('appraisal_form');}}/>}
+        {page==='leads'&&<LeadsInbox leads={leads} loading={leadsLoading} onRefresh={loadLeads} onOpen={openLead} onDismiss={id=>updateLeadStatus(id,'dismissed')}/>}
         {page==='appraisals'&&<AppraisalList appraisals={appraisals} onNew={()=>nav('new_appraisal')} onEdit={a=>{setActiveA({...a});setPage('appraisal_form');}}/>}
         {page==='appraisal_form'&&activeA&&<AppraisalForm key={activeA.id} initial={activeA} user={actingUser} onSave={(a,silent=false)=>saveAppraisal(a,silent)} onBack={()=>setPage('appraisals')} showToast={showToast} onConvert={convertToInventory} onFinalize={finalizeAppraisal} onUnlock={unlockAppraisal} onGetDealer={()=>dealer}/>}
         {page==='inventory'&&<InventoryList vehicles={vehicles} onAdd={()=>nav('new_vehicle')} onImport={()=>setShowBulkImport(true)} onEdit={v=>{setActiveV({...v});setPage('vehicle_detail');}}/>}
@@ -3308,13 +3469,14 @@ export default function Vantage() {
       <div className="mobile-bottom-nav" style={{display:'none',justifyContent:'space-around',alignItems:'center'}}>
         {[
           {k:'dashboard',l:'Home',I:LayoutDashboard},
-          {k:'appraisals',l:'Appraisals',I:ClipboardList},
+          {k:'leads',l:'Leads',I:Zap,badge:leads.length||null},
           {k:'new',l:'New',I:Plus,special:true},
-          {k:'inventory',l:'Inventory',I:Package},
+          {k:'appraisals',l:'Appraisals',I:ClipboardList},
           
         ].map(n=>(
-          <button key={n.k} onClick={()=>n.special?nav('new_appraisal'):nav(n.k)} style={{display:'flex',flexDirection:'column',alignItems:'center',gap:3,background:n.special?'#1C2D5E':'none',border:'none',borderRadius:n.special?12:0,padding:n.special?'10px 16px':'6px 8px',cursor:'pointer',flex:1,color:n.special?'#fff':cur===n.k?'#1C2D5E':'#8C95A0'}}>
+          <button key={n.k} onClick={()=>n.special?nav('new_appraisal'):nav(n.k)} style={{display:'flex',flexDirection:'column',alignItems:'center',gap:3,background:n.special?'#1C2D5E':'none',border:'none',borderRadius:n.special?12:0,padding:n.special?'10px 16px':'6px 8px',cursor:'pointer',flex:1,color:n.special?'#fff':cur===n.k?'#1C2D5E':'#8C95A0',position:'relative'}}>
             <n.I size={n.special?22:18} color={n.special?'#fff':cur===n.k?'#1C2D5E':'#8C95A0'}/>
+            {n.badge>0&&<span style={{position:'absolute',top:2,right:'50%',marginRight:-18,background:C.orange,color:'#fff',borderRadius:10,padding:'0px 5px',fontSize:9,fontWeight:700}}>{n.badge}</span>}
             <span style={{fontSize:9,fontWeight:n.special?800:cur===n.k?700:400,letterSpacing:0.3}}>{n.l}</span>
           </button>
         ))}
