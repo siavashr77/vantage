@@ -193,6 +193,7 @@ export function computeSuggestedBuy(a, dealer) {
   //    the flat market mid (identical to prior behavior).
   let basisPrice = mid;
   let kmConfidence = null;       // 'High'|'Medium'|'Low' from the mileage fit
+  let kmExtreme = false;         // true ONLY when km is far outside the comps
   let kmNote = null;
   const comps = Array.isArray(a.comps) ? a.comps : null;
   const subjectKm = a.odometer != null && a.odometer !== '' ? Number(a.odometer) : null;
@@ -201,6 +202,7 @@ export function computeSuggestedBuy(a, dealer) {
     if (pm && pm.price > 0) {
       basisPrice = pm.price;
       kmConfidence = pm.confidence;
+      kmExtreme = !!pm.extreme;
       kmNote = pm.note;
       if (pm.basis === 'regression') {
         reasons.push(`Mileage-matched price ${fmt(basisPrice)} at ${Number(subjectKm).toLocaleString('en-CA')} km (${pm.note})`);
@@ -266,6 +268,7 @@ export function computeSuggestedBuy(a, dealer) {
     confidence: overallConfidence,
     compConfidence: compConf,
     kmConfidence,           // null when no mileage match was done
+    kmExtreme,              // true ONLY when km is far outside comps (gate the widget)
     kmNote,
   };
 }

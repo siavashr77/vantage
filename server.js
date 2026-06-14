@@ -1078,7 +1078,7 @@ app.post('/api/leads', async (req, res) => {
     //  • Extreme mileage: subject km far from comps → kmConfidence Low.
     const MIN_OFFER_COMPS = 6
     const thinMarket = (Number(market.compCount) || 0) < MIN_OFFER_COMPS
-    const extremeKm = sb.kmConfidence === 'Low'
+    const extremeKm = sb.kmExtreme === true
 
     const breakdown = {
       reasons: sb.reasons,
