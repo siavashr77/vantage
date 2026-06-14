@@ -180,6 +180,28 @@ const DEFAULT_DEALER = {name:'Your Dealership',logo:null,address:'123 Main Stree
 // no trailing slash) in Netlify env vars. Falls back to local dev server.
 const API_BASE = (import.meta.env.VITE_API_URL || 'http://localhost:3001').replace(/\/$/, '');
 
+// Safely parse a fetch Response as JSON. The backend (Railway) can return an
+// HTML page instead of JSON — e.g. a 502/503 gateway page during a cold start,
+// or a default error page if the server crashes. Calling res.json() on that
+// throws the cryptic `Unexpected token '<', "<!DOCTYPE "... is not valid JSON`.
+// This reads the body as text first, detects an HTML response, and surfaces a
+// clear, human-readable message instead.
+async function parseJsonResponse(res, label = 'server') {
+  const text = await res.text();
+  const looksHtml = /^\s*</.test(text);
+  if (looksHtml) {
+    if (res.status === 502 || res.status === 503 || res.status === 504) {
+      throw new Error(`The ${label} is waking up — please try again in a few seconds.`);
+    }
+    throw new Error(`The ${label} returned an unexpected response — please try again.`);
+  }
+  try {
+    return JSON.parse(text);
+  } catch {
+    throw new Error(`The ${label} returned an unreadable response — please try again.`);
+  }
+}
+
 // NHTSA's Trim field can be a comma-separated list of candidate trims when the
 // VIN doesn't pin down an exact one, e.g. "L, LE, LE w/Tech pkg, LE - US Source".
 // Parse it into clean, distinct base trims the user can pick from.
@@ -258,7 +280,7 @@ async function fetchMarketBySpec(specId, postal, radius = 250, drivetrain = '', 
     catch (e) { if (attempt === 1) throw e; await new Promise(r => setTimeout(r, 800)); }
   }
   if (!res.ok) throw new Error(`Server error ${res.status}`);
-  return res.json();
+  return parseJsonResponse(res, 'market server');
 }
 
 // Build a VinAudit spec_id from parts: "2024_toyota_corolla_le" (trim optional).
@@ -395,7 +417,7 @@ Respond with STRICT JSON only — no prose, no markdown:
     max_tokens:900,
     messages:[{role:'user',content}]
   })});
-  const data = await res.json();
+  const data = await parseJsonResponse(res, 'AI server');
   if (data.error) throw new Error(data.error.message||'AI error');
   let txt = data.content?.[0]?.text?.trim()||'';
   txt = txt.replace(/```json|```/g,'').trim();
@@ -427,7 +449,7 @@ async function fetchMarketData(vin, postal, radius = 250, drivetrain = '', trim 
       await new Promise(r => setTimeout(r, 1500)); // brief pause, then retry once
     }
   }
-  const data = await res.json();
+  const data = await parseJsonResponse(res, 'market server');
   if (!res.ok || data.error) {
     const e = String(data.error || 'Market lookup failed');
     if (/spec_vin|invalid vin|not found/i.test(e)) throw new Error("This VIN isn't recognized by the market database — check the VIN or enter comps manually.");
@@ -498,7 +520,7 @@ async function fetchCarfax(vin) {
   // (no frontend change needed).
   const res = await fetch(`${API_BASE}/api/carfax/${vin}`);
   if (!res.ok) throw new Error(`Carfax error ${res.status}`);
-  return res.json();
+  return parseJsonResponse(res, 'Carfax service');
 }
 
 // Live competitive set — renders real VinAudit listings with clickable links.
