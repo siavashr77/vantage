@@ -3221,12 +3221,14 @@ export default function Vantage() {
     if(top==='appraisal' && seg[1]){
       const a=appraisals.find(x=>String(x.id)===seg[1]);
       if(a){ setActiveA(prev=>prev&&prev.id===a.id?prev:{...a}); setPage('appraisal_form'); }
+      else if(activeA&&String(activeA.id)===seg[1]){ setPage('appraisal_form'); } // new/unsaved appraisal in memory
       else { setPage('appraisals'); } // unknown id (e.g. not in this browser) → list
       return;
     }
     if(top==='inventory' && seg[1]){
       const v=vehicles.find(x=>String(x.id)===seg[1]);
       if(v){ setActiveV(prev=>prev&&prev.id===v.id?prev:{...v}); setPage(seg[2]==='sticker'?'sticker_detail':'vehicle_detail'); }
+      else if(activeV&&String(activeV.id)===seg[1]){ setPage(seg[2]==='sticker'?'sticker_detail':'vehicle_detail'); } // new/unsaved
       else { setPage('inventory'); }
       return;
     }
@@ -3238,7 +3240,7 @@ export default function Vantage() {
     }
     setPage('dashboard');
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  },[location.pathname,appraisals,vehicles,leads]);
+  },[location.pathname,appraisals,vehicles,leads,activeA,activeV]);
 
   // openLead is defined later; hold a ref so the URL effect can call it.
   const openLeadRef=useRef(null);
