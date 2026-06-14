@@ -172,7 +172,8 @@ const DEFAULT_DEALER = {name:'Your Dealership',logo:null,address:'123 Main Stree
   // Appraisal pricing strategy (drives the Suggested Buy engine)
   marketPositionPct:97,   // where the dealer wants to retail vs. market mid (e.g. 97%)
   targetGross:2500,       // base front-end gross target ($)
-  avgRecon:1500};         // default recon if none entered on the appraisal ($)
+  avgRecon:1500,          // default recon if none entered on the appraisal ($)
+  aboutExcerpt:''};       // short dealership blurb woven into AI descriptions
 
 // ─── API CALLS ────────────────────────────────────────────────────────
 // Backend base URL. In production set VITE_API_URL (e.g. your Railway URL,
@@ -330,9 +331,11 @@ async function decodeVIN(vin) {
   return out
 }
 
-async function generateDescription(v) {
+async function generateDescription(v, dealer) {
   // Build the multimodal message: vehicle facts + any photos (vision).
   const facts = [v.year,v.make,v.model,v.series,v.engine,v.drivetrain,v.extColour&&`Exterior: ${v.extColour}`,v.intColour&&`Interior: ${v.intColour}`,v.odometer&&`${fmtN(v.odometer)} km`].filter(Boolean).join(', ');
+  const dealerCity = [dealer?.city, dealer?.province].filter(Boolean).join(', ');
+  const dealerExcerpt = (dealer?.aboutExcerpt||'').trim();
   const photos = (v.photos||[]).filter(p=>p&&p.dataUrl&&/^data:image\//.test(p.dataUrl)).slice(0,6);
   const content = [];
   for (const p of photos) {
@@ -376,6 +379,8 @@ Write the DESCRIPTION to be sales-oriented and SEO-friendly for AutoTrader/CarGu
 - Lead with the year/make/model/trim (good for search).
 - Weave in the key standard features/options so the description is information-rich (buyers and search engines reward detail).
 - Naturally include the VERIFIED selling phrases (e.g. "low kilometres", "no reported accidents", "one owner") where applicable — these help trigger marketplace value badges.
+${dealerCity?`- Reference the dealership's location as "${dealerCity}" (e.g. "available now in ${dealerCity}") instead of a generic "Canada" — local SEO matters.`:'- Do not invent a specific city; keep location general if none is given.'}
+${dealerExcerpt?`- Work in this dealership's own positioning naturally (do not quote it verbatim or let it dominate): "${dealerExcerpt}"`:''}
 - Compelling and professional, but honest. No emojis. 4-6 sentences is fine here (richer is better for SEO), up to ~600 characters.
 
 Respond with STRICT JSON only — no prose, no markdown:
@@ -1096,6 +1101,11 @@ function DealerSettings({dealer,onSave,showToast}) {
             </div>
             <Field label="Website"><Input value={d.website} onChange={v=>set('website',v)} placeholder="www.yourdealership.ca"/></Field>
             <Field label="Email"><Input value={d.email} onChange={v=>set('email',v)} placeholder="info@yourdealership.ca" type="email"/></Field>
+            <div>
+              <label style={{display:'block',fontSize:10,fontWeight:600,color:C.textMid,marginBottom:4}}>About Your Dealership <span style={{fontWeight:400,color:C.textLight}}>(woven into AI listing descriptions)</span></label>
+              <textarea value={d.aboutExcerpt||''} onChange={e=>set('aboutExcerpt',e.target.value)} rows={3} placeholder="e.g. Family-owned since 1998, every vehicle safety-certified, free home delivery across the GTA, financing for all credit situations." style={{width:'100%',padding:'8px 10px',background:'#fff',border:`1px solid ${C.borderStr}`,borderRadius:6,fontSize:12,color:C.textDark,fontFamily:'inherit',outline:'none',boxSizing:'border-box',resize:'vertical',lineHeight:1.5}}/>
+              <div style={{fontSize:10,color:C.textLight,marginTop:3}}>Your selling points — the AI works these into descriptions naturally. Keep it factual; it appears in published ads.</div>
+            </div>
           </div>
         </Card>
 
@@ -2563,7 +2573,7 @@ function VehicleDetail({vehicle:iv,onSave,onBack,showToast,onShowSticker=()=>{},
 
   async function decode(){if(v.vin.length!==17){showToast('Valid 17-char VIN required','error');return;}setVl(true);try{const d=await decodeVIN(v.vin.toUpperCase());up(d);setVehExpandedDetail(true);showToast(`Decoded: ${[d.year,d.make,d.model].filter(Boolean).join(' ')||'partial — review fields'}`,'success');}catch{showToast('Could not decode — enter manually','error');}finally{setVl(false);}}
   async function genDesc(){setDl(true);try{
-    const d=await generateDescription(v);
+    const d=await generateDescription(v, onGetDealer?onGetDealer():null);
     const cur=vRef.current;
     // Merge AI options into existing features (case-insensitive dedup).
     const existing=cur.features||[];
@@ -2700,6 +2710,7 @@ function VehicleDetail({vehicle:iv,onSave,onBack,showToast,onShowSticker=()=>{},
                 <div key={x.f} style={{minWidth:0}}>
                   <label style={{display:'block',fontSize:10,fontWeight:600,color:C.textMid,marginBottom:4}}>{x.l}</label>
                   <input type="number" value={v[x.f]||''} onChange={e=>up({[x.f]:e.target.value})} style={{width:'100%',padding:'8px 10px',background:'#fff',border:`1px solid ${C.borderStr}`,borderRadius:6,fontSize:13,color:C.textDark,fontFamily:'inherit',outline:'none',boxSizing:'border-box',fontWeight:x.f==='listPrice'?700:400}}/>
+                  {x.f==='listPrice'&&v.suggestedListBasis&&v.marketMid&&<div style={{fontSize:9,color:C.teal,marginTop:3,lineHeight:1.3}}>Suggested {v.suggestedListBasis==='market'?`(${Number((onGetDealer?onGetDealer():null)?.marketPositionPct)||97}% of market mid ${fmt(v.marketMid)})`:'(cost + recon + target gross)'} — adjust freely</div>}
                 </div>
               ))}
             </div>
@@ -3100,6 +3111,17 @@ export default function Vantage() {
     const ua=withLog({...a,status:'purchased',updatedAt:new Date().toISOString()},[logEvent('Status',AS.purchased.label,actingUser,(AS[a.status]||{}).label||'')]);
     setAppraisals(prev=>{const n=prev.map(x=>x.id===a.id?ua:x);saveA(n);return n;});
     const nv=blankVehicle(ua);
+    // Suggested LIST PRICE — market-anchored (market mid × dealer's position %),
+    // with the cost-up (appraised + recon + target gross) as a floor so we never
+    // suggest below the deal's required margin. A starting point the dealer edits.
+    const mid=Number(ua.marketMid);
+    if(mid>0){
+      const posPct=Number(dealer?.marketPositionPct)||97;
+      const marketAnchored=Math.round(mid*(posPct/100));
+      const costUpFloor=Math.round(Number(ua.appraisedValue||0)+Number(ua.reconCost||0)+Number(dealer?.targetGross||2500));
+      nv.listPrice=String(Math.max(marketAnchored,costUpFloor));
+      nv.suggestedListBasis = marketAnchored>=costUpFloor ? 'market' : 'cost-up';
+    }
     nv.log=[logEvent('VehicleCreated','Created from appraisal',actingUser)];
     setVehicles(prev=>{const n=[nv,...prev];saveV(n);return n;});
     setActiveV(nv);setPage('vehicle_detail');
