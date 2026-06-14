@@ -85,10 +85,13 @@ export function priceAtMileage(comps, subjectKm, medianMid) {
     .filter(p => Number.isFinite(p.x) && p.x > 0 && Number.isFinite(p.y) && p.y > 0);
 
   const MIN_PTS = 6;               // below this, regression isn't reliable
-  const fallback = (note) => ({
+  // opts.force: override confidence (used when the FALLBACK itself signals an
+  // unreliable/extreme situation that must gate the widget).
+  const fallback = (note, opts = {}) => ({
     price: Number(medianMid) || null, basis: 'median',
-    confidence: (Number(comps?.length) || 0) >= 12 ? 'High' : (Number(comps?.length) || 0) >= MIN_PTS ? 'Medium' : 'Low',
-    slope: null, compCount: pts.length, kmInRange: null, note,
+    confidence: opts.force || ((Number(comps?.length) || 0) >= 12 ? 'High' : (Number(comps?.length) || 0) >= MIN_PTS ? 'Medium' : 'Low'),
+    slope: null, compCount: pts.length, kmInRange: null,
+    extreme: !!opts.extreme, note,
   });
 
   // No subject km, or too few usable points → fall back to the median mid.
@@ -105,6 +108,14 @@ export function priceAtMileage(comps, subjectKm, medianMid) {
   if (denom === 0) return fallback('comps have no mileage spread — using median market price');
   const slope = (n * sxy - sx * sy) / denom;
   const intercept = (sy - slope * sx) / n;
+
+  // A POSITIVE slope (price rising with km) is nonsensical — it means km doesn't
+  // explain price in this comp set (e.g. trucks: trim/options dominate). Don't
+  // let it inflate a high-km car. Treat as "no usable mileage pattern" → median,
+  // and if the car is high-km that's a specialist case.
+  if (slope >= 0) {
+    return fallback('mileage does not track price in this market — using median; verify mileage manually', { force: 'Medium' });
+  }
 
   // Fit strength (R²) — how well km explains price. Weak fit → shrink toward median.
   const meanY = sy / n;
@@ -127,8 +138,13 @@ export function priceAtMileage(comps, subjectKm, medianMid) {
   const extreme = km < kmMin - span * 0.5 || km > kmMax + span * 0.5;
 
   let predicted = Math.round(intercept + slope * km);
-  // Guard: a wild/positive slope or nonsensical prediction → fall back to median.
-  if (!Number.isFinite(predicted) || predicted <= 0) return fallback('mileage pattern unreliable — using median market price');
+  // Nonsense prediction (≤0 or non-finite) — happens when the subject km is so
+  // far out the line goes negative. This is the extreme-mileage case: do NOT
+  // quietly use the median at full confidence; force Low + extreme so the widget
+  // routes to a specialist and the appraiser sees the flag.
+  if (!Number.isFinite(predicted) || predicted <= 0) {
+    return fallback('appraised mileage far outside comparable listings — specialist review needed', { force: 'Low', extreme: true });
+  }
 
   // Confidence: needs a real fit AND the subject km near the comps.
   let confidence = 'High';
@@ -142,7 +158,7 @@ export function priceAtMileage(comps, subjectKm, medianMid) {
 
   return {
     price: predicted, basis: 'regression', confidence, slope,
-    compCount: n, kmInRange,
+    compCount: n, kmInRange, extreme,
     note: extreme
       ? 'appraised mileage is far outside comparable listings — value extrapolated, low confidence'
       : kmInRange ? 'mileage-matched to comparable market'
