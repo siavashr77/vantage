@@ -160,6 +160,41 @@ const logEvent = (field,newVal,user='Staff',old='') =>
 
 // ─── BLANK TEMPLATES ──────────────────────────────────────────────────
 const blankAppraisal = () => ({id:uid(),createdAt:new Date().toISOString(),updatedAt:new Date().toISOString(),status:'in_progress',disposition:'retail',source:'',appraiser:'',salesperson:'',vin:'',year:'',make:'',model:'',series:'',bodyType:'',engine:'',transmission:'',drivetrain:'',extColour:'',intColour:'',odometer:'',marketLow:null,marketMid:null,marketHigh:null,marketAvgPrice:null,marketDaysSupply:null,likeMineSupply:null,marketDataFetched:null,activeComps:null,avgDaysToSell:null,tires:'',paint:'',interior:'',mechanical:'',accidentVisible:false,reconCost:'',appraisedValue:'',profitObjective:'',targetGrossOverride:'',photos:[],notes:'',firstName:'',lastName:'',phone:'',email:'',address:'',postal:'',province:'',lienHolder:'',lienPayoff:'',comments:[],carfax:null,certCost:'',pack:'',finalizedAt:null,finalizedBy:null,log:[{ts:new Date().toISOString(),field:'AppraisalCreated',old:'',new:'In Progress',user:'System'}]});
+
+// ─── PERMISSIONS ──────────────────────────────────────────────────────
+// vAuto-style granular permissions, toggled per user in Settings. This is
+// UI-level gating (organizes workflow, prevents accidents) — NOT server-enforced
+// security, which comes with real auth in the backend phase.
+// Each: key, label, description, and whether it's an active gate or a parked
+// placeholder for future multi-store / marketplace features.
+const PERMISSIONS = [
+  {key:'base',          label:'Salesperson',                desc:'Basic access: create and edit appraisals, view inventory, work leads.', base:true},
+  {key:'finalize',      label:'Finalize appraisals',        desc:'Lock and finalize appraisals.'},
+  {key:'savePrices',    label:'Save vehicle prices',        desc:'Modify and save vehicle pricing in inventory.'},
+  {key:'reports',       label:'Dealer management',          desc:'View management reports.'},
+  {key:'sysAdmin',      label:'System Administrator',       desc:'Edit dealership configuration and settings.'},
+  {key:'userAdmin',     label:'User Administrator',         desc:'Create and manage users and their permissions.'},
+  {key:'carfax',        label:'Purchase Carfax reports',    desc:'Pull paid Carfax Canada history reports.'},
+  {key:'deleteInv',     label:'Delete inventory records',   desc:'Permanently delete inventory records.'},
+  // Parked placeholders — defined but inactive until the features exist.
+  {key:'wholesaleBuyer',label:'Wholesale Buyer',            desc:'View and buy off the wholesale trade network.', parked:true},
+  {key:'enterpriseXfer',label:'Enterprise Transfer Manager',desc:'Transfer vehicles between dealerships in a group; save and modify pricing.', parked:true},
+];
+const ALL_PERMISSION_KEYS = PERMISSIONS.map(p=>p.key);
+// Permissions are stored on the dealer as { [staffName]: { permKey: true, ... } }.
+// Anyone not listed (or with no map) gets FULL access — avoids locking out an
+// existing single-user setup. Once a user has an explicit entry, it's authoritative.
+function permsFor(dealer, userName){
+  const map = dealer?.permissions;
+  if(!map || !map[userName]) return null;        // null = no explicit entry → treat as full access
+  return map[userName];
+}
+function userCan(dealer, userName, permKey){
+  if(permKey==='base') return true;              // everyone has base access
+  const p = permsFor(dealer, userName);
+  if(p==null) return true;                       // no explicit perms set → full access (legacy/owner)
+  return !!p[permKey];
+}
 const blankVehicle = (a=null) => ({id:uid(),stockNumber:stockNum(),createdAt:new Date().toISOString(),updatedAt:new Date().toISOString(),status:'pending',disposition:'retail',fromAppraisalId:a?.id||null,vin:a?.vin||'',year:a?.year||'',make:a?.make||'',model:a?.model||'',series:a?.series||'',bodyType:a?.bodyType||'',engine:a?.engine||'',transmission:a?.transmission||'',drivetrain:a?.drivetrain||'',extColour:a?.extColour||'',intColour:a?.intColour||'',odometer:a?.odometer||'',listPrice:'',unitCost:a?.appraisedValue||'',reconCost:a?.reconCost||'',marketLow:a?.marketLow||null,marketMid:a?.marketMid||null,marketHigh:a?.marketHigh||null,marketAvgPrice:a?.marketAvgPrice||null,marketDaysSupply:a?.marketDaysSupply||null,likeMineSupply:a?.likeMineSupply||null,marketDataFetched:a?.marketDataFetched||null,activeComps:a?.activeComps||null,avgDaysToSell:a?.avgDaysToSell||null,_comps:a?._comps?[...a._comps]:null,_marketMeta:a?._marketMeta||null,_soldStats:a?._soldStats||null,_medianCompMileage:a?._medianCompMileage||a?.medianCompMileage||null,medianCompMileage:a?._medianCompMileage||a?.medianCompMileage||null,medianDaysListed:a?.medianDaysListed||null,marketDaySupply:a?.marketDaySupply||a?.marketDaysSupply||null,description:'',features:[...(a?.features||[])],damageFlags:[],photos:[...(a?.photos||[])],feeds:{autotrader:{active:false},cargurus:{active:false},website:{active:false},auction:{active:false}},log:[{ts:new Date().toISOString(),field:'VehicleCreated',old:'',new:a?'Created from appraisal':'Manual entry',user:'System'}],notes:a?.notes||'',carfax:a?.carfax||null});
 
 // ─── SEED DATA ────────────────────────────────────────────────────────
@@ -860,9 +895,11 @@ function Toast({message,type,onClose}) {
   const c={success:C.green,error:C.red,info:C.navy,warning:C.orange};
   return <div className="app-toast" style={{position:'fixed',bottom:24,right:24,background:C.navy,color:'#fff',borderRadius:8,padding:'12px 18px',display:'flex',alignItems:'center',gap:10,boxShadow:'0 8px 32px rgba(0,0,0,0.25)',zIndex:9999,maxWidth:340,borderLeft:`4px solid ${c[type]||C.teal}`}}><span style={{fontSize:13,flex:1}}>{message}</span><button onClick={onClose} style={{background:'none',border:'none',color:'rgba(255,255,255,0.5)',cursor:'pointer'}}><X size={14}/></button></div>;
 }
-function CarfaxBadge({carfax,onFetch,loading}) {
+function CarfaxBadge({carfax,onFetch,loading,canPull=true}) {
   if(loading) return <div style={{display:'inline-flex',alignItems:'center',gap:6,padding:'6px 12px',background:C.navyMuted,borderRadius:6,fontSize:12}}><RefreshCw size={12} color={C.navy} style={{animation:'spin 1s linear infinite'}}/>Fetching Carfax...</div>;
-  if(!carfax) return <button onClick={onFetch} style={{display:'inline-flex',alignItems:'center',gap:6,padding:'6px 14px',background:C.navy,color:'#fff',border:'none',borderRadius:6,fontSize:12,fontWeight:600,cursor:'pointer'}}><FileSearch size={13}/>Pull History Report</button>;
+  if(!carfax) return canPull
+    ? <button onClick={onFetch} style={{display:'inline-flex',alignItems:'center',gap:6,padding:'6px 14px',background:C.navy,color:'#fff',border:'none',borderRadius:6,fontSize:12,fontWeight:600,cursor:'pointer'}}><FileSearch size={13}/>Pull History Report</button>
+    : <div title="Requires the Purchase Carfax reports permission" style={{display:'inline-flex',alignItems:'center',gap:6,padding:'6px 14px',background:C.navyMuted,color:C.textLight,borderRadius:6,fontSize:12,fontWeight:600}}><FileSearch size={13}/>Carfax (no access)</div>;
   return (
     <div style={{background:carfax.clean?C.greenBg:C.redBg,border:`1px solid ${carfax.clean?C.green:C.red}`,borderRadius:8,padding:'10px 14px'}}>
       <div style={{display:'flex',alignItems:'center',gap:8,marginBottom:8}}>
@@ -1150,20 +1187,69 @@ function DealerSettings({dealer,onSave,showToast}) {
           </div>
         </Card>
 
-        {/* Staff / Users */}
+        {/* Staff / Users + Permissions */}
         <Card style={{padding:20,gridColumn:'1/-1'}}>
-          <div style={{fontWeight:700,fontSize:14,color:C.navy,marginBottom:4,display:'flex',alignItems:'center',gap:8}}><User size={15} color={C.navy}/>Staff</div>
-          <p style={{fontSize:12,color:C.textLight,marginBottom:14}}>These names appear in the top-bar user picker and are recorded on every change in the action log.</p>
-          <div style={{display:'flex',gap:6,flexWrap:'wrap',marginBottom:10}}>
+          <div style={{fontWeight:700,fontSize:14,color:C.navy,marginBottom:4,display:'flex',alignItems:'center',gap:8}}><User size={15} color={C.navy}/>Staff & Permissions</div>
+          <p style={{fontSize:12,color:C.textLight,marginBottom:14}}>These names appear in the top-bar user picker and are recorded on every change in the action log. Set what each person can do below. Anyone with no boxes checked has full access (so you're never locked out).</p>
+          <div style={{display:'flex',gap:6,flexWrap:'wrap',marginBottom:14}}>
             {(d.staff||[]).map((s,i)=>(
-              <span key={i} style={{background:C.navyMuted,color:C.navy,borderRadius:20,padding:'5px 12px',fontSize:13,display:'inline-flex',alignItems:'center',gap:6}}>{s}<button onClick={()=>set('staff',(d.staff||[]).filter((_,j)=>j!==i))} style={{background:'none',border:'none',color:C.navy,cursor:'pointer',padding:0,display:'flex'}}><X size={11}/></button></span>
+              <span key={i} style={{background:C.navyMuted,color:C.navy,borderRadius:20,padding:'5px 12px',fontSize:13,display:'inline-flex',alignItems:'center',gap:6}}>{s}<button onClick={()=>{const newStaff=(d.staff||[]).filter((_,j)=>j!==i);const newPerms={...(d.permissions||{})};delete newPerms[s];setD(p=>({...p,staff:newStaff,permissions:newPerms}));}} style={{background:'none',border:'none',color:C.navy,cursor:'pointer',padding:0,display:'flex'}}><X size={11}/></button></span>
             ))}
             {(!d.staff||d.staff.length===0)&&<span style={{fontSize:12,color:C.textLight}}>No staff added yet — defaults to Manager / Sales / Appraiser.</span>}
           </div>
-          <div style={{display:'flex',gap:8,maxWidth:360}}>
+          <div style={{display:'flex',gap:8,maxWidth:360,marginBottom:18}}>
             <input id="staff-add" placeholder="Add staff name, press Enter" onKeyDown={e=>{if(e.key==='Enter'&&e.target.value.trim()){set('staff',[...(d.staff||[]),e.target.value.trim()]);e.target.value='';e.preventDefault();}}} style={{flex:1,padding:'8px 12px',background:'#fff',border:`1px solid ${C.borderStr}`,borderRadius:6,fontSize:13,fontFamily:'inherit',outline:'none'}}/>
             <Btn variant="ghost" size="sm" onClick={()=>{const el=document.getElementById('staff-add');if(el?.value.trim()){set('staff',[...(d.staff||[]),el.value.trim()]);el.value='';}}}><Plus size={13}/>Add</Btn>
           </div>
+
+          {/* Permission matrix: staff (rows) × permissions (columns/checkboxes) */}
+          {(d.staff||[]).length>0&&(
+            <div style={{overflowX:'auto'}}>
+              <div style={{fontSize:12,fontWeight:700,color:C.textMid,marginBottom:10}}>Permissions</div>
+              {(d.staff||[]).map(name=>{
+                const userPerms=(d.permissions||{})[name];
+                const hasExplicit=!!userPerms;
+                const toggle=(key)=>{
+                  setD(p=>{
+                    const perms={...(p.permissions||{})};
+                    const cur={...(perms[name]||{})};
+                    if(cur[key]) delete cur[key]; else cur[key]=true;
+                    perms[name]=cur;
+                    return {...p,permissions:perms};
+                  });
+                };
+                const setFullAccess=()=>{
+                  setD(p=>{const perms={...(p.permissions||{})};delete perms[name];return {...p,permissions:perms};});
+                };
+                return (
+                  <div key={name} style={{border:`1px solid ${C.border}`,borderRadius:10,padding:14,marginBottom:10}}>
+                    <div style={{display:'flex',alignItems:'center',justifyContent:'space-between',marginBottom:10}}>
+                      <div style={{display:'flex',alignItems:'center',gap:8}}>
+                        <div style={{width:24,height:24,background:C.navy,borderRadius:6,display:'flex',alignItems:'center',justifyContent:'center'}}><span style={{fontSize:10,fontWeight:800,color:'#fff'}}>{name.split(' ').map(w=>w[0]).join('').slice(0,2).toUpperCase()}</span></div>
+                        <span style={{fontSize:14,fontWeight:700,color:C.navy}}>{name}</span>
+                        {!hasExplicit&&<span style={{fontSize:10,fontWeight:700,color:C.green,background:C.greenBg,padding:'2px 8px',borderRadius:20}}>FULL ACCESS</span>}
+                      </div>
+                      {hasExplicit&&<button onClick={setFullAccess} style={{background:'none',border:'none',color:C.teal,fontSize:11,fontWeight:600,cursor:'pointer',textDecoration:'underline'}}>Grant full access</button>}
+                    </div>
+                    <div style={{display:'grid',gridTemplateColumns:'repeat(auto-fill, minmax(240px, 1fr))',gap:8}}>
+                      {PERMISSIONS.filter(p=>!p.base).map(perm=>{
+                        const checked=hasExplicit?!!userPerms[perm.key]:true; // full access when no explicit map
+                        return (
+                          <label key={perm.key} title={perm.desc} style={{display:'flex',alignItems:'flex-start',gap:8,cursor:perm.parked?'not-allowed':'pointer',opacity:perm.parked?0.5:1,padding:'6px 8px',borderRadius:6,background:checked&&!perm.parked?C.tealMuted:'transparent'}}>
+                            <input type="checkbox" checked={checked} disabled={perm.parked} onChange={()=>!perm.parked&&toggle(perm.key)} style={{marginTop:2,cursor:perm.parked?'not-allowed':'pointer'}}/>
+                            <div>
+                              <div style={{fontSize:12,fontWeight:600,color:C.navy}}>{perm.label}{perm.parked&&<span style={{fontSize:9,color:C.textLight,marginLeft:5,fontWeight:400}}>(coming soon)</span>}</div>
+                              <div style={{fontSize:10,color:C.textLight,lineHeight:1.3}}>{perm.desc}</div>
+                            </div>
+                          </label>
+                        );
+                      })}
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          )}
         </Card>
 
         {/* Pricing Strategy — drives the Suggested Buy engine on appraisals */}
@@ -1235,6 +1321,19 @@ function DealerSettings({dealer,onSave,showToast}) {
 }
 
 // ─── DASHBOARD ────────────────────────────────────────────────────────
+// Shown when the acting user lacks permission for a gated page.
+function NoAccess({label,need}){
+  return (
+    <div style={{maxWidth:480,margin:'40px auto',textAlign:'center'}}>
+      <Card style={{padding:'40px 28px'}}>
+        <ShieldCheck size={32} color={C.navyBorder} style={{marginBottom:12}}/>
+        <div style={{fontSize:16,fontWeight:800,color:C.navy,marginBottom:6}}>{label} is restricted</div>
+        <div style={{fontSize:13,color:C.textMid,lineHeight:1.5}}>You don't have the <b>{need}</b> permission. Ask an administrator to grant it in Settings → Staff &amp; Permissions, or switch to a user who has access.</div>
+      </Card>
+    </div>
+  );
+}
+
 // ─── CUSTOMER LEADS INBOX ─────────────────────────────────────────────
 // Warm leads from the widget. Differentiated from regular appraisals and sorted
 // by urgency: specialist-needed first, then oldest-unworked (speed-to-lead).
@@ -1787,7 +1886,7 @@ function VehicleSummary({data,onEdit}){
 // brain (../shared/suggestedBuy.js) so this appraisal page and the customer
 // widget compute the IDENTICAL number. Imported at the top of this file.
 
-function AppraisalForm({initial,onSave,onBack,showToast,onConvert,onFinalize,onUnlock,user='Staff',onGetDealer,onCheckDup,onOpenExisting}) {
+function AppraisalForm({initial,onSave,onBack,showToast,onConvert,onFinalize,onUnlock,user='Staff',onGetDealer,onCheckDup,onOpenExisting,can=()=>true}) {
   const [a,setA]=useState(initial);
   const [vl,setVl]=useState(false);
   const [ml,setMl]=useState(false);
@@ -1947,7 +2046,7 @@ function AppraisalForm({initial,onSave,onBack,showToast,onConvert,onFinalize,onU
                 <Printer size={13}/>Consumer Offer
               </button>}
               <div style={{flex:1}}/>
-              {a.vin&&a.year&&a.appraisedValue&&<button onClick={doFinalize} style={{display:'flex',alignItems:'center',justifyContent:'center',gap:5,padding:'9px 14px',borderRadius:7,border:'none',background:C.navy,color:'#fff',fontSize:12,fontWeight:700,cursor:'pointer'}}>
+              {can('finalize')&&a.vin&&a.year&&a.appraisedValue&&<button onClick={doFinalize} style={{display:'flex',alignItems:'center',justifyContent:'center',gap:5,padding:'9px 14px',borderRadius:7,border:'none',background:C.navy,color:'#fff',fontSize:12,fontWeight:700,cursor:'pointer'}}>
                 <ShieldCheck size={13}/>Finalize
               </button>}
               {a.status!=='purchased'&&a.vin&&a.year&&<button onClick={()=>onConvert(aRef.current)} style={{display:'flex',alignItems:'center',justifyContent:'center',gap:5,padding:'9px 14px',borderRadius:7,border:'none',background:C.teal,color:'#fff',fontSize:12,fontWeight:700,cursor:'pointer'}}>
@@ -2131,7 +2230,7 @@ function AppraisalForm({initial,onSave,onBack,showToast,onConvert,onFinalize,onU
       </Sec>
 
       <Sec title="Vehicle History" icon={ShieldCheck} tone="purple" badge={a.carfax?(a.carfax.clean?'✓ Clean':'⚠ Issues Found'):'Not Pulled'}>
-        <CarfaxBadge carfax={a.carfax} onFetch={pullCarfax} loading={cl}/>
+        <CarfaxBadge carfax={a.carfax} onFetch={pullCarfax} loading={cl} canPull={can('carfax')}/>
       </Sec>
 
       <Sec title="Market Intelligence" icon={BarChart2} tone="blue" badge={a.marketMid?'Live Data':'No Data'}>
@@ -2648,7 +2747,7 @@ function InventoryList({vehicles,onAdd,onImport,onEdit}) {
 }
 
 // ─── VEHICLE DETAIL ───────────────────────────────────────────────────
-function VehicleDetail({vehicle:iv,onSave,onBack,showToast,onShowSticker=()=>{},onGetDealer,user='Staff'}) {
+function VehicleDetail({vehicle:iv,onSave,onBack,showToast,onShowSticker=()=>{},onGetDealer,user='Staff',can=()=>true}) {
   const [v,setV]=useState(iv);
   const [dl,setDl]=useState(false);const [ml,setMl]=useState(false);const [vl,setVl]=useState(false);const [cl,setCl]=useState(false);
   const [vehExpandedDetail,setVehExpandedDetail]=useState(!iv?.year);
@@ -2846,10 +2945,11 @@ function VehicleDetail({vehicle:iv,onSave,onBack,showToast,onShowSticker=()=>{},
               {[{f:'listPrice',l:'List Price ($)'},{f:'unitCost',l:'Unit Cost ($)'},{f:'reconCost',l:'Recon ($)'}].map(x=>(
                 <div key={x.f} style={{minWidth:0}}>
                   <label style={{display:'block',fontSize:10,fontWeight:600,color:x.f==='listPrice'?C.teal:C.textMid,marginBottom:4}}>{x.l}</label>
-                  <input type="number" value={v[x.f]||''} onChange={e=>up({[x.f]:e.target.value})} style={{width:'100%',padding:'8px 10px',background:'#fff',border:`1px solid ${C.borderStr}`,borderRadius:6,fontSize:13,color:C.textDark,fontFamily:'inherit',outline:'none',boxSizing:'border-box',fontWeight:x.f==='listPrice'?700:400}}/>
+                  <input type="number" value={v[x.f]||''} disabled={!can('savePrices')} title={!can('savePrices')?'Requires the Save vehicle prices permission':undefined} onChange={e=>up({[x.f]:e.target.value})} style={{width:'100%',padding:'8px 10px',background:can('savePrices')?'#fff':C.navyMuted,border:`1px solid ${C.borderStr}`,borderRadius:6,fontSize:13,color:can('savePrices')?C.textDark:C.textLight,fontFamily:'inherit',outline:'none',boxSizing:'border-box',fontWeight:x.f==='listPrice'?700:400,cursor:can('savePrices')?'text':'not-allowed'}}/>
                 </div>
               ))}
             </div>
+            {!can('savePrices')&&<div style={{fontSize:11,color:C.textLight,marginBottom:10,marginTop:-4}}>Pricing is read-only — requires the “Save vehicle prices” permission.</div>}
             {/* Suggested List Price — a SUGGESTION the dealer confirms (like the
                 appraisal amount), never auto-applied since it goes into a live ad. */}
             {v.suggestedListPrice>0&&String(v.listPrice||'')!==String(v.suggestedListPrice)&&(()=>{
@@ -2887,7 +2987,7 @@ function VehicleDetail({vehicle:iv,onSave,onBack,showToast,onShowSticker=()=>{},
           </Sec>
 
           <Sec title="Vehicle History" icon={ShieldCheck} tone="purple" badge={v.carfax?(v.carfax.clean?'✓ Clean':'⚠ Issues Found'):'Not Pulled'}>
-            <CarfaxBadge carfax={v.carfax} onFetch={pullCfx} loading={cl}/>
+            <CarfaxBadge carfax={v.carfax} onFetch={pullCfx} loading={cl} canPull={can('carfax')}/>
           </Sec>
 
           <Sec title="Market Intelligence" icon={BarChart2} tone="blue">
@@ -3248,6 +3348,8 @@ export default function Vantage() {
   // Staff list comes from dealer settings; falls back to a sensible default.
   const staff=(dealer.staff&&dealer.staff.length>0)?dealer.staff:['Manager','Sales','Appraiser'];
   const actingUser=currentUser||staff[0]||'Staff';
+  // Permission check for the current acting user (UI-level gating).
+  const can=useCallback((permKey)=>userCan(dealer,actingUser,permKey),[dealer,actingUser]);
 
   function handleScanVIN(vin) {
     // When scanner detects a VIN, start a new appraisal with it pre-filled
@@ -3495,7 +3597,7 @@ export default function Vantage() {
     showToast('Appraisal unlocked','info');
   }
 
-  const navItems=[{k:'dashboard',l:'Dashboard',I:LayoutDashboard},{k:'leads',l:'Leads',I:Zap,badge:leads.length||null,badgeColor:C.orange},{k:'appraisals',l:'Appraisals',I:ClipboardList,badge:appraisals.filter(a=>a.status==='in_progress').length||null},{k:'inventory',l:'Inventory',I:Package},{k:'reports',l:'Reports',I:BarChart2},{k:'settings',l:'Settings',I:Settings}];
+  const navItems=[{k:'dashboard',l:'Dashboard',I:LayoutDashboard},{k:'leads',l:'Leads',I:Zap,badge:leads.length||null,badgeColor:C.orange},{k:'appraisals',l:'Appraisals',I:ClipboardList,badge:appraisals.filter(a=>a.status==='in_progress').length||null},{k:'inventory',l:'Inventory',I:Package},...(can('reports')?[{k:'reports',l:'Reports',I:BarChart2}]:[]),...(can('sysAdmin')?[{k:'settings',l:'Settings',I:Settings}]:[])];
   const cur=page.split('_')[0];
 
   return (
@@ -3541,7 +3643,7 @@ export default function Vantage() {
                         {u}{u===actingUser&&<CheckCircle size={13} color={C.green} style={{marginLeft:'auto'}}/>}
                       </button>
                     ))}
-                    <button onClick={()=>{setShowUserMenu(false);nav('settings');}} style={{width:'100%',padding:'9px 12px',background:'none',border:'none',borderTop:`1px solid ${C.border}`,cursor:'pointer',textAlign:'left',fontSize:12,color:C.teal,fontWeight:600,fontFamily:'inherit',display:'flex',alignItems:'center',gap:6}}><Settings size={12}/>Manage staff</button>
+                    {(can('sysAdmin')||can('userAdmin'))&&<button onClick={()=>{setShowUserMenu(false);nav('settings');}} style={{width:'100%',padding:'9px 12px',background:'none',border:'none',borderTop:`1px solid ${C.border}`,cursor:'pointer',textAlign:'left',fontSize:12,color:C.teal,fontWeight:600,fontFamily:'inherit',display:'flex',alignItems:'center',gap:6}}><Settings size={12}/>Manage staff</button>}
                   </div>
                 </>
               )}
@@ -3586,13 +3688,13 @@ export default function Vantage() {
         {page==='dashboard'&&<Dashboard vehicles={vehicles} appraisals={appraisals} dealer={dealer} onNav={nav} onOpenVehicle={v=>{setActiveV({...v});goto('vehicle_detail',v);}} onOpenAppraisal={a=>{setActiveA({...a});goto('appraisal_form',a);}}/>}
         {page==='leads'&&<LeadsInbox leads={leads} loading={leadsLoading} onRefresh={loadLeads} onOpen={openLead} onDismiss={id=>updateLeadStatus(id,'dismissed')}/>}
         {page==='appraisals'&&<AppraisalList appraisals={appraisals} onNew={()=>nav('new_appraisal')} onEdit={a=>{setActiveA({...a});goto('appraisal_form',a);}}/>}
-        {page==='appraisal_form'&&activeA&&<AppraisalForm key={activeA.id} initial={activeA} user={actingUser} onSave={(a,silent=false)=>saveAppraisal(a,silent)} onBack={()=>goto('appraisals')} showToast={showToast} onConvert={convertToInventory} onFinalize={finalizeAppraisal} onUnlock={unlockAppraisal} onGetDealer={()=>dealer} onCheckDup={checkDuplicate} onOpenExisting={openExistingDup}/>}
+        {page==='appraisal_form'&&activeA&&<AppraisalForm key={activeA.id} initial={activeA} user={actingUser} can={can} onSave={(a,silent=false)=>saveAppraisal(a,silent)} onBack={()=>goto('appraisals')} showToast={showToast} onConvert={convertToInventory} onFinalize={finalizeAppraisal} onUnlock={unlockAppraisal} onGetDealer={()=>dealer} onCheckDup={checkDuplicate} onOpenExisting={openExistingDup}/>}
         {page==='inventory'&&<InventoryList vehicles={vehicles} onAdd={()=>nav('new_vehicle')} onImport={()=>setShowBulkImport(true)} onEdit={v=>{setActiveV({...v});goto('vehicle_detail',v);}}/>}
-        {page==='vehicle_detail'&&activeV&&<VehicleDetail key={activeV.id} vehicle={activeV} user={actingUser} onSave={saveVehicle} onBack={()=>goto('inventory')} showToast={showToast} onShowSticker={v=>{setActiveV(v);goto('sticker_detail',v);}} onGetDealer={()=>dealer}/>}
+        {page==='vehicle_detail'&&activeV&&<VehicleDetail key={activeV.id} vehicle={activeV} user={actingUser} can={can} onSave={saveVehicle} onBack={()=>goto('inventory')} showToast={showToast} onShowSticker={v=>{setActiveV(v);goto('sticker_detail',v);}} onGetDealer={()=>dealer}/>}
         {page==='stickers'&&<StickerGenerator vehicles={vehicles} dealer={dealer}/>}
         {page==='sticker_detail'&&activeV&&<div style={{maxWidth:700,margin:'0 auto'}}><StickerGenerator vehicles={vehicles} dealer={dealer} preselected={activeV.id} onBack={()=>goto('vehicle_detail',activeV)}/></div>}
-        {page==='reports'&&<ReportsPage vehicles={vehicles} appraisals={appraisals} dealer={dealer} showToast={showToast}/>}
-        {page==='settings'&&<DealerSettings dealer={dealer} onSave={saveDealer} showToast={showToast}/>}
+        {page==='reports'&&(can('reports')?<ReportsPage vehicles={vehicles} appraisals={appraisals} dealer={dealer} showToast={showToast}/>:<NoAccess label="Reports" need="Dealer management"/>)}
+        {page==='settings'&&(can('sysAdmin')?<DealerSettings dealer={dealer} onSave={saveDealer} showToast={showToast}/>:<NoAccess label="Settings" need="System Administrator"/>)}
       </div>
 
       {toast&&<Toast message={toast.message} type={toast.type} onClose={()=>setToast(null)}/>}
