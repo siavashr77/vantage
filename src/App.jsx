@@ -584,12 +584,15 @@ function CompSet({ comps, myPrice, myKm, myDays }) {
   const cell = {padding:'7px 12px'};
   const block = (heading, rows, mode, showMine, badge, secKey) => {
     const isOpen = !!openSec[secKey];
+    // Subtle identity per block: live listings (blue) vs recently sold (green),
+    // so the two comp tables are easy to tell apart at a glance.
+    const tint = mode==='sold' ? {bar:C.green,head:C.greenBg,ic:C.green} : {bar:C.blue,head:C.blueBg,ic:C.blue};
     return (
-    <div style={{background:'#fff',border:`1px solid ${C.border}`,borderRadius:10,overflow:'hidden',marginBottom:10}}>
-      <div onClick={()=>setOpenSec(s=>({...s,[secKey]:!s[secKey]}))} style={{padding:'10px 14px',borderBottom:isOpen?`1px solid ${C.border}`:'none',display:'flex',alignItems:'center',justifyContent:'space-between',gap:8,flexWrap:'wrap',cursor:'pointer',userSelect:'none'}}>
+    <div style={{background:'#fff',border:`1px solid ${C.border}`,borderLeft:`3px solid ${tint.bar}`,borderRadius:10,overflow:'hidden',marginBottom:10}}>
+      <div onClick={()=>setOpenSec(s=>({...s,[secKey]:!s[secKey]}))} style={{padding:'10px 14px',borderBottom:isOpen?`1px solid ${C.border}`:'none',display:'flex',alignItems:'center',justifyContent:'space-between',gap:8,flexWrap:'wrap',cursor:'pointer',userSelect:'none',background:tint.head}}>
         <div style={{display:'flex',alignItems:'center',gap:8}}>
-          <ChevronRight size={15} color={C.navy} style={{transform:isOpen?'rotate(90deg)':'none',transition:'transform 0.15s'}}/>
-          <span style={{fontWeight:700,fontSize:13,color:C.navy}}>{heading} <span style={{color:C.textLight,fontWeight:500}}>({rows.length})</span></span>
+          <ChevronRight size={15} color={tint.ic} style={{transform:isOpen?'rotate(90deg)':'none',transition:'transform 0.15s'}}/>
+          <span style={{fontWeight:700,fontSize:13,color:tint.ic}}>{heading} <span style={{color:C.textLight,fontWeight:500}}>({rows.length})</span></span>
         </div>
         {badge}
       </div>
@@ -798,13 +801,27 @@ function Field({label,children,half,third}) {
 function Card({children,style:sx={}}) {
   return <div style={{background:C.card,borderRadius:8,border:`1px solid ${C.border}`,boxShadow:'0 1px 4px rgba(0,0,0,0.06)',...sx}}>{children}</div>;
 }
-function Sec({title,icon:Icon,children,open:def=true,badge,accent}) {
+function Sec({title,icon:Icon,children,open:def=true,badge,accent,tone}) {
   const [o,setO]=useState(def);
+  // tone gives a section a subtle identity: a soft tinted header + a colored
+  // left edge, so sections are easy to tell apart without being loud.
+  const TONES={
+    navy:{bar:C.navy,head:C.navyMuted,ic:C.navy},
+    teal:{bar:C.teal,head:C.tealMuted,ic:C.teal},
+    purple:{bar:C.purple,head:C.purpleBg,ic:C.purple},
+    blue:{bar:C.blue,head:C.blueBg,ic:C.blue},
+    green:{bar:C.green,head:C.greenBg,ic:C.green},
+    orange:{bar:C.orange,head:C.orangeBg,ic:C.orange},
+  };
+  const t=tone&&TONES[tone];
+  const headBg=accent?C.navy:(t?t.head:'none');
+  const iconColor=accent?'#fff':(t?t.ic:C.navy);
+  const titleColor=accent?'#fff':(t?t.ic:C.textDark);
   return (
-    <Card style={{marginBottom:12,overflow:'hidden'}}>
-      <button onClick={()=>setO(!o)} style={{width:'100%',padding:'12px 16px',background:accent?C.navy:'none',border:'none',display:'flex',alignItems:'center',gap:8,cursor:'pointer',borderBottom:o?`1px solid ${C.border}`:'none'}}>
-        {Icon&&<Icon size={14} color={accent?'#fff':C.navy}/>}
-        <span style={{fontWeight:700,fontSize:13,color:accent?'#fff':C.textDark,flex:1,textAlign:'left'}}>{title}</span>
+    <Card style={{marginBottom:12,overflow:'hidden',...(t&&!accent?{borderLeft:`3px solid ${t.bar}`}:{})}}>
+      <button onClick={()=>setO(!o)} style={{width:'100%',padding:'12px 16px',background:headBg,border:'none',display:'flex',alignItems:'center',gap:8,cursor:'pointer',borderBottom:o?`1px solid ${C.border}`:'none'}}>
+        {Icon&&<Icon size={14} color={iconColor}/>}
+        <span style={{fontWeight:700,fontSize:13,color:titleColor,flex:1,textAlign:'left'}}>{title}</span>
         {badge&&<span style={{background:accent?'rgba(255,255,255,0.2)':C.navyMuted,color:accent?'#fff':C.navy,borderRadius:12,padding:'2px 10px',fontSize:11,fontWeight:600}}>{badge}</span>}
         {o?<ChevronUp size={13} color={accent?'rgba(255,255,255,0.6)':C.textLight}/>:<ChevronDown size={13} color={accent?'rgba(255,255,255,0.6)':C.textLight}/>}
       </button>
@@ -2010,11 +2027,11 @@ function AppraisalForm({initial,onSave,onBack,showToast,onConvert,onFinalize,onU
         </div>
       </Sec>
 
-      <Sec title="Vehicle History" icon={ShieldCheck} badge={a.carfax?(a.carfax.clean?'✓ Clean':'⚠ Issues Found'):'Not Pulled'}>
+      <Sec title="Vehicle History" icon={ShieldCheck} tone="purple" badge={a.carfax?(a.carfax.clean?'✓ Clean':'⚠ Issues Found'):'Not Pulled'}>
         <CarfaxBadge carfax={a.carfax} onFetch={pullCarfax} loading={cl}/>
       </Sec>
 
-      <Sec title="Market Intelligence" icon={BarChart2} badge={a.marketMid?'Live Data':'No Data'}>
+      <Sec title="Market Intelligence" icon={BarChart2} tone="blue" badge={a.marketMid?'Live Data':'No Data'}>
         {/* Competitive Criteria Controls */}
         <div style={{display:'flex',gap:10,marginBottom:12,flexWrap:'wrap',alignItems:'flex-end'}}>
           <div style={{minWidth:0}}>
@@ -2149,7 +2166,7 @@ function AppraisalForm({initial,onSave,onBack,showToast,onConvert,onFinalize,onU
         </div>
       </Sec>
 
-      <Sec title="Customer Information" icon={User} open={false}>
+      <Sec title="Customer Information" icon={User} tone="orange" open={false}>
         <div style={{display:'flex',flexWrap:'wrap',gap:10}}>
           <Field label="First Name" half><Input value={a.firstName} onChange={v=>set('firstName',v)} placeholder="John"/></Field>
           <Field label="Last Name" half><Input value={a.lastName} onChange={v=>set('lastName',v)} placeholder="Smith"/></Field>
@@ -2764,7 +2781,7 @@ function VehicleDetail({vehicle:iv,onSave,onBack,showToast,onShowSticker=()=>{},
         <div>
           {days>=30&&<div style={{background:C.redBg,border:`1px solid ${C.red}`,borderRadius:7,padding:'10px 14px',marginBottom:12,display:'flex',alignItems:'center',gap:8}}><AlertCircle size={14} color={C.red}/><span style={{fontSize:13,color:C.red,fontWeight:600}}>{days} days on lot — price review recommended</span></div>}
 
-          <Sec title="Vehicle History" icon={ShieldCheck} badge={v.carfax?(v.carfax.clean?'✓ Clean':'⚠ Issues Found'):'Not Pulled'}>
+          <Sec title="Vehicle History" icon={ShieldCheck} tone="purple" badge={v.carfax?(v.carfax.clean?'✓ Clean':'⚠ Issues Found'):'Not Pulled'}>
             <CarfaxBadge carfax={v.carfax} onFetch={pullCfx} loading={cl}/>
           </Sec>
 
