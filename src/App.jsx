@@ -168,7 +168,11 @@ const SEED = [
   {id:'v4',stockNumber:'V44829',createdAt:new Date(Date.now()-45*86400000).toISOString(),updatedAt:new Date().toISOString(),status:'available',disposition:'retail',vin:'WBA5R1C57KAK12345',year:'2019',make:'BMW',model:'3 Series',series:'330i',bodyType:'Sedan',engine:'2.0L 4-Cylinder Turbo',transmission:'Automatic',drivetrain:'RWD',extColour:'Alpine White',intColour:'Black Leather',odometer:'61800',listPrice:'38200',unitCost:'29500',reconCost:'1500',marketLow:33000,marketMid:37500,marketHigh:42000,marketDataFetched:new Date().toISOString(),activeComps:28,avgDaysToSell:35,description:'',features:['iDrive Navigation','Heated Seats','Sport Package','Sunroof','Parking Sensors'],photos:[],feeds:{autotrader:{active:true},cargurus:{active:true},website:{active:true},auction:{active:false}},log:[],notes:'',carfax:null},
 ];
 
-const DEFAULT_DEALER = {name:'Your Dealership',logo:null,address:'123 Main Street',city:'Toronto',province:'ON',postal:'M5V 3K4',phone:'416-555-0100',email:'info@yourdealership.ca',website:'www.yourdealership.ca',staff:['Manager','Sales','Appraiser']};
+const DEFAULT_DEALER = {name:'Your Dealership',logo:null,address:'123 Main Street',city:'Toronto',province:'ON',postal:'M5V 3K4',phone:'416-555-0100',email:'info@yourdealership.ca',website:'www.yourdealership.ca',staff:['Manager','Sales','Appraiser'],
+  // Appraisal pricing strategy (drives the Suggested Buy engine)
+  marketPositionPct:97,   // where the dealer wants to retail vs. market mid (e.g. 97%)
+  targetGross:2500,       // base front-end gross target ($)
+  avgRecon:1500};         // default recon if none entered on the appraisal ($)
 
 // ─── API CALLS ────────────────────────────────────────────────────────
 // Backend base URL. In production set VITE_API_URL (e.g. your Railway URL,
@@ -1066,6 +1070,29 @@ function DealerSettings({dealer,onSave,showToast}) {
           </div>
         </Card>
 
+        {/* Pricing Strategy — drives the Suggested Buy engine on appraisals */}
+        <Card style={{padding:20,gridColumn:'1/-1'}}>
+          <div style={{fontWeight:700,fontSize:14,color:C.navy,marginBottom:4,display:'flex',alignItems:'center',gap:8}}><Sparkles size={15} color={C.navy}/>Pricing Strategy</div>
+          <p style={{fontSize:12,color:C.textLight,marginBottom:14}}>These drive the <strong>Suggested Buy</strong> price on every appraisal — the tool works backward from your target retail to a recommended purchase price. Always a suggestion you can override.</p>
+          <div style={{display:'flex',gap:16,flexWrap:'wrap'}}>
+            <div style={{flex:1,minWidth:180}}>
+              <Field label="Retail Market Position (%)"><Input value={d.marketPositionPct??97} onChange={v=>set('marketPositionPct',v)} type="number"/></Field>
+              <div style={{fontSize:10.5,color:C.textLight,marginTop:3,lineHeight:1.4}}>Where you price retail vs. market mid. 97% = just under mid. Lower = more aggressive pricing.</div>
+            </div>
+            <div style={{flex:1,minWidth:180}}>
+              <Field label="Target Gross ($)"><Input value={d.targetGross??2500} onChange={v=>set('targetGross',v)} type="number"/></Field>
+              <div style={{fontSize:10.5,color:C.textLight,marginTop:3,lineHeight:1.4}}>Base front-end gross you aim for. Auto-widens on slow-moving vehicles.</div>
+            </div>
+            <div style={{flex:1,minWidth:180}}>
+              <Field label="Average Recon ($)"><Input value={d.avgRecon??1500} onChange={v=>set('avgRecon',v)} type="number"/></Field>
+              <div style={{fontSize:10.5,color:C.textLight,marginTop:3,lineHeight:1.4}}>Used when no recon is entered on an appraisal. Auto-bumps for luxury makes.</div>
+            </div>
+          </div>
+          <div style={{marginTop:12,padding:'10px 12px',background:C.tealMuted,borderRadius:6,border:`1px solid ${C.teal}`,fontSize:11,color:C.textMid,lineHeight:1.5}}>
+            <strong style={{color:C.teal}}>How it works:</strong> Suggested Buy = (market mid × your position %) − target gross − recon − costs. Slow markets raise the gross; luxury makes raise the recon; reported history issues lower the number. Carfax is factored in once connected.
+          </div>
+        </Card>
+
         {/* API Settings */}
         <Card style={{padding:20,gridColumn:'1/-1'}}>
           <div style={{fontWeight:700,fontSize:14,color:C.navy,marginBottom:14,display:'flex',alignItems:'center',gap:8}}><Zap size={15} color={C.navy}/>API Integrations</div>
@@ -1535,6 +1562,75 @@ function VehicleSummary({data,onEdit}){
   )
 }
 
+// ── Suggested Buy engine (rules-based v1) ──────────────────────────────────
+// Appraises BACKWARD from the dealer's target retail position to a suggested
+// purchase price, and returns a plain-English rationale. Deterministic math —
+// no AI call. The dealer's strategy lives in dealer settings; everything is a
+// SUGGESTION the user can override.
+const LUXURY_MAKES = new Set(['land rover','range rover','jaguar','bmw','mercedes-benz','mercedes','audi','porsche','lexus','infiniti','acura','cadillac','volvo','genesis','maserati','bentley','tesla','lincoln','alfa romeo']);
+function computeSuggestedBuy(a, dealer) {
+  const mid = Number(a.marketMid);
+  if (!mid || mid <= 0) return null;
+  const d = dealer || {};
+  const positionPct = Number(d.marketPositionPct) || 97;
+  const baseGross = Number(d.targetGross) || 2500;
+  // Recon: use what's entered on the appraisal; else the dealer's average.
+  const reconEntered = a.reconCost !== '' && a.reconCost != null;
+  let recon = reconEntered ? Number(a.reconCost) : (Number(d.avgRecon) || 0);
+  const otherCosts = Number(a.certCost || 0) + Number(a.pack || 0);
+
+  const reasons = [];
+
+  // 1) Target retail = market mid × dealer's position.
+  const targetRetail = Math.round(mid * (positionPct / 100));
+  reasons.push(`Retail target ${fmt(targetRetail)} (${positionPct}% of market mid ${fmt(mid)})`);
+
+  // 2) Margin scales with how slow the segment is moving. More day-supply =
+  //    longer hold = demand more gross to cover carrying cost.
+  let gross = baseGross;
+  const mds = Number(a.marketDaysSupply);
+  if (Number.isFinite(mds) && mds > 0) {
+    if (mds >= 90) { gross = baseGross + 1500; reasons.push(`+$1,500 gross — slow market (${mds}-day supply), longer hold`); }
+    else if (mds >= 60) { gross = baseGross + 1000; reasons.push(`+$1,000 gross — softer market (${mds}-day supply)`); }
+    else if (mds <= 30) { gross = Math.max(1000, baseGross - 500); reasons.push(`−$500 gross — fast mover (${mds}-day supply), turns quickly`); }
+  }
+
+  // 3) Luxury makes carry more reconditioning risk. If the user hasn't entered
+  //    their own recon, bump the assumed recon (and flag it either way).
+  const isLux = LUXURY_MAKES.has(String(a.make || '').toLowerCase());
+  if (isLux) {
+    if (!reconEntered) { recon = Math.max(recon, 2500); reasons.push(`Recon assumed ${fmt(recon)} — luxury make, higher recon risk`); }
+    else { reasons.push('Luxury make — verify recon covers higher parts/labour'); }
+  }
+
+  // 4) Carfax (when present): reported accidents/issues pull the buy down.
+  let historyAdj = 0;
+  if (a.carfax && a.carfax.clean === false) {
+    historyAdj = -Math.round(targetRetail * 0.05);
+    reasons.push(`${fmt(historyAdj)} — reported history issues (Carfax)`);
+  }
+
+  // Suggested buy = retail − gross − recon − other costs + history adj.
+  const suggested = Math.round(targetRetail - gross - recon - otherCosts + historyAdj);
+  if (suggested <= 0) return null;
+
+  return {
+    suggested,
+    targetRetail,
+    gross,
+    recon,
+    reasons,
+    confidence: confidenceFrom(a),
+  };
+}
+// Confidence from comp depth + data quality.
+function confidenceFrom(a) {
+  const n = Number(a.activeComps) || (a._comps ? a._comps.length : 0);
+  if (n >= 12) return 'High';
+  if (n >= 6) return 'Medium';
+  return 'Low';
+}
+
 function AppraisalForm({initial,onSave,onBack,showToast,onConvert,onFinalize,onUnlock,user='Staff',onGetDealer}) {
   const [a,setA]=useState(initial);
   const [vl,setVl]=useState(false);
@@ -1791,6 +1887,31 @@ function AppraisalForm({initial,onSave,onBack,showToast,onConvert,onFinalize,onU
           <Field label="Your Offer / Appraised Value"><Input value={a.appraisedValue} onChange={v=>set('appraisedValue',v)} type="number" placeholder="Enter your offer" style={{fontSize:15,fontWeight:700}}/></Field>
           <Field label="Offer Valid Until"><Input value={a.offerExpiry||''} onChange={v=>set('offerExpiry',v)} type="date"/>{a.offerExpiry&&<div style={{fontSize:9,color:C.textLight,marginTop:2}}>Expires {fmtDate(a.offerExpiry)}</div>}</Field>
         </div>
+        {/* Suggested Buy — appears once market data is loaded, before/after the
+            user enters their own offer. Always a suggestion; user decides. */}
+        {a.marketMid&&(()=>{
+          const dealer=onGetDealer?onGetDealer():DEFAULT_DEALER;
+          const sb=computeSuggestedBuy(a,dealer);
+          if(!sb) return null;
+          const confColor=sb.confidence==='High'?C.green:sb.confidence==='Medium'?C.navy:C.orange;
+          return(
+            <div style={{marginBottom:12,background:C.tealMuted,border:`1px solid ${C.teal}`,borderRadius:10,padding:'12px 14px'}}>
+              <div style={{display:'flex',alignItems:'center',justifyContent:'space-between',flexWrap:'wrap',gap:8}}>
+                <div style={{display:'flex',alignItems:'center',gap:8}}>
+                  <Sparkles size={15} color={C.teal}/>
+                  <span style={{fontSize:11,fontWeight:800,color:C.teal,textTransform:'uppercase',letterSpacing:0.5}}>Suggested Buy</span>
+                  <span style={{fontSize:9,fontWeight:700,color:confColor,background:'#fff',border:`1px solid ${confColor}`,borderRadius:10,padding:'1px 7px'}}>{sb.confidence} confidence</span>
+                </div>
+                <span style={{fontSize:20,fontWeight:800,color:C.teal,fontFamily:'monospace'}}>{fmt(sb.suggested)}</span>
+              </div>
+              <div style={{marginTop:8,display:'flex',flexDirection:'column',gap:3}}>
+                {sb.reasons.map((r,i)=><div key={i} style={{fontSize:11,color:C.textMid,display:'flex',gap:6,lineHeight:1.4}}><span style={{color:C.teal,flexShrink:0}}>·</span><span>{r}</span></div>)}
+              </div>
+              {(!a.appraisedValue)&&<button onClick={()=>set('appraisedValue',String(sb.suggested))} style={{marginTop:10,background:C.teal,color:'#fff',border:'none',borderRadius:7,padding:'8px 14px',fontSize:12,fontWeight:700,cursor:'pointer'}}>Use this offer →</button>}
+              <div style={{marginTop:8,fontSize:9.5,color:C.textLight,fontStyle:'italic'}}>A suggestion based on your pricing strategy and current market — adjust as you see fit.</div>
+            </div>
+          );
+        })()}
         {a.appraisedValue&&a.marketMid&&(()=>{
           const totalCost=Number(a.appraisedValue)+Number(a.reconCost||0)+Number(a.certCost||0)+Number(a.pack||0);
           const adjPct=Math.round((totalCost/Number(a.marketMid))*100);
