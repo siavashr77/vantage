@@ -1,1 +1,5 @@
-/*    /index.html   200
+# Widget standalone page (must come BEFORE the SPA catch-all)
+/widget        /widget.html   200
+/widget.html   /widget.html   200
+# Main app SPA fallback
+/*             /index.html    200
