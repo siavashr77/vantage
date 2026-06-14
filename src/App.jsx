@@ -157,7 +157,7 @@ const logEvent = (field,newVal,user='Staff',old='') =>
   ({ts:new Date().toISOString(),field,old,new:newVal,user});
 
 // ─── BLANK TEMPLATES ──────────────────────────────────────────────────
-const blankAppraisal = () => ({id:uid(),createdAt:new Date().toISOString(),updatedAt:new Date().toISOString(),status:'in_progress',disposition:'retail',source:'',appraiser:'',salesperson:'',vin:'',year:'',make:'',model:'',series:'',bodyType:'',engine:'',transmission:'',drivetrain:'',extColour:'',intColour:'',odometer:'',marketLow:null,marketMid:null,marketHigh:null,marketAvgPrice:null,marketDaysSupply:null,likeMineSupply:null,marketDataFetched:null,activeComps:null,avgDaysToSell:null,tires:'',paint:'',interior:'',mechanical:'',accidentVisible:false,reconCost:'',appraisedValue:'',profitObjective:'',photos:[],notes:'',firstName:'',lastName:'',phone:'',email:'',address:'',postal:'',province:'',lienHolder:'',lienPayoff:'',comments:[],carfax:null,certCost:'',pack:'',finalizedAt:null,finalizedBy:null,log:[{ts:new Date().toISOString(),field:'AppraisalCreated',old:'',new:'In Progress',user:'System'}]});
+const blankAppraisal = () => ({id:uid(),createdAt:new Date().toISOString(),updatedAt:new Date().toISOString(),status:'in_progress',disposition:'retail',source:'',appraiser:'',salesperson:'',vin:'',year:'',make:'',model:'',series:'',bodyType:'',engine:'',transmission:'',drivetrain:'',extColour:'',intColour:'',odometer:'',marketLow:null,marketMid:null,marketHigh:null,marketAvgPrice:null,marketDaysSupply:null,likeMineSupply:null,marketDataFetched:null,activeComps:null,avgDaysToSell:null,tires:'',paint:'',interior:'',mechanical:'',accidentVisible:false,reconCost:'',appraisedValue:'',profitObjective:'',targetGrossOverride:'',photos:[],notes:'',firstName:'',lastName:'',phone:'',email:'',address:'',postal:'',province:'',lienHolder:'',lienPayoff:'',comments:[],carfax:null,certCost:'',pack:'',finalizedAt:null,finalizedBy:null,log:[{ts:new Date().toISOString(),field:'AppraisalCreated',old:'',new:'In Progress',user:'System'}]});
 const blankVehicle = (a=null) => ({id:uid(),stockNumber:stockNum(),createdAt:new Date().toISOString(),updatedAt:new Date().toISOString(),status:'pending',disposition:'retail',fromAppraisalId:a?.id||null,vin:a?.vin||'',year:a?.year||'',make:a?.make||'',model:a?.model||'',series:a?.series||'',bodyType:a?.bodyType||'',engine:a?.engine||'',transmission:a?.transmission||'',drivetrain:a?.drivetrain||'',extColour:a?.extColour||'',intColour:a?.intColour||'',odometer:a?.odometer||'',listPrice:'',unitCost:a?.appraisedValue||'',reconCost:a?.reconCost||'',marketLow:a?.marketLow||null,marketMid:a?.marketMid||null,marketHigh:a?.marketHigh||null,marketAvgPrice:a?.marketAvgPrice||null,marketDaysSupply:a?.marketDaysSupply||null,likeMineSupply:a?.likeMineSupply||null,marketDataFetched:a?.marketDataFetched||null,activeComps:a?.activeComps||null,avgDaysToSell:a?.avgDaysToSell||null,description:'',features:[...(a?.features||[])],photos:[...(a?.photos||[])],feeds:{autotrader:{active:false},cargurus:{active:false},website:{active:false},auction:{active:false}},log:[{ts:new Date().toISOString(),field:'VehicleCreated',old:'',new:a?'Created from appraisal':'Manual entry',user:'System'}],notes:a?.notes||'',carfax:a?.carfax||null});
 
 // ─── SEED DATA ────────────────────────────────────────────────────────
@@ -1573,7 +1573,10 @@ function computeSuggestedBuy(a, dealer) {
   if (!mid || mid <= 0) return null;
   const d = dealer || {};
   const positionPct = Number(d.marketPositionPct) || 97;
-  const baseGross = Number(d.targetGross) || 2500;
+  // Per-appraisal override takes priority over the dealer default — lets the
+  // appraiser demand a higher gross on expensive/slow units.
+  const overrideGross = a.targetGrossOverride !== '' && a.targetGrossOverride != null ? Number(a.targetGrossOverride) : null;
+  const baseGross = overrideGross != null && overrideGross > 0 ? overrideGross : (Number(d.targetGross) || 2500);
   // Recon: use what's entered on the appraisal; else the dealer's average.
   const reconEntered = a.reconCost !== '' && a.reconCost != null;
   let recon = reconEntered ? Number(a.reconCost) : (Number(d.avgRecon) || 0);
@@ -1588,6 +1591,9 @@ function computeSuggestedBuy(a, dealer) {
   // 2) Margin scales with how slow the segment is moving. More day-supply =
   //    longer hold = demand more gross to cover carrying cost.
   let gross = baseGross;
+  if (overrideGross != null && overrideGross > 0) {
+    reasons.push(`Using your ${fmt(overrideGross)} target gross (override)`);
+  }
   const mds = Number(a.marketDaysSupply);
   if (Number.isFinite(mds) && mds > 0) {
     if (mds >= 90) { gross = baseGross + 1500; reasons.push(`+$1,500 gross — slow market (${mds}-day supply), longer hold`); }
@@ -1884,6 +1890,7 @@ function AppraisalForm({initial,onSave,onBack,showToast,onConvert,onFinalize,onU
           <Field label="Recon Cost ($)"><Input value={a.reconCost} onChange={v=>set('reconCost',v)} type="number" /></Field>
           <Field label="Cert / Transport ($)"><Input value={a.certCost||''} onChange={v=>set('certCost',v)} type="number" /></Field>
           <Field label="Pack ($)"><Input value={a.pack||''} onChange={v=>set('pack',v)} type="number" /></Field>
+          <Field label="Target Gross Override ($)"><Input value={a.targetGrossOverride||''} onChange={v=>set('targetGrossOverride',v)} type="number" placeholder="optional"/><div style={{fontSize:9,color:C.textLight,marginTop:2,lineHeight:1.3}}>Override the gross for this car. Pricier units usually warrant more — unless they turn fast (e.g. Toyota/Lexus).</div></Field>
           <Field label="Your Offer / Appraised Value"><Input value={a.appraisedValue} onChange={v=>set('appraisedValue',v)} type="number" placeholder="Enter your offer" style={{fontSize:15,fontWeight:700}}/></Field>
           <Field label="Offer Valid Until"><Input value={a.offerExpiry||''} onChange={v=>set('offerExpiry',v)} type="date"/>{a.offerExpiry&&<div style={{fontSize:9,color:C.textLight,marginTop:2}}>Expires {fmtDate(a.offerExpiry)}</div>}</Field>
         </div>
