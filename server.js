@@ -57,11 +57,25 @@ if (DATABASE_URL) {
     offer_breakdown JSONB,
     market_mid INTEGER,
     confidence TEXT,
+    thin_market BOOLEAN DEFAULT false,
     status TEXT DEFAULT 'pending',
     source TEXT DEFAULT 'widget',
     created_at TIMESTAMPTZ DEFAULT now()
   )`).then(() => console.log('   Customer leads: Postgres ready ✅'))
     .catch(e => console.error('Leads table init error:', e.message))
+
+  // Add columns that may not exist on an already-created table (safe, idempotent).
+  pool.query(`ALTER TABLE pending_leads ADD COLUMN IF NOT EXISTS thin_market BOOLEAN DEFAULT false`)
+    .catch(e => console.error('Leads alter error:', e.message))
+
+  // 24h market cache — keyed by VIN-or-spec + FSA. Lets the widget return an
+  // instant offer (and the prefetch warm it) without re-paginating VinAudit.
+  pool.query(`CREATE TABLE IF NOT EXISTS market_cache (
+    cache_key TEXT PRIMARY KEY,
+    market JSONB NOT NULL,
+    cached_at TIMESTAMPTZ DEFAULT now()
+  )`).then(() => console.log('   Market cache: Postgres ready ✅'))
+    .catch(e => console.error('Market cache init error:', e.message))
 } else {
   console.log('   Dealer-fee ledger: no DATABASE_URL — fee history disabled')
 }
@@ -968,7 +982,51 @@ const WIDGET_DEALER = { marketPositionPct: 97, targetGross: 2500, avgRecon: 1500
 
 // Fetch market mid + MDS + comp count for a VIN or spec, reusing the same
 // VinAudit path as /api/market. Returns { mid, mds, compCount } or null.
-async function marketForLead({ vin, specId, postal }) {
+
+// ── 24h market cache (Postgres-backed) ──
+const MARKET_CACHE_TTL_HOURS = 24
+// Build a stable cache key from VIN-or-spec + FSA (first 3 of postal). FSA-level
+// keying means nearby customers share a warm entry and the comp set is the same.
+function marketCacheKey({ vin, specId, postal }) {
+  const fsa = (postal || '').toString().toUpperCase().replace(/\s+/g, '').slice(0, 3)
+  const subject = vin && vin.length === 17 ? `vin:${vin}` : `spec:${specId || ''}`
+  return `${subject}|${fsa}`
+}
+async function getCachedMarket(key) {
+  if (!pool) return null
+  try {
+    const r = await pool.query(
+      `SELECT market FROM market_cache
+       WHERE cache_key = $1 AND cached_at > now() - interval '${MARKET_CACHE_TTL_HOURS} hours'`,
+      [key]
+    )
+    return r.rows[0]?.market || null
+  } catch (e) { console.error('getCachedMarket error:', e.message); return null }
+}
+async function setCachedMarket(key, market) {
+  if (!pool || !market) return
+  try {
+    await pool.query(
+      `INSERT INTO market_cache(cache_key, market, cached_at)
+       VALUES($1, $2, now())
+       ON CONFLICT (cache_key) DO UPDATE SET market = $2, cached_at = now()`,
+      [key, JSON.stringify(market)]
+    )
+  } catch (e) { console.error('setCachedMarket error:', e.message) }
+}
+
+// Cached wrapper: returns { mid, mds, compCount, _cached } or null. Hits the
+// 24h cache first; on miss, runs the full (unlimited, accurate) fetch and stores.
+async function marketForLead(args) {
+  const key = marketCacheKey(args)
+  const hit = await getCachedMarket(key)
+  if (hit) return { ...hit, _cached: true }
+  const fresh = await marketForLeadRaw(args)
+  if (fresh) await setCachedMarket(key, fresh)
+  return fresh ? { ...fresh, _cached: false } : null
+}
+
+async function marketForLeadRaw({ vin, specId, postal }) {
   const radius = 6000  // national — widest net for an instant consumer offer
   let match = 'trim', active = [], dropped = []
   try {
@@ -1066,6 +1124,11 @@ app.post('/api/leads', async (req, res) => {
     const deduction = accidentDeduction(accident, accidentAmount)
     const offer = Math.max(0, sb.suggested - deduction)
     const confidence = confidenceFromCount(market.compCount)
+    // Thin-market gate: below MIN_OFFER_COMPS active comps the number is too
+    // volatile to show a customer. We still compute + persist it (your team sees
+    // it internally) but the widget gets a "specialist will follow up" message.
+    const MIN_OFFER_COMPS = 6
+    const thinMarket = (Number(market.compCount) || 0) < MIN_OFFER_COMPS
 
     const breakdown = {
       reasons: sb.reasons,
@@ -1087,12 +1150,12 @@ app.post('/api/leads', async (req, res) => {
           `INSERT INTO pending_leads
             (dealer_key,vin,year,make,model,trim,odometer,postal,accident,accident_amount,
              customer_name,customer_email,customer_phone,offer_amount,base_offer,accident_deduction,
-             offer_breakdown,market_mid,confidence,status,source)
-           VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,'pending','widget')
+             offer_breakdown,market_mid,confidence,thin_market,status,source)
+           VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,'pending','widget')
            RETURNING id`,
           [(b.dealer || '').toString().trim(), vin, year, make, model, trim, odometer, postal,
            accident, accidentAmount, name, email, phone, offer, sb.suggested, deduction,
-           JSON.stringify(breakdown), market.mid, confidence]
+           JSON.stringify(breakdown), market.mid, confidence, thinMarket]
         )
         leadId = ins.rows[0]?.id || null
       } catch (e) { console.error('lead insert error:', e.message) }
@@ -1102,13 +1165,57 @@ app.post('/api/leads', async (req, res) => {
       success: true,
       leadId,
       persisted: !!leadId,
-      offer,
+      thinMarket,
+      // When the market is too thin to show a reliable number, withhold the
+      // offer and signal the widget to display the specialist-follow-up message.
+      offer: thinMarket ? null : offer,
       confidence,
+      message: thinMarket
+        ? "The market for your vehicle is limited right now, so we want a specialist to give you an accurate offer. Someone will be in touch shortly."
+        : undefined,
       vehicle: { year, make, model, trim, vin: vin || null },
     })
   } catch (err) {
     console.error('POST /api/leads error:', err.message)
     res.status(500).json({ error: 'Could not process this request. Please try again.' })
+  }
+})
+
+// POST /api/offer/prefetch — warm the 24h market cache for a VIN-or-spec + postal
+// WITHOUT creating a lead or computing a final offer. The widget fires this as
+// soon as it has the vehicle + location, so the heavy VinAudit fetch overlaps
+// with the customer filling in the rest of the form → instant offer at submit.
+app.post('/api/offer/prefetch', async (req, res) => {
+  try {
+    const b = req.body || {}
+    const vin = (b.vin || '').toString().toUpperCase().trim()
+    const postal = (b.postal || '').toString().trim()
+    if (!postal) return res.status(400).json({ error: 'postal required' })
+
+    const year = (b.year || '').toString().trim()
+    const make = (b.make || '').toString().trim()
+    const model = (b.model || '').toString().trim()
+    const trim = (b.trim || '').toString().trim()
+    const specId = !vin
+      ? [year, make, model, trim].filter(Boolean).map(s => s.toLowerCase().replace(/\s+/g, '-')).join('_')
+      : null
+    if (vin.length !== 17 && !(year && make && model)) {
+      return res.status(400).json({ error: 'Provide a VIN, or year + make + model' })
+    }
+
+    // Respond immediately; warm the cache in the background so the widget isn't
+    // blocked. If already cached, this is a no-op cache hit.
+    const args = { vin: vin.length === 17 ? vin : undefined, specId, postal }
+    const key = marketCacheKey(args)
+    const already = await getCachedMarket(key)
+    if (already) return res.json({ success: true, warmed: true, cached: true })
+
+    // Fire-and-forget the heavy fetch; don't await before responding.
+    marketForLead(args).catch(e => console.error('prefetch warm error:', e.message))
+    res.json({ success: true, warmed: true, cached: false })
+  } catch (err) {
+    console.error('POST /api/offer/prefetch error:', err.message)
+    res.status(500).json({ error: 'prefetch failed' })
   }
 })
 
@@ -1154,7 +1261,8 @@ app.get('/api/health', (req, res) => {
     vinDecode: 'NHTSA — free',
     marketData: VINAUDIT_KEY && VINAUDIT_KEY !== 'YOUR_VINAUDIT_API_KEY_HERE' ? 'configured' : 'not configured',
     aiDescriptions: ANTHROPIC_KEY && ANTHROPIC_KEY !== 'YOUR_ANTHROPIC_API_KEY_HERE' ? 'configured' : 'not configured',
-    leadsDb: LEADS_DB ? 'connected (DATABASE_URL present)' : 'NOT connected — attach Postgres in Railway to persist leads'
+    leadsDb: LEADS_DB ? 'connected (DATABASE_URL present)' : 'NOT connected — attach Postgres in Railway to persist leads',
+    marketCache: LEADS_DB ? `enabled (${MARKET_CACHE_TTL_HOURS}h TTL)` : 'disabled (no DB)'
   })
 })
 
