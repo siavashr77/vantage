@@ -1118,6 +1118,14 @@ app.post('/api/leads', async (req, res) => {
       customerMessage = "The market for your vehicle is limited right now, so we want a specialist to give you an accurate offer. Someone will be in touch shortly."
     }
 
+    // On LOW-confidence offers (data's a bit thin but km is normal) we present a
+    // ±3% RANGE instead of a single number — honest about the uncertainty without
+    // killing the lead. High/Medium confidence show the precise number.
+    let offerRange = null
+    if (!withhold && confidence === 'Low' && offer > 0) {
+      offerRange = { low: Math.round(offer * 0.97), high: Math.round(offer * 1.03) }
+    }
+
     res.json({
       success: true,
       leadId,
@@ -1125,9 +1133,11 @@ app.post('/api/leads', async (req, res) => {
       thinMarket,
       extremeKm,
       withheld: withhold,
-      // When a gate trips, withhold the offer and give the widget the reason.
-      offer: withhold ? null : offer,
       confidence,
+      // When a gate trips → no number (specialist message). Low confidence → a
+      // ±3% range. Otherwise → a single precise offer.
+      offer: withhold ? null : (offerRange ? null : offer),
+      offerRange,
       message: customerMessage,
       vehicle: { year, make, model, trim, vin: vin || null },
     })
