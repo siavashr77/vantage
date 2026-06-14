@@ -1064,32 +1064,32 @@ app.post('/api/leads', async (req, res) => {
       market = await marketForLead({ vin: vin.length === 17 ? vin : undefined, specId, postal })
     } catch (e) { console.error('lead market error:', e.message) }
 
-    if (!market || !market.mid) {
-      return res.status(422).json({ error: 'Not enough market data to generate an instant offer for this vehicle. A specialist will follow up.' })
-    }
-
-    // Suggested buy — IDENTICAL to Vantage (shared brain). Pass the comp set +
-    // the customer's odometer so the price↔km regression runs (mileage-matched).
+    // If the market lookup comes back empty, we DON'T lose the lead — persist it
+    // flagged for specialist follow-up (no offer). Capturing the customer is the
+    // whole point; a thin VinAudit response shouldn't drop them.
+    const noMarket = !market || !market.mid
     const odometer = b.odometer != null && b.odometer !== '' ? Math.round(Number(b.odometer)) : null
-    const sb = computeSuggestedBuy(
+
+    // Suggested buy (only when we have market data).
+    const sb = noMarket ? null : computeSuggestedBuy(
       { marketMid: market.mid, marketDaysSupply: market.mds, make, comps: market.comps, odometer },
       WIDGET_DEALER
     )
-    if (!sb) return res.status(422).json({ error: 'Could not compute an offer for this vehicle.' })
 
     // The ONLY consumer adjustment: declared accident.
     const accident = !!b.accident
     const accidentAmount = b.accidentAmount != null && b.accidentAmount !== '' ? Number(b.accidentAmount) : null
     const deduction = accidentDeduction(accident, accidentAmount)
-    const offer = Math.max(0, sb.suggested - deduction)
-    const confidence = sb.confidence
-    // Two gates withhold the number from the customer (lead still persists so
-    // your team follows up):
+    // No market → no offer (specialist lead). Otherwise compute as usual.
+    const offer = sb ? Math.max(0, sb.suggested - deduction) : null
+    const confidence = sb ? sb.confidence : null
+    // Gates that withhold the number (lead still persists for follow-up):
+    //  • No market data at all (thin VinAudit response for this postal).
     //  • Thin market: too few comps for a stable number.
-    //  • Extreme mileage: subject km far from comps → kmConfidence Low.
+    //  • Extreme mileage: subject km far outside comps.
     const MIN_OFFER_COMPS = 6
-    const thinMarket = (Number(market.compCount) || 0) < MIN_OFFER_COMPS
-    const extremeKm = sb.kmExtreme === true
+    const thinMarket = noMarket || (Number(market?.compCount) || 0) < MIN_OFFER_COMPS
+    const extremeKm = sb ? sb.kmExtreme === true : false
 
     // Customer-reported detail — appraiser context only, does NOT affect the offer.
     const clean = v => (v == null ? null : String(v).trim().slice(0, 2000) || null)
@@ -1107,7 +1107,7 @@ app.post('/api/leads', async (req, res) => {
     const totalBytes = photos.reduce((s, p) => s + p.length, 0)
     if (totalBytes > 8 * 1024 * 1024) photos = photos.slice(0, 6) // hard cap ~8MB
 
-    const breakdown = {
+    const breakdown = sb ? {
       reasons: sb.reasons,
       targetRetail: sb.targetRetail,
       gross: sb.gross,
@@ -1115,7 +1115,7 @@ app.post('/api/leads', async (req, res) => {
       baseOffer: sb.suggested,
       accidentDeduction: deduction,
       ...(deduction ? { accidentNote: accidentAmount ? `Declared accident claim/estimate ${fmtMoney(accidentAmount)} → −${fmtMoney(deduction)}` : `Declared accident (amount not provided) → −${fmtMoney(deduction)}` } : {}),
-    }
+    } : { note: 'No market comps found for this vehicle/postal at submission — specialist follow-up.' }
 
     // Persist if DB available; otherwise still return the offer.
     let leadId = null
@@ -1132,8 +1132,8 @@ app.post('/api/leads', async (req, res) => {
              $21,$22,$23,$24,$25,$26,$27,$28,'pending','widget')
            RETURNING id`,
           [(b.dealer || '').toString().trim(), vin, year, make, model, trim, odometer, postal,
-           accident, accidentAmount, name, email, phone, offer, sb.suggested, deduction,
-           JSON.stringify(breakdown), market.mid, confidence, thinMarket,
+           accident, accidentAmount, name, email, phone, offer, sb ? sb.suggested : null, deduction,
+           JSON.stringify(breakdown), market ? market.mid : null, confidence, thinMarket,
            conditionOpinion, knownIssues, tireCondition, brakeCondition, ownership, lienHolder, lienBalance,
            photos.length ? JSON.stringify(photos) : null]
         )
