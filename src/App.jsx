@@ -158,7 +158,7 @@ const logEvent = (field,newVal,user='Staff',old='') =>
 
 // ─── BLANK TEMPLATES ──────────────────────────────────────────────────
 const blankAppraisal = () => ({id:uid(),createdAt:new Date().toISOString(),updatedAt:new Date().toISOString(),status:'in_progress',disposition:'retail',source:'',appraiser:'',salesperson:'',vin:'',year:'',make:'',model:'',series:'',bodyType:'',engine:'',transmission:'',drivetrain:'',extColour:'',intColour:'',odometer:'',marketLow:null,marketMid:null,marketHigh:null,marketAvgPrice:null,marketDaysSupply:null,likeMineSupply:null,marketDataFetched:null,activeComps:null,avgDaysToSell:null,tires:'',paint:'',interior:'',mechanical:'',accidentVisible:false,reconCost:'',appraisedValue:'',profitObjective:'',targetGrossOverride:'',photos:[],notes:'',firstName:'',lastName:'',phone:'',email:'',address:'',postal:'',province:'',lienHolder:'',lienPayoff:'',comments:[],carfax:null,certCost:'',pack:'',finalizedAt:null,finalizedBy:null,log:[{ts:new Date().toISOString(),field:'AppraisalCreated',old:'',new:'In Progress',user:'System'}]});
-const blankVehicle = (a=null) => ({id:uid(),stockNumber:stockNum(),createdAt:new Date().toISOString(),updatedAt:new Date().toISOString(),status:'pending',disposition:'retail',fromAppraisalId:a?.id||null,vin:a?.vin||'',year:a?.year||'',make:a?.make||'',model:a?.model||'',series:a?.series||'',bodyType:a?.bodyType||'',engine:a?.engine||'',transmission:a?.transmission||'',drivetrain:a?.drivetrain||'',extColour:a?.extColour||'',intColour:a?.intColour||'',odometer:a?.odometer||'',listPrice:'',unitCost:a?.appraisedValue||'',reconCost:a?.reconCost||'',marketLow:a?.marketLow||null,marketMid:a?.marketMid||null,marketHigh:a?.marketHigh||null,marketAvgPrice:a?.marketAvgPrice||null,marketDaysSupply:a?.marketDaysSupply||null,likeMineSupply:a?.likeMineSupply||null,marketDataFetched:a?.marketDataFetched||null,activeComps:a?.activeComps||null,avgDaysToSell:a?.avgDaysToSell||null,description:'',features:[...(a?.features||[])],photos:[...(a?.photos||[])],feeds:{autotrader:{active:false},cargurus:{active:false},website:{active:false},auction:{active:false}},log:[{ts:new Date().toISOString(),field:'VehicleCreated',old:'',new:a?'Created from appraisal':'Manual entry',user:'System'}],notes:a?.notes||'',carfax:a?.carfax||null});
+const blankVehicle = (a=null) => ({id:uid(),stockNumber:stockNum(),createdAt:new Date().toISOString(),updatedAt:new Date().toISOString(),status:'pending',disposition:'retail',fromAppraisalId:a?.id||null,vin:a?.vin||'',year:a?.year||'',make:a?.make||'',model:a?.model||'',series:a?.series||'',bodyType:a?.bodyType||'',engine:a?.engine||'',transmission:a?.transmission||'',drivetrain:a?.drivetrain||'',extColour:a?.extColour||'',intColour:a?.intColour||'',odometer:a?.odometer||'',listPrice:'',unitCost:a?.appraisedValue||'',reconCost:a?.reconCost||'',marketLow:a?.marketLow||null,marketMid:a?.marketMid||null,marketHigh:a?.marketHigh||null,marketAvgPrice:a?.marketAvgPrice||null,marketDaysSupply:a?.marketDaysSupply||null,likeMineSupply:a?.likeMineSupply||null,marketDataFetched:a?.marketDataFetched||null,activeComps:a?.activeComps||null,avgDaysToSell:a?.avgDaysToSell||null,description:'',features:[...(a?.features||[])],damageFlags:[],photos:[...(a?.photos||[])],feeds:{autotrader:{active:false},cargurus:{active:false},website:{active:false},auction:{active:false}},log:[{ts:new Date().toISOString(),field:'VehicleCreated',old:'',new:a?'Created from appraisal':'Manual entry',user:'System'}],notes:a?.notes||'',carfax:a?.carfax||null});
 
 // ─── SEED DATA ────────────────────────────────────────────────────────
 const SEED = [
@@ -331,9 +331,49 @@ async function decodeVIN(vin) {
 }
 
 async function generateDescription(v) {
-  const res = await fetch(`${API_BASE}/api/claude`,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({model:'claude-sonnet-4-20250514',max_tokens:500,messages:[{role:'user',content:`Write a compelling used car listing description for a Canadian dealership. Honest, specific, no emojis. 3-4 sentences max 280 chars.\nVehicle: ${[v.year,v.make,v.model,v.series,v.engine,v.drivetrain,v.extColour&&`Exterior: ${v.extColour}`,v.odometer&&`${fmtN(v.odometer)} km`].filter(Boolean).join(', ')}\nFeatures: ${v.features?.join(', ')||''}\nNotes: ${v.notes||'Clean off-lease return'}\nReturn ONLY the description text.`}]})});
-  const data=await res.json();
-  return data.content?.[0]?.text?.trim()||'';
+  // Build the multimodal message: vehicle facts + any photos (vision).
+  const facts = [v.year,v.make,v.model,v.series,v.engine,v.drivetrain,v.extColour&&`Exterior: ${v.extColour}`,v.intColour&&`Interior: ${v.intColour}`,v.odometer&&`${fmtN(v.odometer)} km`].filter(Boolean).join(', ');
+  const photos = (v.photos||[]).filter(p=>p&&p.dataUrl&&/^data:image\//.test(p.dataUrl)).slice(0,6);
+  const content = [];
+  for (const p of photos) {
+    const m = /^data:(image\/[a-zA-Z+]+);base64,(.*)$/.exec(p.dataUrl);
+    if (m) content.push({type:'image',source:{type:'base64',media_type:m[1],data:m[2]}});
+  }
+  const hasPhotos = content.length>0;
+  content.push({type:'text',text:
+`You are helping a Canadian used-car dealership list a vehicle. ${hasPhotos?`You are given ${content.length-0} photo(s) of THIS vehicle plus its known data.`:'You are given the vehicle data (no photos provided).'}
+
+Vehicle: ${facts}
+Known features (may be incomplete): ${v.features?.join(', ')||'none listed'}
+Notes: ${v.notes||'none'}
+
+Do ALL of the following and respond with STRICT JSON only — no prose, no markdown:
+{
+  "description": "A compelling, honest listing description for this vehicle. 3-4 sentences, max ~280 characters, no emojis.",
+  "options": ["array of notable features/options this trim is known to include, PLUS any equipment you can clearly see in the photos (e.g. sunroof, alloy wheels, leather, navigation screen, backup camera). Combine with the known features. Only list things you're reasonably confident about."],
+  "damageFlags": [${hasPhotos?'"array of POSSIBLE visible damage or wear you notice in the photos that the appraiser should VERIFY IN PERSON — e.g. a possible scratch on the rear bumper, curb rash on a front wheel. These are flags to check, NOT a condition assessment. If you see nothing notable, return an empty array."':''}]
+}
+${hasPhotos?'For options and damage, only report what you can actually see or what is standard for this exact trim. Do not invent options. For damage, be conservative and always frame as something to verify, never as a definitive defect.':'Infer options from the trim only. Return empty damageFlags.'}`});
+
+  const res = await fetch(`${API_BASE}/api/claude`,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({
+    model:'claude-sonnet-4-6',
+    max_tokens:700,
+    messages:[{role:'user',content}]
+  })});
+  const data = await res.json();
+  if (data.error) throw new Error(data.error.message||'AI error');
+  let txt = data.content?.[0]?.text?.trim()||'';
+  txt = txt.replace(/```json|```/g,'').trim();
+  let parsed;
+  try { parsed = JSON.parse(txt); }
+  catch(e){ // Fallback: if the model returned plain prose, use it as the description.
+    return { description: txt, options: [], damageFlags: [] };
+  }
+  return {
+    description: String(parsed.description||'').trim(),
+    options: Array.isArray(parsed.options)?parsed.options.map(s=>String(s).slice(0,60)).filter(Boolean):[],
+    damageFlags: Array.isArray(parsed.damageFlags)?parsed.damageFlags.map(s=>String(s).slice(0,80)).filter(Boolean):[],
+  };
 }
 
 // Real market data via VinAudit (Canadian comps). Needs vin + dealer postal.
@@ -477,7 +517,6 @@ function CompHistoryModal({ vin, onClose }){
 function CompSet({ comps, myPrice, myKm, myDays }) {
   const [historyVin, setHistoryVin] = useState(null);
   const onHistory = (vin) => setHistoryVin(vin);
-  const [feeState, setFeeState] = useState({});
   const [sort, setSort] = useState({ key: 'price', dir: 'asc' });
   // Both comp sections collapsed by default so they don't fill the page.
   const [openSec, setOpenSec] = useState({ listed: true, sold: false });
@@ -507,26 +546,7 @@ function CompSet({ comps, myPrice, myKm, myDays }) {
     });
   };
   const toggleSort = (key) => setSort(s => s.key === key ? { key, dir: s.dir === 'asc' ? 'desc' : 'asc' } : { key, dir: key === 'location' ? 'asc' : 'asc' });
-  const checkFees = async (c) => {
-    if(!c.url) return;
-    setFeeState(s=>({...s,[c.id]:{status:'loading'}}));
-    try{
-      const r = await fetch(`${API_BASE}/api/fees`,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({url:c.url,dealer:c.dealer,vin:c.vin,source:c.source})});
-      const d = await r.json();
-      if(d.readable===false){ setFeeState(s=>({...s,[c.id]:{status:'unreadable',reason:d.reason}})); return; }
-      setFeeState(s=>({...s,[c.id]:{status:'done',fees:d.fees||[],feeTotal:d.feeTotal||0}}));
-    }catch(e){ setFeeState(s=>({...s,[c.id]:{status:'error'}})); }
-  };
   const cell = {padding:'7px 12px'};
-  const feeCell = (c) => {
-    const fs = feeState[c.id];
-    if(!fs) return c.url?<button onClick={()=>checkFees(c)} style={{fontSize:10,fontWeight:600,color:C.navy,background:C.navyMuted,border:'none',borderRadius:6,padding:'3px 8px',cursor:'pointer',whiteSpace:'nowrap'}}>Check fees</button>:<span style={{fontSize:10,color:C.textLight}}>—</span>;
-    if(fs.status==='loading') return <span style={{fontSize:10,color:C.textLight}}>checking…</span>;
-    if(fs.status==='unreadable') return <span style={{fontSize:10,color:C.textLight,cursor:'help'}} title={fs.reason||'could not read listing'}>couldn't read</span>;
-    if(fs.status==='error') return <button onClick={()=>checkFees(c)} style={{fontSize:10,color:C.red,background:'none',border:'none',cursor:'pointer'}}>retry</button>;
-    if(fs.feeTotal>0) return <span style={{fontSize:10,fontWeight:700,color:C.orange,whiteSpace:'nowrap'}} title={fs.fees.map(f=>`${f.name} ${fmt(f.amount)}`).join(' + ')}>+{fmt(fs.feeTotal)} → {fmt((c.price||0)+fs.feeTotal)}</span>;
-    return <span style={{fontSize:10,fontWeight:600,color:C.green,whiteSpace:'nowrap'}}>no added fees</span>;
-  };
   const block = (heading, rows, mode, showMine, badge, secKey) => {
     const isOpen = !!openSec[secKey];
     return (
@@ -546,7 +566,6 @@ function CompSet({ comps, myPrice, myKm, myDays }) {
             {label:mode==='sold'?'Sold (days ago)':'Days',key:'days'},
             {label:'Location',key:'location'},
             {label:'Dealer',key:null},
-            {label:'Fees',key:null},
             {label:'',key:null},
           ].map((h,i)=>(
             <th key={i} onClick={h.key?()=>toggleSort(h.key):undefined} style={{padding:'7px 12px',textAlign:'left',fontSize:10,fontWeight:600,color:sort.key===h.key?C.navy:C.textLight,borderBottom:`1px solid ${C.border}`,whiteSpace:'nowrap',cursor:h.key?'pointer':'default',userSelect:'none'}}>
@@ -565,7 +584,7 @@ function CompSet({ comps, myPrice, myKm, myDays }) {
                     <td style={{...cell,fontFamily:'monospace',fontWeight:700,color:C.teal}}>{myKm?fmtN(myKm):'—'}</td>
                     <td style={{...cell,fontWeight:700,color:C.teal}}>{myDays?myDays:'—'}</td>
                     <td style={{...cell,color:C.teal}}>—</td>
-                    <td style={{...cell,fontWeight:800,color:C.teal}} colSpan={3}>★ Your Vehicle</td>
+                    <td style={{...cell,fontWeight:800,color:C.teal}} colSpan={2}>★ Your Vehicle</td>
                   </tr>
                 );
               }
@@ -583,10 +602,8 @@ function CompSet({ comps, myPrice, myKm, myDays }) {
                   {c.vin&&<div style={{marginTop:2,fontSize:10,fontFamily:'monospace',color:C.textMid,letterSpacing:0.3,display:'flex',alignItems:'center',gap:6,flexWrap:'wrap'}}><span>{c.vin}</span><CopyVIN vin={c.vin}/><button onClick={()=>onHistory&&onHistory(c.vin)} style={{fontSize:9,fontWeight:700,color:C.navy,background:C.navyMuted,border:'none',borderRadius:6,padding:'2px 7px',cursor:'pointer',fontFamily:'inherit',whiteSpace:'nowrap'}}>History ↗</button></div>}
                   <div style={{marginTop:2,display:'flex',gap:5,alignItems:'center',flexWrap:'wrap'}}>
                     {c.source&&<span style={{fontSize:9,color:C.textLight,background:C.navyMuted,padding:'1px 6px',borderRadius:8,whiteSpace:'nowrap'}}>{c.source}</span>}{Array.isArray(c.portals)&&c.portals.map(p=><a key={p.name} href={p.url} target="_blank" rel="noopener noreferrer" style={{display:'inline-block',fontSize:9,fontWeight:600,color:C.teal,background:C.tealMuted,padding:'1px 6px',borderRadius:8,whiteSpace:'nowrap',textDecoration:'none',marginRight:4,marginTop:2}}>{p.name}</a>)}
-                    {c.feeWarning&&<span title={`Caught adding fees on ${c.feeWarning.count} prior check${c.feeWarning.count>1?'s':''}`} style={{fontSize:9,fontWeight:700,color:C.orange,background:C.orangeBg,padding:'1px 6px',borderRadius:8,whiteSpace:'nowrap'}}>⚠ adds fees ~{fmt(c.feeWarning.avgFee)}</span>}
                   </div>
                 </td>
-                <td style={{...cell,whiteSpace:'nowrap'}}>{feeCell(c)}</td>
                 <td style={{...cell,whiteSpace:'nowrap'}}>{c.url?<a href={c.url} target="_blank" rel="noopener noreferrer" style={{display:'inline-flex',alignItems:'center',gap:3,color:C.navy,fontSize:11,fontWeight:600,textDecoration:'none'}}><ExternalLink size={12}/>View</a>:<span style={{fontSize:10,color:C.textLight}}>—</span>}</td>
               </tr>
             );});})()}
@@ -630,10 +647,8 @@ function CompSet({ comps, myPrice, myKm, myDays }) {
                   <span style={{fontSize:12,color:C.textDark}}>{c.url?<a href={c.url} target="_blank" rel="noopener noreferrer" style={{color:C.navy,fontWeight:600,textDecoration:'none'}}>{c.dealer}</a>:c.dealer}</span>
                   {/private/i.test(c.sellerType||'')&&<span style={{fontSize:9,fontWeight:700,color:C.purple,background:C.purpleBg,padding:'1px 6px',borderRadius:8}}>Private</span>}
                   {c.source&&<span style={{fontSize:9,color:C.textLight,background:C.navyMuted,padding:'1px 6px',borderRadius:8}}>{c.source}</span>}
-                  {c.feeWarning&&<span style={{fontSize:9,fontWeight:700,color:C.orange,background:C.orangeBg,padding:'1px 6px',borderRadius:8}}>⚠ adds fees</span>}
                 </div>
                 {c.vin&&<div style={{marginTop:4,fontSize:11,fontFamily:'monospace',color:C.textMid,letterSpacing:0.3,display:'flex',alignItems:'center',gap:6,flexWrap:'wrap'}}><span>{c.vin}</span><CopyVIN vin={c.vin}/><button onClick={()=>onHistory&&onHistory(c.vin)} style={{fontSize:10,fontWeight:700,color:C.navy,background:C.navyMuted,border:'none',borderRadius:6,padding:'2px 8px',cursor:'pointer',fontFamily:'inherit'}}>History ↗</button></div>}
-                <div style={{marginTop:6}}>{feeCell(c)}</div>
               </div>
             );
           });
@@ -2517,7 +2532,20 @@ function VehicleDetail({vehicle:iv,onSave,onBack,showToast,onShowSticker=()=>{},
   function forceSaveV(){onSave(vRef.current,true);initialRef.current=JSON.stringify(vRef.current);setSavedAt(new Date().toISOString());setIsDirty(false);showToast('Saved','success');}
 
   async function decode(){if(v.vin.length!==17){showToast('Valid 17-char VIN required','error');return;}setVl(true);try{const d=await decodeVIN(v.vin.toUpperCase());up(d);setVehExpandedDetail(true);showToast(`Decoded: ${[d.year,d.make,d.model].filter(Boolean).join(' ')||'partial — review fields'}`,'success');}catch{showToast('Could not decode — enter manually','error');}finally{setVl(false);}}
-  async function genDesc(){setDl(true);try{const d=await generateDescription(v);up({description:d});showToast('Description generated','success');}catch{showToast('Generation failed','error');}finally{setDl(false);}}
+  async function genDesc(){setDl(true);try{
+    const d=await generateDescription(v);
+    const cur=vRef.current;
+    // Merge AI options into existing features (case-insensitive dedup).
+    const existing=cur.features||[];
+    const lower=new Set(existing.map(f=>f.toLowerCase().trim()));
+    const added=(d.options||[]).filter(o=>o&&!lower.has(o.toLowerCase().trim()));
+    const mergedFeatures=[...existing,...added];
+    up({description:d.description||cur.description, features:mergedFeatures, damageFlags:d.damageFlags||[]});
+    const bits=['Description generated'];
+    if(added.length) bits.push(`${added.length} option${added.length>1?'s':''} added`);
+    if((d.damageFlags||[]).length) bits.push(`${d.damageFlags.length} item${d.damageFlags.length>1?'s':''} to verify`);
+    showToast(bits.join(' · '),'success');
+  }catch(e){showToast(e.message||'Generation failed','error');}finally{setDl(false);}}
   async function refMkt(){
     if(!v.vin||v.vin.length!==17){showToast('Valid VIN required','error');return;}
     const dealer=onGetDealer?onGetDealer():null;
@@ -2599,9 +2627,30 @@ function VehicleDetail({vehicle:iv,onSave,onBack,showToast,onShowSticker=()=>{},
 
             {/* Description */}
             <div style={{marginTop:12}}>
-              <div style={{display:'flex',alignItems:'center',justifyContent:'space-between',marginBottom:6}}><div style={{fontSize:11,fontWeight:600,color:C.textMid}}>Listing Description</div><Btn onClick={genDesc} disabled={dl||!v.year} size="sm"><Sparkles size={11} style={{animation:dl?'spin 1s linear infinite':undefined}}/>{dl?'Generating...':'AI Generate'}</Btn></div>
+              <div style={{display:'flex',alignItems:'center',justifyContent:'space-between',marginBottom:6}}><div style={{fontSize:11,fontWeight:600,color:C.textMid}}>Listing Description{(v.photos||[]).length>0?<span style={{fontSize:9,color:C.teal,fontWeight:600,marginLeft:6}}>· reads your {v.photos.length} photo{v.photos.length>1?'s':''} for options</span>:''}</div><Btn onClick={genDesc} disabled={dl||!v.year} size="sm"><Sparkles size={11} style={{animation:dl?'spin 1s linear infinite':undefined}}/>{dl?'Generating...':'AI Generate'}</Btn></div>
               <textarea value={v.description} onChange={e=>up({description:e.target.value})} placeholder="Enter description or click AI Generate..." rows={3} style={{width:'100%',padding:'10px 12px',background:'#fff',border:`1px solid ${C.borderStr}`,borderRadius:7,fontSize:13,fontFamily:'inherit',resize:'vertical',outline:'none',boxSizing:'border-box',lineHeight:1.6}}/>
             </div>
+
+            {/* AI damage flags — possible issues seen in photos, to VERIFY in person.
+                Explicitly not a condition assessment. */}
+            {(v.damageFlags||[]).length>0&&(
+            <div style={{marginTop:12,background:C.orangeBg,border:`1px solid ${C.orange}`,borderRadius:8,padding:'10px 12px'}}>
+              <div style={{display:'flex',alignItems:'center',gap:6,marginBottom:6}}>
+                <AlertTriangle size={13} color={C.orange}/>
+                <span style={{fontSize:11,fontWeight:800,color:C.orange,textTransform:'uppercase',letterSpacing:0.5}}>Verify in person</span>
+              </div>
+              <div style={{fontSize:10.5,color:C.textMid,marginBottom:8,fontStyle:'italic'}}>The AI noticed these in the photos. These are prompts to check — not a condition assessment. Confirm with your own eyes.</div>
+              <div style={{display:'flex',flexDirection:'column',gap:4}}>
+                {(v.damageFlags||[]).map((f,i)=>(
+                  <div key={i} style={{display:'flex',alignItems:'flex-start',gap:6,fontSize:12,color:C.textDark}}>
+                    <span style={{color:C.orange,flexShrink:0}}>•</span>
+                    <span style={{flex:1}}>{f}</span>
+                    <button onClick={()=>up({damageFlags:v.damageFlags.filter((_,j)=>j!==i)})} title="Dismiss" style={{background:'none',border:'none',color:C.textLight,cursor:'pointer',padding:0,flexShrink:0}}><X size={11}/></button>
+                  </div>
+                ))}
+              </div>
+            </div>
+            )}
 
             {/* Photos — combined into vehicle section */}
             <div style={{marginTop:12,paddingTop:12,borderTop:`1px solid ${C.navyBorder}`}}>
