@@ -998,7 +998,10 @@ async function marketForLeadRaw({ vin, specId, postal }) {
   const stats = computeMarketFromComps(activeComps)
   if (!stats) return null
   const mds = marketDaySupply(activeComps.length, soldComps.length, 45)
-  return { mid: stats.mid, mds, compCount: activeComps.length }
+  // Return lightweight comps (price+mileage only) so the shared brain can run
+  // the price↔km regression. Cached in market_cache alongside mid/mds.
+  const comps = activeComps.map(c => ({ price: c.price, mileage: c.mileage }))
+  return { mid: stats.mid, mds, compCount: activeComps.length, comps }
 }
 
 // POST /api/leads — widget submission. Computes the offer and (if DB present)
@@ -1054,9 +1057,11 @@ app.post('/api/leads', async (req, res) => {
       return res.status(422).json({ error: 'Not enough market data to generate an instant offer for this vehicle. A specialist will follow up.' })
     }
 
-    // Suggested buy — IDENTICAL to Vantage (shared brain, no consumer haircut).
+    // Suggested buy — IDENTICAL to Vantage (shared brain). Pass the comp set +
+    // the customer's odometer so the price↔km regression runs (mileage-matched).
+    const odometer = b.odometer != null && b.odometer !== '' ? Math.round(Number(b.odometer)) : null
     const sb = computeSuggestedBuy(
-      { marketMid: market.mid, marketDaysSupply: market.mds, make },
+      { marketMid: market.mid, marketDaysSupply: market.mds, make, comps: market.comps, odometer },
       WIDGET_DEALER
     )
     if (!sb) return res.status(422).json({ error: 'Could not compute an offer for this vehicle.' })
@@ -1066,12 +1071,14 @@ app.post('/api/leads', async (req, res) => {
     const accidentAmount = b.accidentAmount != null && b.accidentAmount !== '' ? Number(b.accidentAmount) : null
     const deduction = accidentDeduction(accident, accidentAmount)
     const offer = Math.max(0, sb.suggested - deduction)
-    const confidence = confidenceFrom({ activeComps: market.compCount })
-    // Thin-market gate: below MIN_OFFER_COMPS active comps the number is too
-    // volatile to show a customer. We still compute + persist it (your team sees
-    // it internally) but the widget gets a "specialist will follow up" message.
+    const confidence = sb.confidence
+    // Two gates withhold the number from the customer (lead still persists so
+    // your team follows up):
+    //  • Thin market: too few comps for a stable number.
+    //  • Extreme mileage: subject km far from comps → kmConfidence Low.
     const MIN_OFFER_COMPS = 6
     const thinMarket = (Number(market.compCount) || 0) < MIN_OFFER_COMPS
+    const extremeKm = sb.kmConfidence === 'Low'
 
     const breakdown = {
       reasons: sb.reasons,
@@ -1082,8 +1089,6 @@ app.post('/api/leads', async (req, res) => {
       accidentDeduction: deduction,
       ...(deduction ? { accidentNote: accidentAmount ? `Declared accident claim/estimate ${fmtMoney(accidentAmount)} → −${fmtMoney(deduction)}` : `Declared accident (amount not provided) → −${fmtMoney(deduction)}` } : {}),
     }
-
-    const odometer = b.odometer != null && b.odometer !== '' ? Math.round(Number(b.odometer)) : null
 
     // Persist if DB available; otherwise still return the offer.
     let leadId = null
@@ -1104,18 +1109,26 @@ app.post('/api/leads', async (req, res) => {
       } catch (e) { console.error('lead insert error:', e.message) }
     }
 
+    // Withhold the number when EITHER gate trips; give the customer the reason.
+    const withhold = thinMarket || extremeKm
+    let customerMessage
+    if (extremeKm) {
+      customerMessage = "Because of your vehicle's mileage, we want a specialist to confirm an accurate offer for you. Someone will be in touch shortly."
+    } else if (thinMarket) {
+      customerMessage = "The market for your vehicle is limited right now, so we want a specialist to give you an accurate offer. Someone will be in touch shortly."
+    }
+
     res.json({
       success: true,
       leadId,
       persisted: !!leadId,
       thinMarket,
-      // When the market is too thin to show a reliable number, withhold the
-      // offer and signal the widget to display the specialist-follow-up message.
-      offer: thinMarket ? null : offer,
+      extremeKm,
+      withheld: withhold,
+      // When a gate trips, withhold the offer and give the widget the reason.
+      offer: withhold ? null : offer,
       confidence,
-      message: thinMarket
-        ? "The market for your vehicle is limited right now, so we want a specialist to give you an accurate offer. Someone will be in touch shortly."
-        : undefined,
+      message: customerMessage,
       vehicle: { year, make, model, trim, vin: vin || null },
     })
   } catch (err) {

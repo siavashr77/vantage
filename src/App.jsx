@@ -1927,7 +1927,7 @@ function AppraisalForm({initial,onSave,onBack,showToast,onConvert,onFinalize,onU
             user enters their own offer. Always a suggestion; user decides. */}
         {a.marketMid&&(()=>{
           const dealer=onGetDealer?onGetDealer():DEFAULT_DEALER;
-          const sb=computeSuggestedBuy(a,dealer);
+          const sb=computeSuggestedBuy({...a,comps:a._comps},dealer);
           if(!sb) return null;
           const confColor=sb.confidence==='High'?C.green:sb.confidence==='Medium'?C.navy:C.orange;
           return(
