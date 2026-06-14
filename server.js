@@ -36,9 +36,37 @@ if (DATABASE_URL) {
     checked_at TIMESTAMPTZ DEFAULT now()
   )`).then(() => console.log('   Dealer-fee ledger: Postgres ready ✅'))
     .catch(e => console.error('DB init error:', e.message))
+
+  // Customer trade-in leads from the embeddable widget land here as PENDING
+  // appraisals. Vantage reads these and an appraiser works them on the lot.
+  pool.query(`CREATE TABLE IF NOT EXISTS pending_leads (
+    id SERIAL PRIMARY KEY,
+    dealer_key TEXT,
+    vin TEXT,
+    year TEXT, make TEXT, model TEXT, trim TEXT,
+    odometer INTEGER,
+    postal TEXT,
+    accident BOOLEAN DEFAULT false,
+    accident_amount INTEGER,
+    customer_name TEXT NOT NULL,
+    customer_email TEXT,
+    customer_phone TEXT,
+    offer_amount INTEGER,
+    base_offer INTEGER,
+    accident_deduction INTEGER DEFAULT 0,
+    offer_breakdown JSONB,
+    market_mid INTEGER,
+    confidence TEXT,
+    status TEXT DEFAULT 'pending',
+    source TEXT DEFAULT 'widget',
+    created_at TIMESTAMPTZ DEFAULT now()
+  )`).then(() => console.log('   Customer leads: Postgres ready ✅'))
+    .catch(e => console.error('Leads table init error:', e.message))
 } else {
   console.log('   Dealer-fee ledger: no DATABASE_URL — fee history disabled')
 }
+// True if the leads table is usable (DATABASE_URL present). Reported in /api/health.
+const LEADS_DB = !!DATABASE_URL
 
 // Normalize a dealer name into a stable key for matching across listings.
 function dealerKey(name) {
@@ -861,12 +889,272 @@ ${pageText}`
 })
 
 // ── Health check ─────────────────────────────────────────────────────
+// ── CUSTOMER TRADE-IN LEADS (embeddable widget → pending appraisal) ──
+// The widget posts vehicle + contact info; we compute the SAME suggested-buy
+// number Vantage shows the appraiser (no consumer haircut), then apply ONE
+// exception: a customer-declared accident deducts per the claim-$ rule.
+
+// Server-side money formatter (mirrors the client's fmt used in rationale text).
+function fmtMoney(n) {
+  if (n == null || !Number.isFinite(Number(n))) return '$—'
+  return '$' + Math.round(Number(n)).toLocaleString('en-CA')
+}
+
+// Luxury makes carry more recon risk — identical set to the client.
+const LUXURY_MAKES_SRV = new Set(['land rover','range rover','jaguar','bmw','mercedes-benz','mercedes','audi','porsche','lexus','infiniti','acura','cadillac','volvo','genesis','maserati','bentley','tesla','lincoln','alfa romeo'])
+
+// PORT of the client computeSuggestedBuy (src/App.jsx). Keep in sync. Takes the
+// vehicle/appraisal-shaped object `a` (needs marketMid, marketDaysSupply, make,
+// optional reconCost/certCost/pack/targetGrossOverride/carfax) and dealer config.
+function computeSuggestedBuySrv(a, dealer) {
+  const mid = Number(a.marketMid)
+  if (!mid || mid <= 0) return null
+  const d = dealer || {}
+  const positionPct = Number(d.marketPositionPct) || 97
+  const overrideGross = a.targetGrossOverride !== '' && a.targetGrossOverride != null ? Number(a.targetGrossOverride) : null
+  const baseGross = overrideGross != null && overrideGross > 0 ? overrideGross : (Number(d.targetGross) || 2500)
+  const reconEntered = a.reconCost !== '' && a.reconCost != null
+  let recon = reconEntered ? Number(a.reconCost) : (Number(d.avgRecon) || 0)
+  const otherCosts = Number(a.certCost || 0) + Number(a.pack || 0)
+
+  const reasons = []
+  const targetRetail = Math.round(mid * (positionPct / 100))
+  reasons.push(`Retail target ${fmtMoney(targetRetail)} (${positionPct}% of market mid ${fmtMoney(mid)})`)
+
+  let gross = baseGross
+  const mds = Number(a.marketDaysSupply)
+  if (Number.isFinite(mds) && mds > 0) {
+    if (mds >= 90) { gross = baseGross + 1500; reasons.push(`+$1,500 gross — slow market (${mds}-day supply)`) }
+    else if (mds >= 60) { gross = baseGross + 1000; reasons.push(`+$1,000 gross — softer market (${mds}-day supply)`) }
+    else if (mds <= 30) { gross = Math.max(1000, baseGross - 500); reasons.push(`−$500 gross — fast mover (${mds}-day supply)`) }
+  }
+
+  const isLux = LUXURY_MAKES_SRV.has(String(a.make || '').toLowerCase())
+  if (isLux && !reconEntered) { recon = Math.max(recon, 2500); reasons.push(`Recon assumed ${fmtMoney(recon)} — luxury make`) }
+
+  let historyAdj = 0
+  if (a.carfax && a.carfax.clean === false) {
+    historyAdj = -Math.round(targetRetail * 0.05)
+    reasons.push(`${fmtMoney(historyAdj)} — reported history issues (Carfax)`)
+  }
+
+  const suggested = Math.round(targetRetail - gross - recon - otherCosts + historyAdj)
+  if (suggested <= 0) return null
+  return { suggested, targetRetail, gross, recon, reasons }
+}
+
+function confidenceFromCount(n) {
+  if (n >= 12) return 'High'
+  if (n >= 6) return 'Medium'
+  return 'Low'
+}
+
+// Accident deduction (the ONLY consumer-side adjustment). Customer-declared:
+//   amount < $3,000  → flat −$500
+//   amount ≥ $3,000  → −⅓ of the claim/estimate amount
+//   accident but no amount → −$500 floor
+// (When both a claim and an estimate exist for one incident, the appraiser uses
+//  the CLAIM value at Carfax time — the widget collects a single figure.)
+function accidentDeduction(declared, amount) {
+  if (!declared) return 0
+  const amt = Number(amount)
+  if (!Number.isFinite(amt) || amt <= 0) return 500
+  return amt < 3000 ? 500 : Math.round(amt / 3)
+}
+
+// Default dealer config mirrors the client DEFAULT_DEALER pricing strategy.
+// (Single-dealer for now; later this is looked up by dealer_key.)
+const WIDGET_DEALER = { marketPositionPct: 97, targetGross: 2500, avgRecon: 1500 }
+
+// Fetch market mid + MDS + comp count for a VIN or spec, reusing the same
+// VinAudit path as /api/market. Returns { mid, mds, compCount } or null.
+async function marketForLead({ vin, specId, postal }) {
+  const radius = 6000  // national — widest net for an instant consumer offer
+  let match = 'trim', active = [], dropped = []
+  try {
+    ;[active, dropped] = await Promise.all([
+      fetchListings({ vin, specId, match, status: 'active', postal, radius }),
+      fetchListings({ vin, specId, match, status: 'dropped', postal, radius, historyDays: 60 }),
+    ])
+  } catch { active = []; dropped = [] }
+  if (!specId && active.length + dropped.length < MIN_COMPS) {
+    match = 'model'
+    ;[active, dropped] = await Promise.all([
+      fetchListings({ vin, match, status: 'active', postal, radius }),
+      fetchListings({ vin, match, status: 'dropped', postal, radius, historyDays: 60 }),
+    ])
+  }
+  // Mirror the proven /api/market chain EXACTLY so the mid matches the appraisal
+  // page: blend → dedupe by VIN → build comps → split active/sold → outlier filter.
+  const blended = [...dropped, ...active]
+  const deduped = dedupeByVin(blended)
+  const allComps = buildComps(deduped)
+  const SOLD_MAX_AGE_DAYS = 30
+  let activeComps = allComps.filter(c => c.status !== 'dropped')
+  let soldComps = allComps.filter(c => c.status === 'dropped' && (c.days == null || c.days <= SOLD_MAX_AGE_DAYS))
+  activeComps = filterPriceOutliers(activeComps)
+  soldComps = filterPriceOutliers(soldComps)
+  const stats = computeMarketFromComps(activeComps)
+  if (!stats) return null
+  const mds = marketDaySupply(activeComps.length, soldComps.length, 45)
+  return { mid: stats.mid, mds, compCount: activeComps.length }
+}
+
+// POST /api/leads — widget submission. Computes the offer and (if DB present)
+// stores it as a pending lead. Returns the offer even with no DB so the widget
+// works during setup.
+app.post('/api/leads', async (req, res) => {
+  try {
+    const b = req.body || {}
+    const name = (b.customerName || '').toString().trim()
+    const email = (b.customerEmail || '').toString().trim()
+    const phone = (b.customerPhone || '').toString().trim()
+    if (!name) return res.status(400).json({ error: 'Name is required' })
+    if (!email && !phone) return res.status(400).json({ error: 'Email or phone is required' })
+
+    const vin = (b.vin || '').toString().toUpperCase().trim()
+    const postal = (b.postal || '').toString().trim()
+    if (!postal) return res.status(400).json({ error: 'Postal code is required' })
+
+    let year = (b.year || '').toString().trim()
+    let make = (b.make || '').toString().trim()
+    let model = (b.model || '').toString().trim()
+    let trim = (b.trim || '').toString().trim()
+
+    // If a VIN is given, decode YMMT from NHTSA so the lead carries clean specs.
+    if (vin.length === 17) {
+      try {
+        const dr = await fetch(`https://vpic.nhtsa.dot.gov/api/vehicles/decodevinvalues/${vin}?format=json`)
+        const dd = await dr.json()
+        const r = dd.Results?.[0]
+        if (r && r.ErrorCode !== '8') {
+          year = year || r.ModelYear || ''
+          make = make || (r.Make ? r.Make.charAt(0) + r.Make.slice(1).toLowerCase() : '')
+          model = model || r.Model || ''
+          trim = trim || r.Series || r.Trim || ''
+        }
+      } catch {}
+    }
+
+    if (!vin && !(year && make && model)) {
+      return res.status(400).json({ error: 'Provide a VIN, or year + make + model' })
+    }
+
+    // Market lookup (same engine as the appraisal page).
+    let market = null
+    const specId = !vin
+      ? [year, make, model, trim].filter(Boolean).map(s => s.toLowerCase().replace(/\s+/g, '-')).join('_')
+      : null
+    try {
+      market = await marketForLead({ vin: vin.length === 17 ? vin : undefined, specId, postal })
+    } catch (e) { console.error('lead market error:', e.message) }
+
+    if (!market || !market.mid) {
+      return res.status(422).json({ error: 'Not enough market data to generate an instant offer for this vehicle. A specialist will follow up.' })
+    }
+
+    // Suggested buy — IDENTICAL to Vantage (no consumer haircut).
+    const sb = computeSuggestedBuySrv(
+      { marketMid: market.mid, marketDaysSupply: market.mds, make },
+      WIDGET_DEALER
+    )
+    if (!sb) return res.status(422).json({ error: 'Could not compute an offer for this vehicle.' })
+
+    // The ONLY consumer adjustment: declared accident.
+    const accident = !!b.accident
+    const accidentAmount = b.accidentAmount != null && b.accidentAmount !== '' ? Number(b.accidentAmount) : null
+    const deduction = accidentDeduction(accident, accidentAmount)
+    const offer = Math.max(0, sb.suggested - deduction)
+    const confidence = confidenceFromCount(market.compCount)
+
+    const breakdown = {
+      reasons: sb.reasons,
+      targetRetail: sb.targetRetail,
+      gross: sb.gross,
+      recon: sb.recon,
+      baseOffer: sb.suggested,
+      accidentDeduction: deduction,
+      ...(deduction ? { accidentNote: accidentAmount ? `Declared accident claim/estimate ${fmtMoney(accidentAmount)} → −${fmtMoney(deduction)}` : `Declared accident (amount not provided) → −${fmtMoney(deduction)}` } : {}),
+    }
+
+    const odometer = b.odometer != null && b.odometer !== '' ? Math.round(Number(b.odometer)) : null
+
+    // Persist if DB available; otherwise still return the offer.
+    let leadId = null
+    if (pool) {
+      try {
+        const ins = await pool.query(
+          `INSERT INTO pending_leads
+            (dealer_key,vin,year,make,model,trim,odometer,postal,accident,accident_amount,
+             customer_name,customer_email,customer_phone,offer_amount,base_offer,accident_deduction,
+             offer_breakdown,market_mid,confidence,status,source)
+           VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,'pending','widget')
+           RETURNING id`,
+          [(b.dealer || '').toString().trim(), vin, year, make, model, trim, odometer, postal,
+           accident, accidentAmount, name, email, phone, offer, sb.suggested, deduction,
+           JSON.stringify(breakdown), market.mid, confidence]
+        )
+        leadId = ins.rows[0]?.id || null
+      } catch (e) { console.error('lead insert error:', e.message) }
+    }
+
+    res.json({
+      success: true,
+      leadId,
+      persisted: !!leadId,
+      offer,
+      confidence,
+      vehicle: { year, make, model, trim, vin: vin || null },
+    })
+  } catch (err) {
+    console.error('POST /api/leads error:', err.message)
+    res.status(500).json({ error: 'Could not process this request. Please try again.' })
+  }
+})
+
+// GET /api/leads — Vantage reads pending leads (newest first). Optional ?status=
+app.get('/api/leads', async (req, res) => {
+  if (!pool) return res.json({ success: true, leads: [], dbConnected: false })
+  try {
+    const status = (req.query.status || '').toString().trim()
+    const params = []
+    let where = ''
+    if (status) { params.push(status); where = 'WHERE status = $1' }
+    const r = await pool.query(
+      `SELECT * FROM pending_leads ${where} ORDER BY created_at DESC LIMIT 500`, params
+    )
+    res.json({ success: true, dbConnected: true, leads: r.rows })
+  } catch (e) {
+    console.error('GET /api/leads error:', e.message)
+    res.status(500).json({ error: 'Could not load leads' })
+  }
+})
+
+// PATCH /api/leads/:id — update status (e.g. converted/dismissed).
+app.patch('/api/leads/:id', async (req, res) => {
+  if (!pool) return res.status(503).json({ error: 'No database connected' })
+  const id = Number(req.params.id)
+  const status = (req.body?.status || '').toString().trim()
+  const allowed = ['pending', 'converted', 'dismissed']
+  if (!Number.isFinite(id)) return res.status(400).json({ error: 'Invalid id' })
+  if (!allowed.includes(status)) return res.status(400).json({ error: 'status must be one of: ' + allowed.join(', ') })
+  try {
+    const r = await pool.query('UPDATE pending_leads SET status=$1 WHERE id=$2 RETURNING id,status', [status, id])
+    if (!r.rows.length) return res.status(404).json({ error: 'Lead not found' })
+    res.json({ success: true, lead: r.rows[0] })
+  } catch (e) {
+    console.error('PATCH /api/leads error:', e.message)
+    res.status(500).json({ error: 'Could not update lead' })
+  }
+})
+
 app.get('/api/health', (req, res) => {
   res.json({
     status: 'ok',
     vinDecode: 'NHTSA — free',
     marketData: VINAUDIT_KEY && VINAUDIT_KEY !== 'YOUR_VINAUDIT_API_KEY_HERE' ? 'configured' : 'not configured',
-    aiDescriptions: ANTHROPIC_KEY && ANTHROPIC_KEY !== 'YOUR_ANTHROPIC_API_KEY_HERE' ? 'configured' : 'not configured'
+    aiDescriptions: ANTHROPIC_KEY && ANTHROPIC_KEY !== 'YOUR_ANTHROPIC_API_KEY_HERE' ? 'configured' : 'not configured',
+    leadsDb: LEADS_DB ? 'connected (DATABASE_URL present)' : 'NOT connected — attach Postgres in Railway to persist leads'
   })
 })
 
