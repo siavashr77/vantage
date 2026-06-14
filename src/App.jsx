@@ -340,24 +340,54 @@ async function generateDescription(v) {
     if (m) content.push({type:'image',source:{type:'base64',media_type:m[1],data:m[2]}});
   }
   const hasPhotos = content.length>0;
+
+  // ── Verified selling points (only what the DATA supports) ──
+  const selling = [];
+  // Low km: only if we can compare to the market and it's genuinely below median.
+  const odo = Number(v.odometer);
+  const medKm = Number(v.medianCompMileage ?? v._medianCompMileage);
+  if (Number.isFinite(odo) && Number.isFinite(medKm) && medKm > 0 && odo < medKm * 0.9) {
+    selling.push(`low kilometres (this unit's ${fmtN(odo)} km is below the ~${fmtN(medKm)} km typical of comparable listings)`);
+  }
+  // Carfax-derived claims — ONLY if Carfax is actually pulled and shows it.
+  const cfx = v.carfax;
+  if (cfx) {
+    if (cfx.clean === true || cfx.accidents === 0) selling.push('no reported accidents (per Carfax)');
+    if (cfx.owners === 1) selling.push('one owner (per Carfax)');
+    if (cfx.service_records && Number(cfx.service_records) > 0) selling.push('service history on file (per Carfax)');
+  }
+  // CPO / certified, if flagged on the vehicle.
+  if (v.certified) selling.push('certified pre-owned');
+
   content.push({type:'text',text:
-`You are helping a Canadian used-car dealership list a vehicle. ${hasPhotos?`You are given ${content.length-0} photo(s) of THIS vehicle plus its known data.`:'You are given the vehicle data (no photos provided).'}
+`You are an expert automotive copywriter helping a Canadian used-car dealership write a vehicle listing. ${hasPhotos?`You are given ${content.length-0} photo(s) of THIS exact vehicle plus its known data.`:'You are given the vehicle data (no photos provided).'}
 
 Vehicle: ${facts}
-Known features (may be incomplete): ${v.features?.join(', ')||'none listed'}
+Known features already on file: ${v.features?.join(', ')||'none listed'}
 Notes: ${v.notes||'none'}
+VERIFIED selling points you MAY use (these are backed by data — use the relevant ones naturally): ${selling.length?selling.join('; '):'none verified — do NOT claim low km, accident-free, or one-owner status'}
 
-Do ALL of the following and respond with STRICT JSON only — no prose, no markdown:
+CRITICAL ACCURACY RULES — a wrong claim in a published ad creates liability for the dealer:
+- OPTIONS: List ONLY equipment that is genuinely STANDARD on this EXACT trim, PLUS anything you can clearly SEE in the photos. Do NOT list options that "usually" or "typically" or "may" come on this model. If you are not certain it is standard on this specific trim (or visible in a photo), DO NOT list it. A shorter, correct list is required over a longer, speculative one.
+- SELLING PHRASES: You may ONLY use "low kilometres", "no accidents"/"clean history", "one owner", or "certified" if they appear in the VERIFIED selling points above. If a claim is not in that list, you MUST NOT state it.
+- Never invent colours, packages, or history.
+
+Write the DESCRIPTION to be sales-oriented and SEO-friendly for AutoTrader/CarGurus:
+- Lead with the year/make/model/trim (good for search).
+- Weave in the key standard features/options so the description is information-rich (buyers and search engines reward detail).
+- Naturally include the VERIFIED selling phrases (e.g. "low kilometres", "no reported accidents", "one owner") where applicable — these help trigger marketplace value badges.
+- Compelling and professional, but honest. No emojis. 4-6 sentences is fine here (richer is better for SEO), up to ~600 characters.
+
+Respond with STRICT JSON only — no prose, no markdown:
 {
-  "description": "A compelling, honest listing description for this vehicle. 3-4 sentences, max ~280 characters, no emojis.",
-  "options": ["array of notable features/options this trim is known to include, PLUS any equipment you can clearly see in the photos (e.g. sunroof, alloy wheels, leather, navigation screen, backup camera). Combine with the known features. Only list things you're reasonably confident about."],
-  "damageFlags": [${hasPhotos?'"array of POSSIBLE visible damage or wear you notice in the photos that the appraiser should VERIFY IN PERSON — e.g. a possible scratch on the rear bumper, curb rash on a front wheel. These are flags to check, NOT a condition assessment. If you see nothing notable, return an empty array."':''}]
-}
-${hasPhotos?'For options and damage, only report what you can actually see or what is standard for this exact trim. Do not invent options. For damage, be conservative and always frame as something to verify, never as a definitive defect.':'Infer options from the trim only. Return empty damageFlags.'}`});
+  "description": "the rich, sales-oriented, SEO-friendly description following all rules above",
+  "options": ["ONLY verified-standard-for-this-trim or clearly-visible-in-photo equipment — no guesses"],
+  "damageFlags": [${hasPhotos?'"POSSIBLE visible damage or wear in the photos for the appraiser to VERIFY IN PERSON (e.g. a possible scratch on the rear bumper, curb rash on a front wheel). Flags to check, NOT a condition assessment. Empty array if nothing notable."':''}]
+}`});
 
   const res = await fetch(`${API_BASE}/api/claude`,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({
     model:'claude-sonnet-4-6',
-    max_tokens:700,
+    max_tokens:900,
     messages:[{role:'user',content}]
   })});
   const data = await res.json();
