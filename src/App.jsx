@@ -216,6 +216,10 @@ const DEFAULT_DEALER = {name:'Your Dealership',logo:null,address:'123 Main Stree
 // Backend base URL. In production set VITE_API_URL (e.g. your Railway URL,
 // no trailing slash) in Netlify env vars. Falls back to local dev server.
 const API_BASE = (import.meta.env.VITE_API_URL || 'http://localhost:3001').replace(/\/$/, '');
+// Shared secret for private (team) API endpoints — set VITE_TEAM_KEY in Netlify
+// to match the backend's TEAM_API_KEY. Sent as x-vantage-key on team calls.
+const TEAM_KEY = import.meta.env.VITE_TEAM_KEY || '';
+const teamHeaders = (extra={}) => TEAM_KEY ? {...extra,'x-vantage-key':TEAM_KEY} : extra;
 
 // Safely parse a fetch Response as JSON. The backend (Railway) can return an
 // HTML page instead of JSON — e.g. a 502/503 gateway page during a cold start,
@@ -3267,7 +3271,7 @@ export default function Vantage() {
   const loadLeads=useCallback(async()=>{
     setLeadsLoading(true);
     try{
-      const r=await fetch(`${API_BASE}/api/leads?status=pending`);
+      const r=await fetch(`${API_BASE}/api/leads?status=pending`,{headers:teamHeaders()});
       const d=await r.json();
       if(d&&Array.isArray(d.leads)) setLeads(d.leads);
     }catch{/* backend may be cold-starting; leave as-is */}
@@ -3277,7 +3281,7 @@ export default function Vantage() {
   // Mark a lead worked (converted/dismissed) on the backend, then refresh.
   const updateLeadStatus=useCallback(async(id,status)=>{
     try{
-      await fetch(`${API_BASE}/api/leads/${id}`,{method:'PATCH',headers:{'Content-Type':'application/json'},body:JSON.stringify({status})});
+      await fetch(`${API_BASE}/api/leads/${id}`,{method:'PATCH',headers:teamHeaders({'Content-Type':'application/json'}),body:JSON.stringify({status})});
     }catch{}
     loadLeads();
   },[loadLeads]);

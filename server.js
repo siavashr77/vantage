@@ -1,5 +1,7 @@
 import express from 'express'
 import cors from 'cors'
+import helmet from 'helmet'
+import rateLimit from 'express-rate-limit'
 import fetch from 'node-fetch'
 import { readFileSync } from 'fs'
 import pg from 'pg'
@@ -9,11 +11,70 @@ const app = express()
 // Railway (and most hosts) inject PORT; fall back to 3001 for local dev.
 const PORT = process.env.PORT || 3001
 
-// Restrict CORS to your frontend in production by setting ALLOWED_ORIGIN
-// (e.g. https://your-site.netlify.app). If unset, allow all (local dev).
+// Behind Railway's proxy — needed so express-rate-limit sees real client IPs
+// (via X-Forwarded-For) instead of the proxy's IP.
+app.set('trust proxy', 1)
+
+// ── Security headers (helmet) ────────────────────────────────────────
+// Sensible defaults. CSP is left off here because the API serves JSON, not
+// HTML; the frontend (Netlify) sets its own headers via public/_headers.
+app.use(helmet({ contentSecurityPolicy: false, crossOriginResourcePolicy: { policy: 'cross-origin' } }))
+
+// ── CORS ─────────────────────────────────────────────────────────────
+// Restrict to your frontend origin(s) in production by setting ALLOWED_ORIGIN
+// (comma-separated list, e.g. "https://your-site.netlify.app,https://app.yourdomain.com").
+// If unset, allow all (local dev only — ALWAYS set this in production).
 const ALLOWED_ORIGIN = process.env.ALLOWED_ORIGIN || ''
-app.use(cors(ALLOWED_ORIGIN ? { origin: ALLOWED_ORIGIN } : {}))
+const allowedOrigins = ALLOWED_ORIGIN.split(',').map(s => s.trim()).filter(Boolean)
+app.use(cors(allowedOrigins.length ? {
+  origin(origin, cb) {
+    // Allow same-origin / server-to-server (no Origin header) and whitelisted origins.
+    if (!origin || allowedOrigins.includes(origin)) return cb(null, true)
+    return cb(new Error('Not allowed by CORS'))
+  },
+} : {}))
 app.use(express.json({ limit: '12mb' }))
+
+// ── Rate limiting ────────────────────────────────────────────────────
+// Two tiers. The general limiter covers everything; the strict limiter guards
+// the expensive/public endpoints (each call can trigger a PAID VinAudit lookup
+// and/or an Anthropic call) so the public can't drain the API budget or flood us.
+const generalLimiter = rateLimit({
+  windowMs: 60 * 1000, max: 120,            // 120 req/min/IP across the API
+  standardHeaders: true, legacyHeaders: false,
+  message: { error: 'Too many requests — please slow down.' },
+})
+const strictLimiter = rateLimit({
+  windowMs: 60 * 1000, max: 15,             // 15 req/min/IP on costly/public routes
+  standardHeaders: true, legacyHeaders: false,
+  message: { error: 'Too many requests — please try again in a minute.' },
+})
+app.use('/api/', generalLimiter)
+
+// ── Input validation helpers ─────────────────────────────────────────
+const isVin = v => typeof v === 'string' && /^[A-HJ-NPR-Z0-9]{17}$/i.test(v)
+const cleanStr = (v, max = 200) => (v == null ? null : String(v).trim().slice(0, max) || null)
+const isPostal = v => typeof v === 'string' && /^[A-Za-z]\d[A-Za-z]/.test(v.trim())
+
+// ── Team auth gate ───────────────────────────────────────────────────
+// Private endpoints (reading/managing the customer-lead database) require a
+// shared secret that only the Vantage frontend knows, sent as x-vantage-key.
+// The PUBLIC widget endpoints (lead submission, offer prefetch, VIN decode,
+// market) do NOT use this — customers must be able to call them anonymously.
+//
+// NOTE (handover): this is a shared-secret gate, not real per-user auth. It
+// stops the public + other sites from reading your lead database and is a solid
+// interim control, but a secret shipped to the browser can ultimately be
+// extracted. Real auth (server-enforced, per-user sessions) is the backend-phase
+// replacement. If TEAM_API_KEY is unset, the gate is OPEN (logs a warning) so
+// local dev and the current setup don't break — SET IT IN PRODUCTION.
+const TEAM_API_KEY = process.env.TEAM_API_KEY || ''
+function requireTeamKey(req, res, next) {
+  if (!TEAM_API_KEY) return next() // unset → open (dev/legacy); warn at boot below
+  const key = req.get('x-vantage-key') || ''
+  if (key && key === TEAM_API_KEY) return next()
+  return res.status(401).json({ error: 'Unauthorized' })
+}
 
 // ── Postgres dealer-fee ledger ───────────────────────────────────────
 // Railway injects DATABASE_URL when a Postgres service is attached.
@@ -149,7 +210,7 @@ if (!VINAUDIT_KEY) {
 }
 
 // ── VIN DECODE via NHTSA (free, no key needed) ──────────────────────
-app.get('/api/vin/:vin', async (req, res) => {
+app.get('/api/vin/:vin', strictLimiter, async (req, res) => {
   const vin = req.params.vin.toUpperCase().trim()
 
   if (vin.length !== 17) {
@@ -199,7 +260,7 @@ app.get('/api/vin/:vin', async (req, res) => {
 })
 
 // ── CLAUDE AI — descriptions only ───────────────────────────────────
-app.post('/api/claude', async (req, res) => {
+app.post('/api/claude', strictLimiter, async (req, res) => {
   const key = ANTHROPIC_KEY || req.headers['x-api-key'] || ''
   if (!key || key === 'YOUR_ANTHROPIC_API_KEY_HERE') {
     return res.status(400).json({
@@ -753,7 +814,7 @@ async function buildMarketResponse(active, dropped, ctx, res) {
     })
 }
 
-app.get('/api/market/:vin', async (req, res) => {
+app.get('/api/market/:vin', strictLimiter, async (req, res) => {
   const vin = req.params.vin.toUpperCase().trim()
   const postal = (req.query.postal || '').toString().trim()
   // Radius up to national coverage (Canada ~5500km wide) so rare cars can pull
@@ -814,7 +875,7 @@ app.get('/api/market/:vin', async (req, res) => {
 
 // Manual market lookup by year/make/model/trim (no VIN). The client builds a
 // spec_id like "2024_toyota_corolla_le" (or partial: "2024_toyota_corolla").
-app.get('/api/market-by-spec', async (req, res) => {
+app.get('/api/market-by-spec', strictLimiter, async (req, res) => {
   const specId = (req.query.spec_id || '').toString().trim().toLowerCase()
   const postal = (req.query.postal || '').toString().trim()
   const radius = Math.min(Number(req.query.radius) || 250, 6000)
@@ -852,7 +913,7 @@ app.get('/api/market-by-spec', async (req, res) => {
 // ── Check Fees ───────────────────────────────────────────────────────
 // Fetch ONE listing page on demand, extract fees ADDED on top of the
 // advertised price, and record positives so the dealer can be flagged later.
-app.post('/api/fees', async (req, res) => {
+app.post('/api/fees', strictLimiter, async (req, res) => {
   const { url, dealer, vin, source, user } = req.body || {}
   if (!url) return res.status(400).json({ error: 'listing url required' })
   if (!ANTHROPIC_KEY || ANTHROPIC_KEY === 'YOUR_ANTHROPIC_API_KEY_HERE') {
@@ -1018,23 +1079,27 @@ async function marketForLeadRaw({ vin, specId, postal }) {
 // POST /api/leads — widget submission. Computes the offer and (if DB present)
 // stores it as a pending lead. Returns the offer even with no DB so the widget
 // works during setup.
-app.post('/api/leads', async (req, res) => {
+app.post('/api/leads', strictLimiter, async (req, res) => {
   try {
     const b = req.body || {}
-    const name = (b.customerName || '').toString().trim()
-    const email = (b.customerEmail || '').toString().trim()
-    const phone = (b.customerPhone || '').toString().trim()
+    const name = (b.customerName || '').toString().trim().slice(0, 120)
+    const email = (b.customerEmail || '').toString().trim().slice(0, 200)
+    const phone = (b.customerPhone || '').toString().trim().slice(0, 40)
     if (!name) return res.status(400).json({ error: 'Name is required' })
     if (!email && !phone) return res.status(400).json({ error: 'Email or phone is required' })
+    // Honeypot: bots fill hidden fields. If present and non-empty, silently accept
+    // (200) without persisting, so the bot thinks it succeeded.
+    if (b.website || b.company || b._hp) return res.json({ ok: true })
 
     const vin = (b.vin || '').toString().toUpperCase().trim()
-    const postal = (b.postal || '').toString().trim()
-    if (!postal) return res.status(400).json({ error: 'Postal code is required' })
+    if (vin && !isVin(vin)) return res.status(400).json({ error: 'Invalid VIN' })
+    const postal = (b.postal || '').toString().trim().slice(0, 10)
+    if (!postal || !isPostal(postal)) return res.status(400).json({ error: 'Valid postal code is required' })
 
-    let year = (b.year || '').toString().trim()
-    let make = (b.make || '').toString().trim()
-    let model = (b.model || '').toString().trim()
-    let trim = (b.trim || '').toString().trim()
+    let year = (b.year || '').toString().trim().slice(0, 4)
+    let make = (b.make || '').toString().trim().slice(0, 40)
+    let model = (b.model || '').toString().trim().slice(0, 60)
+    let trim = (b.trim || '').toString().trim().slice(0, 60)
 
     // If a VIN is given, decode YMMT from NHTSA so the lead carries clean specs.
     if (vin.length === 17) {
@@ -1183,7 +1248,7 @@ app.post('/api/leads', async (req, res) => {
 // WITHOUT creating a lead or computing a final offer. The widget fires this as
 // soon as it has the vehicle + location, so the heavy VinAudit fetch overlaps
 // with the customer filling in the rest of the form → instant offer at submit.
-app.post('/api/offer/prefetch', async (req, res) => {
+app.post('/api/offer/prefetch', strictLimiter, async (req, res) => {
   try {
     const b = req.body || {}
     const vin = (b.vin || '').toString().toUpperCase().trim()
@@ -1218,7 +1283,7 @@ app.post('/api/offer/prefetch', async (req, res) => {
 })
 
 // GET /api/leads — Vantage reads pending leads (newest first). Optional ?status=
-app.get('/api/leads', async (req, res) => {
+app.get('/api/leads', requireTeamKey, async (req, res) => {
   if (!pool) return res.json({ success: true, leads: [], dbConnected: false })
   try {
     const status = (req.query.status || '').toString().trim()
@@ -1236,7 +1301,7 @@ app.get('/api/leads', async (req, res) => {
 })
 
 // PATCH /api/leads/:id — update status (e.g. converted/dismissed).
-app.patch('/api/leads/:id', async (req, res) => {
+app.patch('/api/leads/:id', requireTeamKey, async (req, res) => {
   if (!pool) return res.status(503).json({ error: 'No database connected' })
   const id = Number(req.params.id)
   const status = (req.body?.status || '').toString().trim()
@@ -1270,7 +1335,7 @@ app.get('/api/health', (req, res) => {
 // this returns deterministic mock data so the UI works. The frontend calls this
 // route, so wiring the real API later requires NO frontend changes.
 const CARFAX_API_KEY = process.env.CARFAX_API_KEY || ''
-app.get('/api/carfax/:vin', async (req, res) => {
+app.get('/api/carfax/:vin', strictLimiter, async (req, res) => {
   const vin = (req.params.vin || '').toUpperCase().trim()
   if (vin.length !== 17) return res.status(400).json({ error: 'VIN must be 17 characters' })
 
@@ -1323,5 +1388,10 @@ app.listen(PORT, () => {
   const aiStatus = ANTHROPIC_KEY && ANTHROPIC_KEY !== 'YOUR_ANTHROPIC_API_KEY_HERE'
     ? 'configured ✅'
     : 'not configured — add key to config.json for AI descriptions'
-  console.log(`   AI descriptions: ${aiStatus}\n`)
+  console.log(`   AI descriptions: ${aiStatus}`)
+  // Security posture at boot — make gaps loud so they're not missed in prod.
+  console.log(`   ── Security ──`)
+  console.log(`   CORS: ${allowedOrigins.length ? `restricted to ${allowedOrigins.join(', ')} ✅` : '⚠ OPEN (set ALLOWED_ORIGIN in production)'}`)
+  console.log(`   Team API gate: ${TEAM_API_KEY ? 'enabled ✅' : '⚠ OPEN — lead read/modify endpoints are PUBLIC (set TEAM_API_KEY in production)'}`)
+  console.log(`   Rate limiting: enabled ✅ (general 120/min, strict 15/min)\n`)
 })

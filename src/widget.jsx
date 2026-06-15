@@ -112,6 +112,7 @@ function Widget() {
   const [name, setName] = useState('')
   const [email, setEmail] = useState('')
   const [phone, setPhone] = useState('')
+  const [hp, setHp] = useState('') // honeypot — hidden; bots fill it, humans don't
 
   // Submission
   const [submitting, setSubmitting] = useState(false)
@@ -203,6 +204,7 @@ function Widget() {
       accident: accident === true,
       accidentAmount: accident === true && accidentAmount ? Number(accidentAmount) : null,
       customerName: name.trim(), customerEmail: email.trim(), customerPhone: phone.trim(),
+      website: hp, // honeypot — real users leave this empty
       // Appraiser info (does not affect the offer)
       conditionOpinion: conditionOpinion || null,
       knownIssues: knownIssues.trim() || null,
@@ -456,6 +458,8 @@ function Widget() {
               <div><label style={label}>Your name</label><input style={input} value={name} onChange={e => setName(e.target.value)} placeholder="Full name" /></div>
               <div style={{ marginTop: 14 }}><label style={label}>Email</label><input style={input} type="email" value={email} onChange={e => setEmail(e.target.value)} placeholder="you@email.com" /></div>
               <div style={{ marginTop: 14 }}><label style={label}>Phone</label><input style={input} type="tel" value={phone} onChange={e => setPhone(e.target.value)} placeholder="(416) 555-0123" /></div>
+              {/* Honeypot — hidden from humans, bots tend to fill it. Off-screen + aria-hidden + no autocomplete. */}
+              <input type="text" name="website" tabIndex={-1} autoComplete="off" aria-hidden="true" value={hp} onChange={e => setHp(e.target.value)} style={{ position: 'absolute', left: '-9999px', width: 1, height: 1, opacity: 0 }} />
               <div style={{ fontSize: 11, color: C.textLight, marginTop: 8 }}>Email or phone — at least one so we can reach you.</div>
               <div style={{ display: 'flex', gap: 8, marginTop: 20 }}>
                 <button style={btnGhost} onClick={() => setStep('details')}>Back</button>
