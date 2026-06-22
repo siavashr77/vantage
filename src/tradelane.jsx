@@ -26,16 +26,32 @@ function scrollToQuote(e) {
   if (el) el.scrollIntoView({ behavior: 'smooth', block: 'start' })
 }
 
+function LogoMark({ size = 32, light }) {
+  // A "lane" mark: a rounded square holding two forward-converging road lines
+  // (a lane narrowing toward the horizon) with a motion chevron — suggests a
+  // road/trade route and forward momentum. Navy tile, teal lane.
+  const tile = light ? '#FFFFFF' : C.navy
+  const lane = C.teal
+  const accent = light ? C.navy : '#FFFFFF'
+  return (
+    <svg width={size} height={size} viewBox="0 0 48 48" fill="none" xmlns="http://www.w3.org/2000/svg" aria-hidden="true">
+      <rect width="48" height="48" rx="11" fill={tile} />
+      {/* Outer lane edges converging upward (perspective road) */}
+      <path d="M12 38 L21 12 L27 12 L36 38" stroke={lane} strokeWidth="3.2" strokeLinecap="round" strokeLinejoin="round" fill="none" />
+      {/* Dashed centre line */}
+      <path d="M24 35 L24 30 M24 26 L24 22 M24 18 L24 15" stroke={accent} strokeWidth="2.6" strokeLinecap="round" />
+      {/* Forward motion chevron at the horizon */}
+      <path d="M20 13 L24 8 L28 13" stroke={lane} strokeWidth="3.2" strokeLinecap="round" strokeLinejoin="round" fill="none" />
+    </svg>
+  )
+}
+
 function Logo({ light }) {
   const main = light ? '#fff' : C.navy
   return (
-    <div style={{ display: 'flex', alignItems: 'center', gap: 9 }}>
-      <div style={{
-        width: 30, height: 30, borderRadius: 8, background: C.teal,
-        display: 'flex', alignItems: 'center', justifyContent: 'center',
-        fontWeight: 800, color: '#fff', fontSize: 17, letterSpacing: -0.5,
-      }}>T</div>
-      <span style={{ fontWeight: 800, fontSize: 19, color: main, letterSpacing: -0.4 }}>
+    <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+      <LogoMark size={32} light={light} />
+      <span style={{ fontWeight: 800, fontSize: 20, color: main, letterSpacing: -0.5 }}>
         Trade<span style={{ color: C.teal }}>Lane</span>
       </span>
     </div>
@@ -163,7 +179,11 @@ function QuoteSection() {
               do NOT use id="widget-root" here — that id triggers the widget's own
               self-mount (for the standalone /widget.html), which would double-mount
               and blank out. As a full-page component it just renders inline. */}
-          <div id="tradelane-quote"><Widget /></div>
+          <div id="tradelane-quote"><Widget branding={{
+            title: 'Get your estimate',
+            subtitle: 'Tell us about your vehicle — get a real, market-based estimate.',
+            footer: '',
+          }} /></div>
         </div>
       </div>
     </section>

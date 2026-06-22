@@ -72,7 +72,16 @@ async function fsaFromCoords(lat, lon) {
 
 const YEARS = Array.from({ length: 30 }, (_, i) => String(new Date().getFullYear() + 1 - i))
 
-function Widget() {
+// Branding is overridable so the same engine can power the standalone Vantage
+// widget and the consumer TradeLane site. Defaults preserve the original widget.
+const DEFAULT_BRANDING = {
+  title: 'Get Your Instant Offer',
+  subtitle: 'Tell us about your vehicle — get a real cash offer in seconds.',
+  footer: 'Powered by Vantage',
+}
+
+function Widget({ branding } = {}) {
+  const B = { ...DEFAULT_BRANDING, ...(branding || {}) }
   const [step, setStep] = useState('vehicle')     // vehicle → details → contact → result
   const [vinMode, setVinMode] = useState(true)     // VIN entry vs YMMT dropdowns
 
@@ -263,8 +272,8 @@ function Widget() {
         <div style={card}>
           {/* Header */}
           <div style={{ textAlign: 'center', marginBottom: 20 }}>
-            <div style={{ fontSize: 20, fontWeight: 800, color: C.navy }}>Get Your Instant Offer</div>
-            <div style={{ fontSize: 13, color: C.textLight, marginTop: 4 }}>Tell us about your vehicle — get a real cash offer in seconds.</div>
+            <div style={{ fontSize: 20, fontWeight: 800, color: C.navy }}>{B.title}</div>
+            <div style={{ fontSize: 13, color: C.textLight, marginTop: 4 }}>{B.subtitle}</div>
           </div>
 
           {/* ── STEP: VEHICLE ── */}
@@ -503,7 +512,7 @@ function Widget() {
             </div>
           )}
         </div>
-        <div style={{ textAlign: 'center', fontSize: 11, color: C.textLight, marginTop: 12 }}>Powered by Vantage</div>
+        {B.footer ? <div style={{ textAlign: 'center', fontSize: 11, color: C.textLight, marginTop: 12 }}>{B.footer}</div> : null}
       </div>
     </div>
   )
