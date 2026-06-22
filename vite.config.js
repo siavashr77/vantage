@@ -16,6 +16,9 @@ export default defineConfig({
         // Standalone customer trade-in widget (embedded via embed.js iframe,
         // or linked directly). Builds to /widget.html.
         widget: resolve(__dirname, 'widget.html'),
+        // TradeLane — consumer "sell us your car" marketing site. Wraps the
+        // shared quote widget in a full landing page. Builds to /tradelane.html.
+        tradelane: resolve(__dirname, 'tradelane.html'),
       },
     },
   },

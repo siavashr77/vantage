@@ -504,4 +504,11 @@ function Widget() {
   )
 }
 
-ReactDOM.createRoot(document.getElementById('widget-root')).render(<Widget />)
+export { Widget }
+
+// Auto-mount only when this file is loaded as the standalone embeddable widget
+// (widget.html has #widget-root). When imported by another page (e.g. the
+// TradeLane site) there's no #widget-root, so we skip self-mounting and let the
+// host page render <Widget /> wherever it wants.
+const _widgetRoot = document.getElementById('widget-root')
+if (_widgetRoot) ReactDOM.createRoot(_widgetRoot).render(<Widget />)
