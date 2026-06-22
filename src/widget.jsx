@@ -72,6 +72,27 @@ async function fsaFromCoords(lat, lon) {
 
 const YEARS = Array.from({ length: 30 }, (_, i) => String(new Date().getFullYear() + 1 - i))
 
+// Curated common makes for the Make dropdown (same list Vantage uses). A short,
+// reliable list avoids NHTSA's huge/messy "all makes" feed. Models then load
+// from NHTSA for the chosen year+make — free, and the slugified result matches
+// VinAudit's spec_id format, so the market lookup gets clean inputs.
+const MAKES = ['Acura','Alfa Romeo','Audi','BMW','Buick','Cadillac','Chevrolet','Chrysler','Dodge','Fiat','Ford','Genesis','GMC','Honda','Hyundai','Infiniti','Jaguar','Jeep','Kia','Land Rover','Lexus','Lincoln','Maserati','Mazda','Mercedes-Benz','MINI','Mitsubishi','Nissan','Polestar','Porsche','Ram','Subaru','Tesla','Toyota','Volkswagen','Volvo']
+
+const _modelsCache = {}
+async function fetchModelsFor(year, make) {
+  if (!year || !make) return []
+  const key = `${year}|${make}`.toLowerCase()
+  if (_modelsCache[key]) return _modelsCache[key]
+  try {
+    const url = `https://vpic.nhtsa.dot.gov/api/vehicles/getmodelsformakeyear/make/${encodeURIComponent(make)}/modelyear/${year}?format=json`
+    const r = await fetch(url)
+    const d = await r.json()
+    const models = [...new Set((d.Results || []).map(m => m.Model_Name).filter(Boolean))].sort()
+    _modelsCache[key] = models
+    return models
+  } catch { return [] }
+}
+
 // Branding is overridable so the same engine can power the standalone Vantage
 // widget and the consumer TradeLane site. Defaults preserve the original widget.
 const DEFAULT_BRANDING = {
@@ -94,6 +115,18 @@ function Widget({ branding } = {}) {
   const [make, setMake] = useState('')
   const [model, setModel] = useState('')
   const [trim, setTrim] = useState('')
+  const [models, setModels] = useState([])           // NHTSA models for year+make
+  const [loadingModels, setLoadingModels] = useState(false)
+
+  // When year+make are chosen, load the model list (cascading dropdown).
+  useEffect(() => {
+    let cancelled = false
+    if (year && make) {
+      setLoadingModels(true)
+      fetchModelsFor(year, make).then(ms => { if (!cancelled) { setModels(ms); setLoadingModels(false) } })
+    } else { setModels([]) }
+    return () => { cancelled = true }
+  }, [year, make])
 
   // Location
   const [fsa, setFsa] = useState('')
@@ -308,18 +341,31 @@ function Widget({ branding } = {}) {
                 <div style={{ display: 'grid', gap: 12 }}>
                   <div>
                     <label style={label}>Year</label>
-                    <select style={input} value={year} onChange={e => setYear(e.target.value)}>
+                    <select style={input} value={year} onChange={e => { setYear(e.target.value); setModel('') }}>
                       <option value="">Select year</option>
                       {YEARS.map(y => <option key={y} value={y}>{y}</option>)}
                     </select>
                   </div>
                   <div>
                     <label style={label}>Make</label>
-                    <input style={input} value={make} onChange={e => setMake(e.target.value)} placeholder="e.g. Toyota" />
+                    <select style={input} value={make} onChange={e => { setMake(e.target.value); setModel('') }}>
+                      <option value="">Select make</option>
+                      {MAKES.map(m => <option key={m} value={m}>{m}</option>)}
+                    </select>
                   </div>
                   <div>
-                    <label style={label}>Model</label>
-                    <input style={input} value={model} onChange={e => setModel(e.target.value)} placeholder="e.g. RAV4" />
+                    <label style={label}>Model {loadingModels && <span style={{ color: C.textLight, fontWeight: 400 }}>loading…</span>}</label>
+                    {models.length > 0 ? (
+                      <select style={input} value={model} onChange={e => setModel(e.target.value)} disabled={!make}>
+                        <option value="">Select model</option>
+                        {models.map(m => <option key={m} value={m}>{m}</option>)}
+                      </select>
+                    ) : (
+                      // Fallback to text if NHTSA returns nothing for this year+make,
+                      // so no vehicle is ever un-submittable.
+                      <input style={input} value={model} onChange={e => setModel(e.target.value)}
+                        placeholder={make ? (loadingModels ? 'Loading models…' : 'Type your model') : 'Choose make first'} disabled={!make} />
+                    )}
                   </div>
                   <div>
                     <label style={label}>Trim <span style={{ color: C.textLight, fontWeight: 400 }}>(optional)</span></label>
