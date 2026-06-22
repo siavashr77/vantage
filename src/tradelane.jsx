@@ -159,9 +159,11 @@ function QuoteSection() {
         <div style={{
           background: C.bg, border: `1px solid ${C.border}`, borderRadius: 16, padding: '8px 8px 4px',
         }}>
-          {/* Reuse the shared quote engine. The #widget-root id lets the widget's
-              ResizeObserver work; here it renders inline (full-page, not iframe). */}
-          <div id="widget-root"><Widget /></div>
+          {/* Render the shared quote engine as a normal component. We deliberately
+              do NOT use id="widget-root" here — that id triggers the widget's own
+              self-mount (for the standalone /widget.html), which would double-mount
+              and blank out. As a full-page component it just renders inline. */}
+          <div id="tradelane-quote"><Widget /></div>
         </div>
       </div>
     </section>

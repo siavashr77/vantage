@@ -123,8 +123,13 @@ function Widget() {
   // Keep the iframe sized to content.
   useEffect(() => { postHeight() })
   useEffect(() => {
+    // Only observe when running as the standalone iframe widget (where
+    // #widget-root exists). When embedded as a component (e.g. the TradeLane
+    // page) there's no #widget-root and no iframe to resize — skip it.
+    const el = document.getElementById('widget-root')
+    if (!el) return
     const ro = new ResizeObserver(postHeight)
-    ro.observe(document.getElementById('widget-root'))
+    ro.observe(el)
     return () => ro.disconnect()
   }, [])
 
