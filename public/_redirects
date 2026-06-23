@@ -1,11 +1,7 @@
-# TradeLane consumer site (tradelane.ca) — serve the TradeLane page at the
-# root for that host only. MUST come before the widget + SPA catch-alls.
-# Other hosts (the Vantage Netlify URL) fall through to the app rules below.
-/*   /tradelane.html   200   Host=tradelane.ca
-/*   /tradelane.html   200   Host=www.tradelane.ca
-
 # Widget standalone page (must come BEFORE the SPA catch-all)
 /widget        /widget.html   200
 /widget.html   /widget.html   200
-# Main app SPA fallback
+# Main app SPA fallback. On the TradeLane site, the build step replaces
+# index.html with the TradeLane page (via SITE_TARGET=tradelane), so this
+# correctly serves TradeLane there and the Vantage app everywhere else.
 /*             /index.html    200
