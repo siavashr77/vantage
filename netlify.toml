@@ -2,7 +2,24 @@
   command = "npm run build"
   publish = "dist"
 
-# SPA fallback — also covered by public/_redirects, kept here as a backstop
+# ── Host-based routing ────────────────────────────────────────────────
+# The TradeLane consumer site (tradelane.ca) and the Vantage dealer app
+# share this repo and build. These rules make tradelane.ca serve the
+# TradeLane page at its root, while every other host (the Vantage Netlify
+# URL) keeps serving the dealer app. Host-conditional rules are listed
+# BEFORE the generic SPA fallback so they take priority for that host.
+
+# tradelane.ca (apex + www): serve the TradeLane page at the root and for
+# any path, rewritten (status 200) so the address bar stays on tradelane.ca.
+[[redirects]]
+  from = "/*"
+  to = "/tradelane.html"
+  status = 200
+  force = true
+  conditions = {Host = ["tradelane.ca", "www.tradelane.ca"]}
+
+# SPA fallback for the Vantage app (all other hosts) — also covered by
+# public/_redirects, kept here as a backstop.
 [[redirects]]
   from = "/*"
   to = "/index.html"
