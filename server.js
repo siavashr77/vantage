@@ -407,9 +407,18 @@ function normalizeTrim(s) {
   let t = (s || '').toString().toLowerCase()
   if (!t) return ''
   t = t
+    // Drivetrain isn't trim — handled by its own filter.
     .replace(/\b(awd|fwd|rwd|4wd|2wd|4x4|4x2|all.?wheel|front.?wheel|rear.?wheel)\b/g, ' ')
+    // Driver-assist / option packages that ride along with EVERY trim of a model
+    // (Subaru EyeSight, Honda Sensing, Toyota Safety Sense...). Left in, they
+    // become shared tokens that make unlike trims look alike.
+    .replace(/\b(with|w)\s*\/?\s*(eyesight|sensing|safety\s*sense|technology|tech)\b.*$/g, ' ')
     .replace(/\bw\/.*$/g, ' ')
-    .replace(/\b(package|pkg|convenience|tech|premium|plus|cvt|sedan|hatchback|us|canada|source)\b/g, ' ')
+    // Body/transmission/market noise only. NOTE: do NOT strip words that are
+    // real trim names on some makes — 'Convenience', 'Premium', 'Plus' and
+    // 'Touring' are Subaru/Honda trims, and removing them collapsed distinct
+    // trims into the same token set (a Convenience matched every EyeSight car).
+    .replace(/\b(package|pkg|cvt|automatic|sedan|hatchback|coupe|wagon|us|canada|source)\b/g, ' ')
     .replace(/[^a-z0-9 ]+/g, ' ')
     .replace(/\s+/g, ' ')
     .trim()
@@ -1091,6 +1100,7 @@ async function buildMarketResponse(active, dropped, ctx, res) {
     // whose trim/title contains that trim token — so an LE subject isn't priced
     // against SE/XSE. Matching is token-based and case-insensitive, and tolerant
     // of suffixes ("LE FWD", "LE w/Tech"). Comps with no trim info are kept.
+    let trimMixed = false, trimMatchCount = null
     const subjectTrim = normalizeTrim(req.query.trim)
     if (subjectTrim) {
       const matchesTrim = c => {
@@ -1102,6 +1112,13 @@ async function buildMarketResponse(active, dropped, ctx, res) {
       const fa = activeComps.filter(matchesTrim)
       const fs = soldComps.filter(matchesTrim)
       if (fa.length >= Math.min(3, beforeA)) { activeComps = fa; soldComps = fs }
+      else {
+        // Too few same-trim comps to price against. We keep the wider set so the
+        // appraiser still gets a band, but flag it — silently showing other
+        // trims as if they were matches is how a bad number gets trusted.
+        trimMixed = true
+        trimMatchCount = fa.length
+      }
     }
 
     // ── Price-outlier trim ──
@@ -1157,6 +1174,9 @@ async function buildMarketResponse(active, dropped, ctx, res) {
       meta: {
         matchMode: match,         // 'trim' = strict, 'model' = widened
         widened,                  // true if we had to loosen matching
+        trimMixed,                // true = comps include OTHER trims (too few exact)
+        trimMatchCount,           // how many comps actually matched the subject trim
+        subjectTrim: req.query.trim || '',
         comps: stats.comps,       // ACTIVE listings the estimate rests on
         activeCount: activeComps.length,
         droppedCount: soldComps.length,

@@ -2292,6 +2292,12 @@ function AppraisalForm({initial,onSave,onBack,showToast,onConvert,onFinalize,onU
       </Sec>
 
       <Sec title="Market Intelligence" icon={BarChart2} tone="blue" badge={a.marketMid?(marketStale?'Updating…':'Live Data'):'No Data'}>
+        {a._marketMeta?.trimMixed&&!marketStale&&(
+          <div style={{margin:'0 0 10px',padding:'8px 12px',background:'#FEF2F2',border:`1px solid ${C.red}`,borderRadius:6,fontSize:11,color:C.textMid,display:'flex',alignItems:'flex-start',gap:8}}>
+            <AlertTriangle size={12} color={C.red} style={{flexShrink:0,marginTop:1}}/>
+            <span>Only <strong>{a._marketMeta.trimMatchCount??0}</strong> comparable{(a._marketMeta.trimMatchCount??0)===1?'':'s'} matched <strong>{a._marketMeta.subjectTrim||'this trim'}</strong> — too few to price against, so the figures below include <strong>other trims</strong>. Review the comps before relying on this band.</span>
+          </div>
+        )}
         {marketStale&&(
           <div style={{margin:'0 0 10px',padding:'8px 12px',background:'#FFF7ED',border:`1px solid ${C.orange}`,borderRadius:6,fontSize:11,color:C.textMid,display:'flex',alignItems:'center',gap:8}}>
             <RefreshCw size={12} color={C.orange}/>
