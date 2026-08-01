@@ -262,6 +262,30 @@ app.get('/api/vin/:vin', strictLimiter, async (req, res) => {
       _vin:         vin,
     }
 
+    // ── Enrich with NeoVIN (cached, one paid decode per VIN ever) ──
+    // NHTSA is weak on trim — often blank for Japanese/Korean makes. NeoVIN
+    // returns the confirmed trim ("Sport with EyeSight"), drivetrain, engine and
+    // colour, which is what the appraisal form actually needs. Only fills gaps /
+    // upgrades weak values; never blanks out something NHTSA got right.
+    try {
+      const neo = await decodeVinRich(vin)
+      if (neo) {
+        if (neo.trim) decoded.series = neo.trim          // the big one
+        if (neo.drivetrain) decoded.drivetrain = neo.drivetrain
+        if (neo.engine) decoded.engine = neo.engine
+        if (neo.transmission) decoded.transmission = neo.transmission
+        if (neo.bodyType) decoded.bodyType = neo.bodyType
+        if (neo.extColour) decoded.extColour = neo.extColour
+        if (neo.intColour) decoded.intColour = neo.intColour
+        if (neo.year && !decoded.year) decoded.year = String(neo.year)
+        if (neo.make && !decoded.make) decoded.make = neo.make
+        if (neo.model && !decoded.model) decoded.model = neo.model
+        decoded._decodeSource = 'neovin'
+        if (neo.version) decoded._version = neo.version
+        if (neo.msrp) decoded._msrp = neo.msrp
+      }
+    } catch (e) { /* NeoVIN optional — NHTSA result still returned */ }
+
     res.json({ success: true, data: decoded })
   } catch (err) {
     console.error('VIN decode error:', err.message)
@@ -535,6 +559,69 @@ async function decodeVinNHTSA(vin) {
   } catch { return null }
 }
 
+// Full NeoVIN field set for the appraisal form (cached alongside the search
+// decode — same Postgres row, so still one paid decode per VIN ever).
+async function decodeVinRich(vin) {
+  if (!vin || vin.length !== 17 || !USE_NEOVIN || !MARKETCHECK_API_KEY) return null
+  const V = vin.toUpperCase().trim()
+  if (pool) {
+    try {
+      const r = await pool.query('SELECT decoded FROM vin_decode_cache WHERE vin=$1', [V])
+      if (r.rows[0] && r.rows[0].decoded && r.rows[0].decoded.trim !== undefined) return r.rows[0].decoded
+    } catch {}
+  }
+  try {
+    const url = `${MC_HOST}/decode/car/neovin/${V}/specs?api_key=${encodeURIComponent(MARKETCHECK_API_KEY)}`
+    const r = await fetch(url)
+    if (!r.ok) return null
+    const d = await r.json()
+    const v = d && (d.data || d)
+    if (!v || !v.make) return null
+    const out = {
+      year: v.year || '', make: v.make || '', model: v.model || '',
+      trim: v.trim || '',
+      version: v.version || '',
+      drivetrain: normalizeDriveLabel(v.drivetrain, v.installed_equipment),
+      engine: v.engine || '',
+      transmission: v.transmission || '',
+      bodyType: v.body_type || '',
+      extColour: (v.exterior_color && v.exterior_color.name) || '',
+      intColour: (v.interior_color && v.interior_color.name) || '',
+      msrp: v.msrp || null,
+      source: 'neovin',
+    }
+    if (pool) {
+      try {
+        await pool.query(
+          `INSERT INTO vin_decode_cache(vin, decoded, source) VALUES($1,$2,'neovin')
+           ON CONFLICT (vin) DO UPDATE SET decoded=$2, source='neovin', cached_at=now()`,
+          [V, JSON.stringify(out)]
+        )
+      } catch {}
+    }
+    return out
+  } catch { return null }
+}
+
+// NeoVIN's `drivetrain` is unreliable for AWD crossovers — it reports "4WD" for
+// cars the market lists as "AWD" (e.g. Subaru Crosstrek). Prefer the
+// North-America 4WD type in installed_equipment when present.
+function normalizeDriveLabel(dt, equipment) {
+  let out = (dt || '').toUpperCase()
+  try {
+    const std = equipment && equipment.STANDARD
+    if (Array.isArray(std)) {
+      const na = std.find(e => e && /North America 4WD type/i.test(e.attribute || ''))
+      if (na && na.value) out = String(na.value).toUpperCase()
+    }
+  } catch {}
+  if (/ALL/.test(out)) return 'AWD'
+  if (/FRONT/.test(out)) return 'FWD'
+  if (/REAR/.test(out)) return 'RWD'
+  if (/FOUR|4X4/.test(out)) return '4WD'
+  return out
+}
+
 async function decodeVinNeoVIN(vin) {
   if (!MARKETCHECK_API_KEY) return null
   try {
@@ -630,8 +717,11 @@ async function fetchListingsMarketCheck({ vin, specId, match, status, postal, ra
         // Trim: prefer caller-supplied (frontend decode) else NeoVIN's.
         const trim = (callerTrim || dec.trim || '').trim()
         if (trim) params.set('trim', trim)
-        const drive = (callerDrive || dec.drivetrain || '').trim()
-        if (drive) params.set('drivetrain', drive)
+        // NOTE: we deliberately do NOT send drivetrain to MarketCheck. Decoder
+        // and marketplace labels disagree (NeoVIN says "4WD" for a Subaru
+        // Crosstrek the market lists as "AWD"), which silently returns ZERO
+        // results and forces an unnecessary widen. The downstream matchesDrive
+        // filter handles drivetrain correctly on the returned comps instead.
       }
     } else {
       params.set('vin', vin)   // decode failed → exact VIN beats nothing
