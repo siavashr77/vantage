@@ -1959,6 +1959,23 @@ function AppraisalForm({initial,onSave,onBack,showToast,onConvert,onFinalize,onU
     return()=>clearTimeout(autoSaveRef.current);
   },[a,isDirty]);
 
+  // ── Keep the market estimate in step with the trim ──────────────
+  // The band is trim-sensitive (an XLT and a Platinum are different markets),
+  // so once market data exists, changing trim/drivetrain makes it stale. Flag
+  // it immediately, then re-run the lookup after a short debounce so toggling
+  // through the picker doesn't fire a request per keystroke.
+  const mktRefreshRef=useRef(null);
+  const marketStale = !!a.marketMid && a._marketTrim!==undefined &&
+    ((a.series||'')!==(a._marketTrim||'') || (a.drivetrain||'')!==(a._marketDrive||''));
+  useEffect(()=>{
+    if(locked) return;
+    if(!marketStale) return;
+    if(a.vin?.length!==17) return;
+    clearTimeout(mktRefreshRef.current);
+    mktRefreshRef.current=setTimeout(()=>{ fetchMkt(); },1200);
+    return()=>clearTimeout(mktRefreshRef.current);
+  },[a.series,a.drivetrain,marketStale,locked]);
+
   function forceSave(){
     onSave(aRef.current, true); // silent
     setSavedAt(new Date().toISOString());
@@ -1980,7 +1997,7 @@ function AppraisalForm({initial,onSave,onBack,showToast,onConvert,onFinalize,onU
       const m=await fetchMarketData(a.vin,postal,a.searchDistance||250,a.drivetrain||"",a.series||"");
       if(!m.found){showToast(m.message||'No Canadian comps found for this vehicle','warning');setMl(false);return;}
       const note=`${m.meta.comps} comps · ${m.meta.matchMode==='trim'?'trim match':'model match'}${m.meta.widened?' (widened)':''}`;
-      setA(p=>{const next=withLog({...p,marketLow:m.marketLow,marketMid:m.marketMid,marketHigh:m.marketHigh,marketAvgPrice:m.marketAvgPrice,activeComps:m.activeComps,marketDaysSupply:m.marketDaysSupply,marketDaySupply:m.marketDaySupply,medianDaysListed:m.medianDaysListed,_soldStats:m.soldStats,marketDataFetched:m.marketDataFetched,_marketMeta:m.meta,_medianCompMileage:m.medianCompMileage,_comps:m.comps,updatedAt:new Date().toISOString()},[logEvent('Market Data',`mid ${fmt(m.marketMid)} · ${note}`,user)]);aRef.current=next;return next;});
+      setA(p=>{const next=withLog({...p,marketLow:m.marketLow,marketMid:m.marketMid,marketHigh:m.marketHigh,marketAvgPrice:m.marketAvgPrice,activeComps:m.activeComps,marketDaysSupply:m.marketDaysSupply,marketDaySupply:m.marketDaySupply,medianDaysListed:m.medianDaysListed,_soldStats:m.soldStats,marketDataFetched:m.marketDataFetched,_marketMeta:m.meta,_medianCompMileage:m.medianCompMileage,_comps:m.comps,_marketTrim:(a.series||''),_marketDrive:(a.drivetrain||''),updatedAt:new Date().toISOString()},[logEvent('Market Data',`mid ${fmt(m.marketMid)} · ${note}`,user)]);aRef.current=next;return next;});
       setIsDirty(true);
       showToast(`Market: ${note}`,'success');
     }catch(e){showToast(e.message||'Market data unavailable','error');}
@@ -2274,7 +2291,13 @@ function AppraisalForm({initial,onSave,onBack,showToast,onConvert,onFinalize,onU
         <CarfaxBadge carfax={a.carfax} onFetch={pullCarfax} loading={cl} canPull={can('carfax')}/>
       </Sec>
 
-      <Sec title="Market Intelligence" icon={BarChart2} tone="blue" badge={a.marketMid?'Live Data':'No Data'}>
+      <Sec title="Market Intelligence" icon={BarChart2} tone="blue" badge={a.marketMid?(marketStale?'Updating…':'Live Data'):'No Data'}>
+        {marketStale&&(
+          <div style={{margin:'0 0 10px',padding:'8px 12px',background:'#FFF7ED',border:`1px solid ${C.orange}`,borderRadius:6,fontSize:11,color:C.textMid,display:'flex',alignItems:'center',gap:8}}>
+            <RefreshCw size={12} color={C.orange}/>
+            <span>Trim changed — re-running the market lookup for <strong>{a.series||'this trim'}</strong>. Figures below are from the previous trim.</span>
+          </div>
+        )}
         {/* Competitive Criteria Controls */}
         <div style={{display:'flex',gap:10,marginBottom:12,flexWrap:'wrap',alignItems:'flex-end'}}>
           <div style={{minWidth:0}}>
