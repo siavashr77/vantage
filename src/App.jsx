@@ -391,6 +391,41 @@ async function decodeVIN(vin) {
   if (trimOptions.length === 1) out.series = trimOptions[0]
   else if (trimOptions.length > 1 && (out.series || '').includes(',')) out.series = ''
   delete out._rawTrim; delete out._rawSeries
+
+  // ── Upgrade with server-side data ──────────────────────────────
+  // NHTSA is weak on trim (often blank for Japanese/Korean makes). The backend
+  // has NeoVIN (confirmed trim) and can list the trims that actually exist in
+  // the market, so the picker always offers real, comp-matching values.
+  try {
+    const [neoRes, trimRes] = await Promise.allSettled([
+      fetch(`${API_BASE}/api/vin/${V}`).then(r => r.ok ? r.json() : null),
+      out.make && out.model
+        ? fetch(`${API_BASE}/api/trims?year=${encodeURIComponent(out.year||'')}&make=${encodeURIComponent(out.make)}&model=${encodeURIComponent(out.model)}`).then(r => r.ok ? r.json() : null)
+        : Promise.resolve(null),
+    ])
+    const neo = neoRes.status === 'fulfilled' && neoRes.value && neoRes.value.data
+    const list = trimRes.status === 'fulfilled' && trimRes.value && Array.isArray(trimRes.value.trims) ? trimRes.value.trims : []
+    // Real market trims become the dropdown options (superset of NHTSA's guess).
+    if (list.length) {
+      const merged = [...list]
+      for (const t of out.trimOptions || []) if (!merged.some(m => m.toLowerCase() === t.toLowerCase())) merged.push(t)
+      out.trimOptions = merged
+    }
+    if (neo) {
+      // NeoVIN's confirmed trim wins when we don't already have a clean one.
+      if (neo.series && !out.series) out.series = neo.series
+      // Fill any gaps NHTSA left.
+      if (neo.engine && !out.engine) out.engine = neo.engine
+      if (neo.transmission && !out.transmission) out.transmission = neo.transmission
+      if (neo.drivetrain && !out.drivetrain) out.drivetrain = neo.drivetrain
+      if (neo.extColour && !out.extColour) out.extColour = neo.extColour
+      if (neo.intColour && !out.intColour) out.intColour = neo.intColour
+      // Make sure the confirmed trim is offered in the list.
+      if (neo.series && !(out.trimOptions||[]).some(t => t.toLowerCase() === neo.series.toLowerCase())) {
+        out.trimOptions = [neo.series, ...(out.trimOptions || [])]
+      }
+    }
+  } catch { /* best-effort — NHTSA result still stands */ }
   return out
 }
 
@@ -834,7 +869,9 @@ function ManualVehicleEntry({ data, onSet, postal, onMarket, busy }) {
 // editable input, for when the decode can't pin the exact trim.
 function TrimField({value,onChange,options}){
   const opts = Array.isArray(options) ? options : [];
-  const multi = opts.length > 1;
+  // Show the picker whenever we have real options to offer — not just when the
+  // decode was ambiguous. The appraiser can always switch to free text.
+  const multi = opts.length > 0;
   const [custom,setCustom] = useState(false);
   const inList = opts.some(o=>o.toLowerCase()===(value||'').toLowerCase());
   if(!multi && !custom){

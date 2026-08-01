@@ -220,6 +220,54 @@ if (!VINAUDIT_KEY) {
 }
 
 // ── VIN DECODE via NHTSA (free, no key needed) ──────────────────────
+// GET /api/trims?year=&make=&model= — the trims that ACTUALLY exist in the
+// Canadian market for this year/make/model, from MarketCheck facets. Used to
+// populate the appraisal form's trim picker so the value the appraiser selects
+// always matches what the comp search expects (e.g. "Sport with EyeSight",
+// not "Sport"). One cheap Inventory Search call, cached 30 days in Postgres.
+app.get('/api/trims', strictLimiter, async (req, res) => {
+  const year = (req.query.year || '').toString().trim()
+  const make = (req.query.make || '').toString().trim()
+  const model = (req.query.model || '').toString().trim()
+  if (!make || !model) return res.status(400).json({ error: 'make and model required' })
+  if (!MARKETCHECK_API_KEY) return res.json({ success: true, trims: [] })
+  const key = `trims|${year}|${make}|${model}`.toLowerCase()
+  // Cache hit
+  if (pool) {
+    try {
+      const c = await pool.query(
+        `SELECT market FROM market_cache WHERE cache_key=$1 AND cached_at > now() - interval '30 days'`, [key])
+      if (c.rows[0]) return res.json({ success: true, trims: c.rows[0].market.trims || [], cached: true })
+    } catch {}
+  }
+  try {
+    const params = new URLSearchParams({
+      api_key: MARKETCHECK_API_KEY, country: 'CA', car_type: 'used',
+      make, model, rows: '1', facets: 'trim|0|60|1',
+    })
+    if (year) params.set('year', year)
+    const r = await fetch(`${MC_HOST}/search/car/active?${params.toString()}`)
+    if (!r.ok) throw new Error(`MarketCheck HTTP ${r.status}`)
+    const d = await r.json()
+    const raw = (d.facets && d.facets.trim) || []
+    // Sort by frequency (facets already are), keep the label only.
+    const trims = raw.map(t => t.item).filter(Boolean)
+    if (pool && trims.length) {
+      try {
+        await pool.query(
+          `INSERT INTO market_cache(cache_key, market) VALUES($1,$2)
+           ON CONFLICT (cache_key) DO UPDATE SET market=$2, cached_at=now()`,
+          [key, JSON.stringify({ trims })]
+        )
+      } catch {}
+    }
+    res.json({ success: true, trims })
+  } catch (err) {
+    console.error('trims error:', err.message)
+    res.json({ success: true, trims: [] })   // never block the form
+  }
+})
+
 app.get('/api/vin/:vin', strictLimiter, async (req, res) => {
   const vin = req.params.vin.toUpperCase().trim()
 
