@@ -460,7 +460,96 @@ function marketDaySupply(activeCount, soldInWindow, windowDays = 45) {
   return Math.round((activeCount / soldInWindow) * windowDays)
 }
 
-async function fetchListings({ vin, specId, match, status, postal, radius, historyDays }) {
+// ── MARKET DATA PROVIDER ─────────────────────────────────────────────
+// Switchable data source. VinAudit is left dormant (set MARKET_PROVIDER=vinaudit
+// to revert). MarketCheck is the active provider. Both fetch functions return
+// listings in the SAME field shape (VinAudit's), so mapComp() and all downstream
+// logic (dedup, filtering, stats, MDS) work unchanged regardless of provider.
+const MARKET_PROVIDER = (process.env.MARKET_PROVIDER || 'marketcheck').toLowerCase()
+const MARKETCHECK_API_KEY = process.env.MARKETCHECK_API_KEY || ''
+const MC_HOST = 'https://api.marketcheck.com/v2'
+
+// Minimal FSA→lat/long resolver. MarketCheck searches by lat/long + radius; the
+// customer's FSA (first 3 of postal) is enough to anchor the local market.
+// A few high-value GTA FSAs are pinned precisely; else a province-letter bucket;
+// else central Toronto.
+const FSA_POINTS = {
+  M: [43.6532, -79.3832], L: [43.70, -79.50], K: [45.40, -75.70], N: [43.00, -81.20],
+  P: [46.50, -80.90],
+}
+function fsaToPoint(postal) {
+  const fsa = (postal || '').trim().toUpperCase().slice(0, 3)
+  const precise = {
+    'M6H': [43.6690, -79.4300], 'M5V': [43.6426, -79.3986], 'M4C': [43.6890, -79.3120],
+    'L4C': [43.8830, -79.4400], 'L5B': [43.5890, -79.6440], 'L6T': [43.7160, -79.6900],
+  }
+  if (precise[fsa]) return precise[fsa]
+  return FSA_POINTS[fsa[0]] || [43.6532, -79.3832]
+}
+
+// Fetch from MarketCheck and normalize each listing into VinAudit's field shape
+// so the rest of the pipeline is provider-agnostic. Filters to USED inventory
+// (excludes new-car MSRP listings, which would inflate the market mid).
+async function fetchListingsMarketCheck({ vin, specId, match, status, postal, radius }) {
+  if (!MARKETCHECK_API_KEY) throw new Error('MARKETCHECK_API_KEY not set')
+  const isSold = status === 'dropped'
+  // On the free tier we fetch ACTIVE listings only — the sold/recent endpoint is
+  // a separate paid call that only feeds MDS (a secondary metric the pipeline
+  // already handles as null). Skipping it halves call usage. Re-enable when on a
+  // paid tier and the recent-endpoint path is verified.
+  if (isSold) return []
+  const [lat, lon] = fsaToPoint(postal)
+  const radMiles = Math.min(100, Math.max(10, Math.round(Number(radius) || 100))) // free tier caps at 100mi
+  const base = `${MC_HOST}/search/car/active`
+  const params = new URLSearchParams({
+    api_key: MARKETCHECK_API_KEY,
+    country: 'CA',
+    car_type: 'used',
+    latitude: String(lat),
+    longitude: String(lon),
+    radius: String(radMiles),
+    rows: '50',
+    stats: 'price,miles',
+  })
+  if (vin) params.set('vin', vin)
+  const url = `${base}?${params.toString()}`
+  const r = await fetch(url)
+  if (!r.ok) throw new Error(`MarketCheck HTTP ${r.status}`)
+  const data = await r.json()
+  const listings = Array.isArray(data.listings) ? data.listings : []
+  return listings.map(l => {
+    const b = l.build || {}
+    return {
+      id: l.id,
+      vin: l.vin || '',
+      listing_price: l.price,
+      listing_mileage: l.miles,        // CONFIRMED km on CA listings — no conversion
+      days_seen: l.dom_active ?? l.dom,
+      certified_flag: l.is_certified === 1 || l.is_certified === true,
+      listing_status: isSold ? 'dropped' : 'active',
+      listing_drop_date: l.last_seen_at_date || '',
+      name: (l.dealer && l.dealer.name) || l.source || 'Dealer',
+      seller_type: l.seller_type || 'dealer',
+      city: (l.dealer && l.dealer.city) || '',
+      region: (l.dealer && l.dealer.state) || '',
+      listing_title: l.heading || '',
+      vehicle_year: b.year || '',
+      vehicle_make: b.make || '',
+      vehicle_model: b.model || '',
+      vehicle_trim: b.trim || '',
+      listing_vdp_url: l.vdp_url || '',
+      listing_portal_urls: '', // MarketCheck has no aggregator links; dealer VDP is the source
+    }
+  })
+}
+
+// Provider dispatch.
+async function fetchListings(args) {
+  if (MARKET_PROVIDER === 'vinaudit') return fetchListingsVinAudit(args)
+  return fetchListingsMarketCheck(args)
+}
+
+async function fetchListingsVinAudit({ vin, specId, match, status, postal, radius, historyDays }) {
   // VinAudit paginates with `page` (1-based) + `page_size` (default/typical 100).
   // The response includes `query_total` (total matches across all pages), so we
   // page until we've pulled them all. Bounded by MAX_PAGES for latency/cost.
@@ -1384,7 +1473,7 @@ app.get('/api/carfax/:vin', strictLimiter, async (req, res) => {
 app.listen(PORT, () => {
   console.log(`\n✅ Vantage server running on http://localhost:${PORT}`)
   console.log(`   VIN decode: NHTSA (free, no key needed)`)
-  console.log(`   Market data: ${VINAUDIT_KEY && VINAUDIT_KEY !== 'YOUR_VINAUDIT_API_KEY_HERE' ? 'VinAudit configured ✅' : 'not configured — set VINAUDIT_KEY'}`)
+  console.log(`   Market provider: ${MARKET_PROVIDER}${MARKET_PROVIDER === 'marketcheck' ? (MARKETCHECK_API_KEY ? ' ✅' : ' ⚠ set MARKETCHECK_API_KEY') : (VINAUDIT_KEY ? ' ✅' : ' ⚠ set VINAUDIT_KEY')}`)
   const aiStatus = ANTHROPIC_KEY && ANTHROPIC_KEY !== 'YOUR_ANTHROPIC_API_KEY_HERE'
     ? 'configured ✅'
     : 'not configured — add key to config.json for AI descriptions'
