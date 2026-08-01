@@ -149,6 +149,16 @@ if (DATABASE_URL) {
     cached_at TIMESTAMPTZ DEFAULT now()
   )`).then(() => console.log('   Market cache: Postgres ready ✅'))
     .catch(e => console.error('Market cache init error:', e.message))
+  // A VIN's decode never changes, so we cache NeoVIN results permanently (one
+  // paid decode per unique vehicle, ever). Every later appraisal of the same VIN
+  // reads from here — no repeat NeoVIN call, no repeat cost.
+  pool.query(`CREATE TABLE IF NOT EXISTS vin_decode_cache (
+    vin TEXT PRIMARY KEY,
+    decoded JSONB NOT NULL,
+    source TEXT,
+    cached_at TIMESTAMPTZ DEFAULT now()
+  )`).then(() => console.log('   VIN decode cache: Postgres ready ✅'))
+    .catch(e => console.error('VIN decode cache init error:', e.message))
 } else {
   console.log('   Dealer-fee ledger: no DATABASE_URL — fee history disabled')
 }
@@ -490,24 +500,100 @@ function fsaToPoint(postal) {
 // Fetch from MarketCheck and normalize each listing into VinAudit's field shape
 // so the rest of the pipeline is provider-agnostic. Filters to USED inventory
 // (excludes new-car MSRP listings, which would inflate the market mid).
-// Decode a VIN to year/make/model via NHTSA (free) so MarketCheck can search by
-// SPEC (similar cars) rather than the exact VIN. MarketCheck's `vin` param means
-// "this exact car" (≈0 comps for a random appraisal VIN); we want the YMMT set.
-async function decodeVinYMMT(vin) {
+// NeoVIN toggle. Default ON for best accuracy (confirmed trim/drivetrain →
+// tightest comps). Set USE_NEOVIN=false to run decode-free (pure NHTSA YMMT) —
+// useful for conserving free-tier calls during testing.
+const USE_NEOVIN = (process.env.USE_NEOVIN || 'true').toLowerCase() !== 'false'
+
+// ── VIN DECODE (NeoVIN-first, cached, with NHTSA fallback) ──────────
+// Returns { year, make, model, trim, drivetrain, source }. Strategy:
+//   1. Postgres cache (a VIN's decode never changes — free forever after first)
+//   2. NeoVIN via MarketCheck ($0.08/call, but cached so paid once per VIN)
+//   3. NHTSA YMMT (free floor — weak/blank trim, but always available)
+// NeoVIN gives confirmed trim + drivetrain, which we feed into the MarketCheck
+// search for a tight, correct comp set instead of an all-YMMT pull.
+async function decodeVinNHTSA(vin) {
   try {
     const r = await fetch(`https://vpic.nhtsa.dot.gov/api/vehicles/decodevinvalues/${vin}?format=json`)
     const d = await r.json()
     const v = d.Results && d.Results[0]
     if (!v) return null
+    const dr = (v.DriveType || '').toLowerCase()
+    let drivetrain = ''
+    if (/awd|all.?wheel/.test(dr)) drivetrain = 'AWD'
+    else if (/4wd|4x4|four.?wheel/.test(dr)) drivetrain = '4WD'
+    else if (/fwd|front/.test(dr)) drivetrain = 'FWD'
+    else if (/rwd|rear/.test(dr)) drivetrain = 'RWD'
     return {
       year: v.ModelYear || '',
       make: v.Make ? (v.Make.charAt(0) + v.Make.slice(1).toLowerCase()) : '',
       model: v.Model || '',
+      trim: v.Trim || v.Series || '',
+      drivetrain,
+      source: 'nhtsa',
     }
   } catch { return null }
 }
 
-async function fetchListingsMarketCheck({ vin, specId, match, status, postal, radius }) {
+async function decodeVinNeoVIN(vin) {
+  if (!MARKETCHECK_API_KEY) return null
+  try {
+    const url = `${MC_HOST}/decode/car/neovin/${vin}/specs?api_key=${encodeURIComponent(MARKETCHECK_API_KEY)}`
+    const r = await fetch(url)
+    if (!r.ok) return null
+    const d = await r.json()
+    // NeoVIN returns either a flat object or { data: {...} } depending on host.
+    const v = d && (d.data || d)
+    if (!v || !v.make || !v.model) return null
+    // Normalize drivetrain (NeoVIN gives e.g. "4WD","AWD","FWD","RWD").
+    let dt = (v.drivetrain || '').toUpperCase()
+    if (/ALL/.test(dt)) dt = 'AWD'
+    else if (/FOUR|4X4/.test(dt)) dt = '4WD'
+    else if (/FRONT/.test(dt)) dt = 'FWD'
+    else if (/REAR/.test(dt)) dt = 'RWD'
+    return {
+      year: v.year || '',
+      make: v.make || '',
+      model: v.model || '',
+      trim: v.trim || '',
+      drivetrain: dt || '',
+      source: 'neovin',
+    }
+  } catch { return null }
+}
+
+async function decodeVinCached(vin) {
+  if (!vin || vin.length !== 17) return null
+  const V = vin.toUpperCase().trim()
+  // 1. Cache hit → return immediately (no call, no cost).
+  if (pool) {
+    try {
+      const r = await pool.query('SELECT decoded FROM vin_decode_cache WHERE vin=$1', [V])
+      if (r.rows[0]) return r.rows[0].decoded
+    } catch (e) { console.error('vin cache read:', e.message) }
+  }
+  // 2. NeoVIN (best) if enabled, else 3. NHTSA (free floor).
+  let decoded = null
+  if (USE_NEOVIN) decoded = await decodeVinNeoVIN(vin)
+  if (!decoded) decoded = await decodeVinNHTSA(vin)
+  if (!decoded) return null
+  // Persist so this VIN is never decoded (or paid for) again.
+  if (pool) {
+    try {
+      await pool.query(
+        `INSERT INTO vin_decode_cache(vin, decoded, source) VALUES($1,$2,$3)
+         ON CONFLICT (vin) DO UPDATE SET decoded=$2, source=$3, cached_at=now()`,
+        [V, JSON.stringify(decoded), decoded.source || '']
+      )
+    } catch (e) { console.error('vin cache write:', e.message) }
+  }
+  return decoded
+}
+
+// Back-compat shim: the MarketCheck fetch used decodeVinYMMT for YMMT only.
+async function decodeVinYMMT(vin) { return decodeVinCached(vin) }
+
+async function fetchListingsMarketCheck({ vin, specId, match, status, postal, radius, callerTrim, callerDrive }) {
   if (!MARKETCHECK_API_KEY) throw new Error('MARKETCHECK_API_KEY not set')
   const isSold = status === 'dropped'
   // On the free tier we fetch ACTIVE listings only — the sold/recent endpoint is
@@ -528,19 +614,27 @@ async function fetchListingsMarketCheck({ vin, specId, match, status, postal, ra
     rows: '50',
     stats: 'price,miles',
   })
-  // Search by SPEC (similar cars), not the exact VIN. Decode the VIN → YMMT.
-  // On a 'model' (widened) match, use year+make+model; on strict, we'd add trim,
-  // but NHTSA trim is unreliable, so we match year+make+model and let the
-  // downstream trim/drivetrain filters narrow it (same as the VinAudit path).
+  // Search by SPEC (similar cars), not the exact VIN (MarketCheck's vin param
+  // means the EXACT car → ~0 comps). Decode gives year+make+model always, plus
+  // confirmed trim+drivetrain from NeoVIN. On a STRICT ('trim') match we add
+  // trim+drivetrain to the search for a tight comp set; on a WIDENED ('model')
+  // match we drop them to recover volume. Downstream filters still apply either
+  // way, so trim in the query only tightens — it can't wrongly exclude.
   if (vin) {
-    const ymmt = await decodeVinYMMT(vin)
-    if (ymmt && ymmt.make && ymmt.model) {
-      if (ymmt.year) params.set('year', String(ymmt.year))
-      params.set('make', ymmt.make)
-      params.set('model', ymmt.model)
+    const dec = await decodeVinYMMT(vin)   // cached NeoVIN-first decode
+    if (dec && dec.make && dec.model) {
+      if (dec.year) params.set('year', String(dec.year))
+      params.set('make', dec.make)
+      params.set('model', dec.model)
+      if (match === 'trim') {
+        // Trim: prefer caller-supplied (frontend decode) else NeoVIN's.
+        const trim = (callerTrim || dec.trim || '').trim()
+        if (trim) params.set('trim', trim)
+        const drive = (callerDrive || dec.drivetrain || '').trim()
+        if (drive) params.set('drivetrain', drive)
+      }
     } else {
-      // Fallback: if decode fails, use the exact VIN (better than nothing).
-      params.set('vin', vin)
+      params.set('vin', vin)   // decode failed → exact VIN beats nothing
     }
   }
   const url = `${base}?${params.toString()}`
@@ -941,6 +1035,11 @@ app.get('/api/market/:vin', strictLimiter, async (req, res) => {
   // comps from anywhere. VinAudit may still cap internally, but we don't clamp.
   const radius = Math.min(Number(req.query.radius) || 250, 6000)
   let historyDays = Number(req.query.history_days) || 60
+  // Caller-supplied trim/drivetrain (from the frontend's own VIN decode). Fed
+  // into the MarketCheck search on strict matches for a tight comp set; falls
+  // back to NeoVIN's decode inside the fetch when absent.
+  const callerTrim = (req.query.trim || '').toString().trim()
+  const callerDrive = (req.query.drivetrain || '').toString().trim()
 
   if (vin.length !== 17) return res.status(400).json({ error: 'VIN must be 17 characters' })
   if (!postal) return res.status(400).json({ error: 'postal code required' })
@@ -954,8 +1053,8 @@ app.get('/api/market/:vin', strictLimiter, async (req, res) => {
     let active = [], dropped = []
     try {
       ;[active, dropped] = await Promise.all([
-        fetchListings({ vin, match, status: 'active', postal, radius }),
-        fetchListings({ vin, match, status: 'dropped', postal, radius, historyDays }),
+        fetchListings({ vin, match, status: 'active', postal, radius, callerTrim, callerDrive }),
+        fetchListings({ vin, match, status: 'dropped', postal, radius, historyDays, callerTrim, callerDrive }),
       ])
     } catch (e) {
       // trim match can error on sparse specs — fall through to model
@@ -967,8 +1066,8 @@ app.get('/api/market/:vin', strictLimiter, async (req, res) => {
       match = 'model'
       widened = true
       ;[active, dropped] = await Promise.all([
-        fetchListings({ vin, match, status: 'active', postal, radius }),
-        fetchListings({ vin, match, status: 'dropped', postal, radius, historyDays }),
+        fetchListings({ vin, match, status: 'active', postal, radius, callerTrim, callerDrive }),
+        fetchListings({ vin, match, status: 'dropped', postal, radius, historyDays, callerTrim, callerDrive }),
       ])
     }
 
@@ -981,7 +1080,7 @@ app.get('/api/market/:vin', strictLimiter, async (req, res) => {
       if (step <= historyDays) continue
       historyDays = step
       historyWidened = true
-      dropped = await fetchListings({ vin, match, status: 'dropped', postal, radius, historyDays })
+      dropped = await fetchListings({ vin, match, status: 'dropped', postal, radius, historyDays, callerTrim, callerDrive })
     }
 
     // Blend: dropped (closer to transacted) + active (current asking),
@@ -1505,6 +1604,7 @@ app.listen(PORT, () => {
   console.log(`\n✅ Vantage server running on http://localhost:${PORT}`)
   console.log(`   VIN decode: NHTSA (free, no key needed)`)
   console.log(`   Market provider: ${MARKET_PROVIDER}${MARKET_PROVIDER === 'marketcheck' ? (MARKETCHECK_API_KEY ? ' ✅' : ' ⚠ set MARKETCHECK_API_KEY') : (VINAUDIT_KEY ? ' ✅' : ' ⚠ set VINAUDIT_KEY')}`)
+  if (MARKET_PROVIDER === 'marketcheck') console.log(`   VIN decode: ${USE_NEOVIN ? 'NeoVIN (cached, best trim/drivetrain)' : 'NHTSA only (USE_NEOVIN=false)'}`)
   const aiStatus = ANTHROPIC_KEY && ANTHROPIC_KEY !== 'YOUR_ANTHROPIC_API_KEY_HERE'
     ? 'configured ✅'
     : 'not configured — add key to config.json for AI descriptions'
