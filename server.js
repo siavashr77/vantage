@@ -490,6 +490,23 @@ function fsaToPoint(postal) {
 // Fetch from MarketCheck and normalize each listing into VinAudit's field shape
 // so the rest of the pipeline is provider-agnostic. Filters to USED inventory
 // (excludes new-car MSRP listings, which would inflate the market mid).
+// Decode a VIN to year/make/model via NHTSA (free) so MarketCheck can search by
+// SPEC (similar cars) rather than the exact VIN. MarketCheck's `vin` param means
+// "this exact car" (≈0 comps for a random appraisal VIN); we want the YMMT set.
+async function decodeVinYMMT(vin) {
+  try {
+    const r = await fetch(`https://vpic.nhtsa.dot.gov/api/vehicles/decodevinvalues/${vin}?format=json`)
+    const d = await r.json()
+    const v = d.Results && d.Results[0]
+    if (!v) return null
+    return {
+      year: v.ModelYear || '',
+      make: v.Make ? (v.Make.charAt(0) + v.Make.slice(1).toLowerCase()) : '',
+      model: v.Model || '',
+    }
+  } catch { return null }
+}
+
 async function fetchListingsMarketCheck({ vin, specId, match, status, postal, radius }) {
   if (!MARKETCHECK_API_KEY) throw new Error('MARKETCHECK_API_KEY not set')
   const isSold = status === 'dropped'
@@ -511,7 +528,21 @@ async function fetchListingsMarketCheck({ vin, specId, match, status, postal, ra
     rows: '50',
     stats: 'price,miles',
   })
-  if (vin) params.set('vin', vin)
+  // Search by SPEC (similar cars), not the exact VIN. Decode the VIN → YMMT.
+  // On a 'model' (widened) match, use year+make+model; on strict, we'd add trim,
+  // but NHTSA trim is unreliable, so we match year+make+model and let the
+  // downstream trim/drivetrain filters narrow it (same as the VinAudit path).
+  if (vin) {
+    const ymmt = await decodeVinYMMT(vin)
+    if (ymmt && ymmt.make && ymmt.model) {
+      if (ymmt.year) params.set('year', String(ymmt.year))
+      params.set('make', ymmt.make)
+      params.set('model', ymmt.model)
+    } else {
+      // Fallback: if decode fails, use the exact VIN (better than nothing).
+      params.set('vin', vin)
+    }
+  }
   const url = `${base}?${params.toString()}`
   const r = await fetch(url)
   if (!r.ok) throw new Error(`MarketCheck HTTP ${r.status}`)
@@ -913,8 +944,8 @@ app.get('/api/market/:vin', strictLimiter, async (req, res) => {
 
   if (vin.length !== 17) return res.status(400).json({ error: 'VIN must be 17 characters' })
   if (!postal) return res.status(400).json({ error: 'postal code required' })
-  if (!VINAUDIT_KEY || VINAUDIT_KEY === 'YOUR_VINAUDIT_API_KEY_HERE') {
-    return res.status(400).json({ error: 'VinAudit API key not configured.' })
+  if (MARKET_PROVIDER === 'marketcheck' ? !MARKETCHECK_API_KEY : (!VINAUDIT_KEY || VINAUDIT_KEY === 'YOUR_VINAUDIT_API_KEY_HERE')) {
+    return res.status(400).json({ error: 'Market data API key not configured.' })
   }
 
   try {
@@ -972,8 +1003,8 @@ app.get('/api/market-by-spec', strictLimiter, async (req, res) => {
 
   if (!specId) return res.status(400).json({ error: 'spec_id required (year_make_model[_trim])' })
   if (!postal) return res.status(400).json({ error: 'postal code required' })
-  if (!VINAUDIT_KEY || VINAUDIT_KEY === 'YOUR_VINAUDIT_API_KEY_HERE') {
-    return res.status(400).json({ error: 'VinAudit API key not configured.' })
+  if (MARKET_PROVIDER === 'marketcheck' ? !MARKETCHECK_API_KEY : (!VINAUDIT_KEY || VINAUDIT_KEY === 'YOUR_VINAUDIT_API_KEY_HERE')) {
+    return res.status(400).json({ error: 'Market data API key not configured.' })
   }
 
   try {
