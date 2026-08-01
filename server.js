@@ -323,8 +323,14 @@ app.get('/api/vin/:vin', strictLimiter, async (req, res) => {
         if (neo.engine) decoded.engine = neo.engine
         if (neo.transmission) decoded.transmission = neo.transmission
         if (neo.bodyType) decoded.bodyType = neo.bodyType
-        if (neo.extColour) decoded.extColour = neo.extColour
-        if (neo.intColour) decoded.intColour = neo.intColour
+        // NOTE: colour is deliberately NOT auto-filled. Paint colour is not
+        // encoded in the VIN for most makes, so NeoVIN infers it from a matched
+        // build/listing record and is frequently WRONG (e.g. reports "Midnight
+        // Black" for a white Sienna). A wrong colour propagates into the window
+        // sticker and the ad, so the appraiser enters it from the actual car.
+        // The decoder's guess is returned as a hint only.
+        if (neo.extColour) decoded._extColourGuess = neo.extColour
+        if (neo.intColour) decoded._intColourGuess = neo.intColour
         if (neo.year && !decoded.year) decoded.year = String(neo.year)
         if (neo.make && !decoded.make) decoded.make = neo.make
         if (neo.model && !decoded.model) decoded.model = neo.model

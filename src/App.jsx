@@ -418,8 +418,8 @@ async function decodeVIN(vin) {
       if (neo.engine && !out.engine) out.engine = neo.engine
       if (neo.transmission && !out.transmission) out.transmission = neo.transmission
       if (neo.drivetrain && !out.drivetrain) out.drivetrain = neo.drivetrain
-      if (neo.extColour && !out.extColour) out.extColour = neo.extColour
-      if (neo.intColour && !out.intColour) out.intColour = neo.intColour
+      // Colour intentionally NOT auto-filled — not VIN-encoded, decoder guesses
+      // it and is often wrong. Appraiser enters what they see.
       // Make sure the confirmed trim is offered in the list.
       if (neo.series && !(out.trimOptions||[]).some(t => t.toLowerCase() === neo.series.toLowerCase())) {
         out.trimOptions = [neo.series, ...(out.trimOptions || [])]
