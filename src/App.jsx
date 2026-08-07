@@ -1993,22 +1993,8 @@ function AppraisalForm({initial,onSave,onBack,showToast,onConvert,onFinalize,onU
   // lookups, but the backend now caches each vehicle for 24h, so a repeat view
   // costs nothing — there's no reason to make someone click. Runs once per
   // appraisal as soon as we have enough to search on.
-  // VIN + odometer is everything the lookup needs. Once both are present the
-  // market pulls itself and the AI appraisal follows — no button to hunt for.
-  const autoMktRef=useRef(false);
-  useEffect(()=>{
-    if(locked) return;
-    if(autoMktRef.current) return;
-    if(a.marketMid) return;                 // already have data
-    if(!a.vin||a.vin.length!==17) return;
-    if(!Number(a.odometer)) return;         // odometer drives the whole valuation
-    if(!(a.postal||dealer?.postal)) return; // need a location to search around
-    autoMktRef.current=true;
-    const t=setTimeout(()=>{ fetchMkt(); },600);
-    return()=>clearTimeout(t);
-  },[a.vin,a.odometer,a.postal,a.marketMid,locked]);
-  // Reset the guard when the appraiser switches to a different vehicle.
-  useEffect(()=>{ autoMktRef.current=false; aiRef.current=false; },[a.id]);
+  // Reset AI guard when the appraiser switches vehicle.
+  useEffect(()=>{ aiRef.current=false; },[a.id]);
 
   // ── AI appraisal ────────────────────────────────────────────────
   // Runs once market data lands. Claude sees the real comps we just pulled and
@@ -2045,6 +2031,7 @@ function AppraisalForm({initial,onSave,onBack,showToast,onConvert,onFinalize,onU
   useEffect(()=>{
     if(locked||aiRef.current) return;
     if(!a.marketMid||!(a._comps||[]).length) return;
+    if(!Number(a.odometer)) return;   // no km, no valuation
     aiRef.current=true;
     runAppraisal(a);
   },[a.marketMid,a._comps,locked,runAppraisal]);
@@ -2139,12 +2126,15 @@ function AppraisalForm({initial,onSave,onBack,showToast,onConvert,onFinalize,onU
     if(a._comps || a.marketMid) return;
     if(autoFetchedRef.current) return;
     if(!a.make) return;                 // wait until decode has populated the vehicle
+    // Odometer is not optional: pricing a car without knowing its kilometres
+    // produces a number that looks authoritative and isn't. Wait for it.
+    if(!Number(a.odometer)) return;
     const dealer=onGetDealer?onGetDealer():null;
     if(!dealer?.postal) return;
     autoFetchedRef.current=true;
     fetchMkt();
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  },[a.vin,a.make]);
+  },[a.vin,a.make,a.odometer]);
   // Recompute market numbers from CACHED comps when criteria change — no API call.
   function recompute(partial){
     const next={...aRef.current,...partial};
