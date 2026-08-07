@@ -79,42 +79,62 @@ function Header() {
 }
 
 function Hero() {
+  // Form-first. Visitors arriving here already want a number — making them
+  // scroll past marketing to reach the form adds friction exactly where it
+  // costs the most. The estimate form IS the hero; the persuasion content
+  // lives below for anyone who wants to read it before committing.
   return (
     <section style={{
       background: `linear-gradient(160deg, ${C.navy} 0%, ${C.navyDeep} 100%)`,
-      color: '#fff', padding: '64px 20px 72px',
+      color: '#fff', padding: '40px 20px 48px',
     }}>
-      <div style={{ maxWidth: 1080, margin: '0 auto', textAlign: 'center' }}>
-        <div style={{
-          display: 'inline-block', background: 'rgba(0,180,166,0.18)', color: C.tealLight,
-          borderRadius: 20, padding: '6px 14px', fontSize: 13, fontWeight: 600, marginBottom: 22,
-        }}>Sell your car the easy way</div>
-        <h1 style={{
-          fontSize: 'clamp(30px, 5vw, 46px)', fontWeight: 800, lineHeight: 1.12,
-          letterSpacing: -1, margin: '0 auto 18px', maxWidth: 720,
-        }}>
-          Thinking of selling your car?<br />
-          <span style={{ color: C.tealLight }}>Let's figure it out together.</span>
-        </h1>
-        <p style={{
-          fontSize: 'clamp(16px, 2.5vw, 19px)', color: 'rgba(255,255,255,0.82)',
-          maxWidth: 560, margin: '0 auto 32px', lineHeight: 1.55,
-        }}>
-          Tell us about your vehicle and get a real estimate — no pressure, no obligation.
-          We're a local team that pays fairly and makes selling simple.
-        </p>
-        <button onClick={scrollToQuote} style={{
-          background: C.teal, color: '#fff', border: 'none', borderRadius: 10,
-          padding: '15px 34px', fontSize: 17, fontWeight: 700, cursor: 'pointer',
-          fontFamily: FONT, boxShadow: '0 8px 24px rgba(0,180,166,0.35)',
-        }}>Get my estimate →</button>
-        <div style={{
-          marginTop: 20, fontSize: 13.5, color: 'rgba(255,255,255,0.6)',
-          display: 'flex', gap: 18, justifyContent: 'center', flexWrap: 'wrap',
-        }}>
-          <span>✓ Free estimate</span>
-          <span>✓ No obligation</span>
-          <span>✓ Local & friendly</span>
+      <div style={{
+        maxWidth: 1080, margin: '0 auto',
+        display: 'flex', flexWrap: 'wrap', gap: 40,
+        alignItems: 'center', justifyContent: 'center',
+      }}>
+        {/* Pitch — deliberately short. One promise, three reassurances. */}
+        <div style={{ flex: '1 1 380px', maxWidth: 520, textAlign: 'left' }}>
+          <div style={{
+            display: 'inline-block', background: 'rgba(0,180,166,0.18)', color: C.tealLight,
+            borderRadius: 20, padding: '6px 14px', fontSize: 13, fontWeight: 600, marginBottom: 18,
+          }}>Sell your car the easy way</div>
+          <h1 style={{
+            fontSize: 'clamp(28px, 4.4vw, 42px)', fontWeight: 800, lineHeight: 1.12,
+            letterSpacing: -1, margin: '0 0 16px',
+          }}>
+            What's your car<br />
+            <span style={{ color: C.tealLight }}>actually worth?</span>
+          </h1>
+          <p style={{
+            fontSize: 'clamp(15px, 2.2vw, 18px)', color: 'rgba(255,255,255,0.82)',
+            margin: '0 0 22px', lineHeight: 1.55, maxWidth: 460,
+          }}>
+            A real estimate built from live market listings — not a lowball anchor.
+            Takes about a minute.
+          </p>
+          <div style={{
+            fontSize: 13.5, color: 'rgba(255,255,255,0.6)',
+            display: 'flex', gap: 18, flexWrap: 'wrap',
+          }}>
+            <span>✓ Free estimate</span>
+            <span>✓ No obligation</span>
+            <span>✓ Local &amp; friendly</span>
+          </div>
+        </div>
+
+        {/* The form, immediately usable — no scrolling required. */}
+        <div style={{ flex: '1 1 380px', maxWidth: 460, width: '100%' }}>
+          <div id="tradelane-quote" style={{
+            background: C.bg, borderRadius: 16, boxShadow: '0 18px 50px rgba(0,0,0,0.28)',
+            padding: '4px 4px 0',
+          }}>
+            <Widget branding={{
+              title: 'Get your estimate',
+              subtitle: 'Start with your VIN — or pick your car.',
+              footer: '',
+            }} />
+          </div>
         </div>
       </div>
     </section>
@@ -161,30 +181,22 @@ function HowItWorks() {
 }
 
 function QuoteSection() {
+  // The form now lives in the hero. This is just a way back to it for anyone
+  // who read the whole page first.
   return (
-    <section id="quote" style={{ padding: '60px 20px 70px', background: '#fff', scrollMarginTop: 64 }}>
-      <div style={{ maxWidth: 620, margin: '0 auto' }}>
-        <h2 style={{
-          textAlign: 'center', fontSize: 'clamp(24px, 4vw, 32px)', fontWeight: 800,
-          color: C.navy, letterSpacing: -0.6, marginBottom: 8,
-        }}>Get your estimate</h2>
-        <p style={{ textAlign: 'center', color: C.textMid, fontSize: 16, marginBottom: 28 }}>
-          A few quick questions. Only your name and a way to reach you are required —
-          everything else helps us get you a sharper number.
+    <section style={{ background: C.bg, padding: '48px 20px' }}>
+      <div style={{ maxWidth: 620, margin: '0 auto', textAlign: 'center' }}>
+        <h2 style={{ fontSize: 'clamp(22px, 3.4vw, 30px)', fontWeight: 800, color: C.navy, margin: '0 0 12px' }}>
+          Ready for your number?
+        </h2>
+        <p style={{ color: C.textMid, fontSize: 16, margin: '0 0 22px', lineHeight: 1.55 }}>
+          A few quick questions. Only your name and a way to reach you are required.
         </p>
-        <div style={{
-          background: C.bg, border: `1px solid ${C.border}`, borderRadius: 16, padding: '8px 8px 4px',
-        }}>
-          {/* Render the shared quote engine as a normal component. We deliberately
-              do NOT use id="widget-root" here — that id triggers the widget's own
-              self-mount (for the standalone /widget.html), which would double-mount
-              and blank out. As a full-page component it just renders inline. */}
-          <div id="tradelane-quote"><Widget branding={{
-            title: 'Get your estimate',
-            subtitle: 'Tell us about your vehicle — get a real, market-based estimate.',
-            footer: '',
-          }} /></div>
-        </div>
+        <button onClick={scrollToQuote} style={{
+          background: C.teal, color: '#fff', border: 'none', borderRadius: 10,
+          padding: '15px 34px', fontSize: 17, fontWeight: 700, cursor: 'pointer',
+          fontFamily: FONT, boxShadow: '0 8px 24px rgba(0,180,166,0.28)',
+        }}>Get my estimate →</button>
       </div>
     </section>
   )
@@ -271,11 +283,13 @@ function TradeLane() {
   return (
     <div style={{ fontFamily: FONT, color: C.textDark, background: '#fff' }}>
       <Header />
+      {/* Form-first: the estimate form is in the hero. Everything below is for
+          visitors who want to read before they commit, ending in one CTA that
+          takes them back up to the form (not two near-identical ones). */}
       <Hero />
       <HowItWorks />
-      <QuoteSection />
       <Why />
-      <FinalCta />
+      <QuoteSection />
       <Footer />
     </div>
   )
