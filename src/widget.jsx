@@ -1,5 +1,6 @@
 import React, { useState, useEffect, useRef, useCallback } from 'react'
 import ReactDOM from 'react-dom/client'
+import VINScanner from './VINScanner.jsx'
 
 // ── Customer Trade-In Widget ──────────────────────────────────────────────
 // Standalone, embeddable page. Customer enters their vehicle + contact, gets an
@@ -111,6 +112,7 @@ function Widget({ branding } = {}) {
   const [isPhone, setIsPhone] = useState(() =>
     typeof window !== 'undefined' && window.matchMedia('(max-width: 720px)').matches)
   const [focusMode, setFocusMode] = useState(false)
+  const [scanning, setScanning] = useState(false)
   const bodyRef = useRef(null)
   useEffect(() => {
     if (typeof window === 'undefined') return
@@ -234,8 +236,8 @@ function Widget({ branding } = {}) {
   }, [])
 
   // Decode VIN → lock the field, show the vehicle, start prefetch.
-  async function decodeVin() {
-    const v = vin.toUpperCase().trim()
+  async function decodeVin(vinArg) {
+    const v = (typeof vinArg === 'string' ? vinArg : vin).toUpperCase().trim()
     if (v.length !== 17) { setError('Please enter a full 17-character VIN.'); return }
     setError(''); setDecoding(true)
     try {
@@ -342,6 +344,18 @@ function Widget({ branding } = {}) {
 
   return (
     <div id="widget-root">
+      {scanning && (
+        <VINScanner
+          onVINDetected={v => {
+            const clean = (v || '').toUpperCase().trim()
+            setVin(clean); setError('')
+            // Scanned VINs go straight to lookup — one less tap, and the
+            // customer sees their vehicle confirmed immediately.
+            if (clean.length === 17) decodeVin(clean)
+          }}
+          onClose={() => setScanning(false)}
+        />
+      )}
       <div style={shellStyle}>
         <div style={cardStyle}>
           {/* Header — compact and pinned while focused, so the customer always
@@ -392,7 +406,24 @@ function Widget({ branding } = {}) {
                   <label style={label}>Vehicle Identification Number (VIN)</label>
                   {!vinLocked ? (
                     <>
-                      <input style={input} value={vin} onChange={e => setVin(e.target.value.toUpperCase())} placeholder="17-character VIN" maxLength={17} />
+                      {/* Scan first — typing 17 characters off a windshield is
+                          the single most error-prone step in this form. */}
+                      <button
+                        onClick={() => { setError(''); setScanning(true) }}
+                        style={{ ...btn, background: '#fff', color: C.navy, border: `1.5px solid ${C.teal}`, display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 10, marginBottom: 10 }}>
+                        <span style={{ fontSize: 18 }}>📷</span> Scan my VIN with the camera
+                      </button>
+                      <div style={{ fontSize: 12, color: C.textMid, background: C.tealMuted, border: `1px solid ${C.teal}33`, borderRadius: 8, padding: '10px 12px', marginBottom: 14, lineHeight: 1.5 }}>
+                        Point your camera at the VIN — it reads the <strong>printed number</strong>,
+                        so there's no barcode to find. Look on the driver's-side dashboard through
+                        the windshield, the sticker in the driver's door jamb, or your insurance slip.
+                      </div>
+                      <div style={{ display: 'flex', alignItems: 'center', gap: 10, margin: '0 0 12px' }}>
+                        <div style={{ flex: 1, height: 1, background: C.border }} />
+                        <span style={{ fontSize: 11, color: C.textLight, fontWeight: 600 }}>OR TYPE IT</span>
+                        <div style={{ flex: 1, height: 1, background: C.border }} />
+                      </div>
+                      <input style={input} value={vin} onChange={e => setVin(e.target.value.toUpperCase())} placeholder="17-character VIN" maxLength={17} inputMode="text" autoCapitalize="characters" autoCorrect="off" spellCheck={false} />
                       <div style={{ fontSize: 11, color: C.textLight, margin: '6px 0 14px' }}>Found on your dashboard, driver's door, or insurance.</div>
                       <button style={btn} onClick={decodeVin} disabled={decoding}>{decoding ? 'Looking up…' : 'Continue'}</button>
                     </>
