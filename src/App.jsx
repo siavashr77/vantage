@@ -1396,7 +1396,7 @@ function leadUrgency(lead){
   if(h>=4) return {level:'med',label:'Follow up soon',color:C.orange,bg:C.orangeBg};
   return {level:'new',label:'New',color:C.green,bg:C.greenBg};
 }
-function LeadsInbox({leads,loading,onRefresh,onOpen,onDismiss}){
+function LeadsInbox({leads,loading,onRefresh,onOpen,onDismiss,error}){
   // Sort: specialist/high urgency first, then oldest first within a tier.
   const sorted=[...leads].sort((a,b)=>{
     const ua=leadUrgency(a), ub=leadUrgency(b);
@@ -1419,7 +1419,20 @@ function LeadsInbox({leads,loading,onRefresh,onOpen,onDismiss}){
         <Sparkles size={14} color={C.orange}/> These are warm leads — customers who requested an instant offer. Contact them fast.
       </div>
 
-      {leads.length===0?(
+      {error?(
+        <Card style={{padding:'32px',textAlign:'center',border:`1px solid ${C.red}`,background:'#FEF2F2'}}>
+          <AlertTriangle size={30} color={C.red} style={{marginBottom:10}}/>
+          <div style={{fontSize:14,fontWeight:700,color:C.red}}>
+            {error==='auth'?"Can't read leads — not authorised":"Can't reach the leads service"}
+          </div>
+          <div style={{fontSize:12,color:C.textMid,marginTop:6,maxWidth:420,margin:'6px auto 0',lineHeight:1.5}}>
+            {error==='auth'
+              ? "Customer leads may be waiting. The team key this app sends doesn't match the one on the server, so the inbox can't load them. Check VITE_TEAM_KEY (Netlify) against TEAM_API_KEY (Railway) and redeploy."
+              : "The request failed. If the backend was asleep it may just need another try."}
+          </div>
+          <div style={{marginTop:14}}><Btn variant="ghost" size="sm" onClick={onRefresh}><RefreshCw size={12}/> Try again</Btn></div>
+        </Card>
+      ):leads.length===0?(
         <Card style={{padding:'48px',textAlign:'center'}}>
           <Zap size={32} color={C.navyBorder} style={{marginBottom:10}}/>
           <div style={{fontSize:14,fontWeight:700,color:C.textMid}}>No pending leads</div>
@@ -3331,6 +3344,7 @@ export default function Vantage() {
   // Customer leads from the widget (pending appraisals). Fetched from the backend.
   const [leads,setLeads]=useState([]);
   const [leadsLoading,setLeadsLoading]=useState(false);
+  const [leadsError,setLeadsError]=useState(null);
   const showToast=useCallback((m,t='info')=>setToast({message:m,type:t}),[]);
 
   // Pull pending customer leads from the backend. Polls so new submissions show up.
@@ -3338,9 +3352,18 @@ export default function Vantage() {
     setLeadsLoading(true);
     try{
       const r=await fetch(`${API_BASE}/api/leads?status=pending`,{headers:teamHeaders()});
-      const d=await r.json();
-      if(d&&Array.isArray(d.leads)) setLeads(d.leads);
-    }catch{/* backend may be cold-starting; leave as-is */}
+      const d=await r.json().catch(()=>null);
+      if(r.status===401||r.status===403){
+        // Real leads may exist — we just aren't authorised to read them. Showing
+        // an empty inbox here would look identical to "no customers", which is
+        // how a live lead sits unnoticed. Say so instead.
+        setLeadsError('auth');
+      } else if(!r.ok){
+        setLeadsError('network');
+      } else if(d&&Array.isArray(d.leads)){
+        setLeadsError(null); setLeads(d.leads);
+      }
+    }catch{ setLeadsError('network'); }
     finally{setLeadsLoading(false);}
   },[]);
 
@@ -3756,7 +3779,7 @@ export default function Vantage() {
       {/* CONTENT */}
       <div className='content-pad' style={{maxWidth:1200,margin:'0 auto',padding:'24px 24px 60px'}}>
         {page==='dashboard'&&<Dashboard vehicles={vehicles} appraisals={appraisals} dealer={dealer} onNav={nav} onOpenVehicle={v=>{setActiveV({...v});goto('vehicle_detail',v);}} onOpenAppraisal={a=>{setActiveA({...a});goto('appraisal_form',a);}}/>}
-        {page==='leads'&&<LeadsInbox leads={leads} loading={leadsLoading} onRefresh={loadLeads} onOpen={openLead} onDismiss={id=>updateLeadStatus(id,'dismissed')}/>}
+        {page==='leads'&&<LeadsInbox leads={leads} loading={leadsLoading} error={leadsError} onRefresh={loadLeads} onOpen={openLead} onDismiss={id=>updateLeadStatus(id,'dismissed')}/>}
         {page==='appraisals'&&<AppraisalList appraisals={appraisals} onNew={()=>nav('new_appraisal')} onEdit={a=>{setActiveA({...a});goto('appraisal_form',a);}}/>}
         {page==='appraisal_form'&&activeA&&<AppraisalForm key={activeA.id} initial={activeA} user={actingUser} can={can} onSave={(a,silent=false)=>saveAppraisal(a,silent)} onBack={()=>goto('appraisals')} showToast={showToast} onConvert={convertToInventory} onFinalize={finalizeAppraisal} onUnlock={unlockAppraisal} onGetDealer={()=>dealer} onCheckDup={checkDuplicate} onOpenExisting={openExistingDup}/>}
         {page==='inventory'&&<InventoryList vehicles={vehicles} onAdd={()=>nav('new_vehicle')} onImport={()=>setShowBulkImport(true)} onEdit={v=>{setActiveV({...v});goto('vehicle_detail',v);}}/>}
