@@ -934,8 +934,13 @@ function Field({label,children,half,third}) {
 function Card({children,style:sx={}}) {
   return <div style={{background:C.card,borderRadius:8,border:`1px solid ${C.border}`,boxShadow:'0 1px 4px rgba(0,0,0,0.06)',...sx}}>{children}</div>;
 }
-function Sec({title,icon:Icon,children,open:def=true,badge,accent,tone}) {
+function Sec({title,icon:Icon,children,open:def=true,badge,accent,tone,hidden,bare}) {
   const [o,setO]=useState(def);
+  // hidden: this section belongs to a page the user isn't on.
+  // bare: the section IS the page, so it drops its header and box — the page
+  // title above it already says what this is.
+  if(hidden) return null;
+  if(bare) return <div>{children}</div>;
   // tone gives a section a subtle identity: a soft tinted header + a colored
   // left edge, so sections are easy to tell apart without being loud.
   const TONES={
@@ -1975,6 +1980,7 @@ function AppraisalForm({initial,onSave,onBack,showToast,onConvert,onFinalize,onU
   const locked=!!a.finalizedAt;
   const [vehExpanded,setVehExpanded]=useState(!initial?.year);
   const [vinCopied,setVinCopied]=useState(false);
+  const [sub,setSub]=useState(null);   // null = hub; otherwise the open page
   const [showVINScanner,setShowVINScanner]=useState(false);
   const [savedAt,setSavedAt]=useState(initial?.updatedAt||null);
   const [isDirty,setIsDirty]=useState(false);
@@ -2235,11 +2241,28 @@ function AppraisalForm({initial,onSave,onBack,showToast,onConvert,onFinalize,onU
         </div>
       )}
 
-      {/* Two-column layout: sticky Vehicle panel on the left, everything else right */}
-      <div className="two-col" style={{display:'grid',gridTemplateColumns:'minmax(300px, 360px) 1fr',gap:14,alignItems:'start'}}>
-        {/* LEFT RAIL — sticks to viewport as the right column scrolls */}
-        <div className="appraisal-left" style={{position:'sticky',top:64,alignSelf:'start',maxHeight:'calc(100vh - 76px)',overflowY:'auto',overflowX:'hidden',paddingBottom:8}}>
-      <Sec title="Vehicle" icon={Car} accent>
+      {/* Inside a page: a way back and a title. The long accordion is gone —
+          each area opens on its own so you're never scrolling past sections you
+          didn't want to reach the one you did. */}
+      {sub&&(
+        <div style={{marginBottom:16}}>
+          <button onClick={()=>setSub(null)}
+            style={{display:'flex',alignItems:'center',gap:6,background:'none',border:'none',padding:'0 0 10px',color:C.textMid,fontSize:13,cursor:'pointer',fontFamily:'inherit'}}>
+            <ChevronLeft size={18}/>{[a.year,a.make,a.model].filter(Boolean).join(' ')||'Back'}
+          </button>
+          <div style={{fontSize:19,fontWeight:700,color:C.navy,letterSpacing:-0.3}}>
+            {{market:'Comparables',condition:'Condition',history:'History report',customer:'Customer',notes:'Notes',log:'Activity'}[sub]}
+          </div>
+        </div>
+      )}
+
+      {/* Two-column layout on the hub; a page uses the full width. */}
+      <div className={sub?undefined:"two-col"} style={sub?{display:'block'}:{display:'grid',gridTemplateColumns:'minmax(300px, 360px) 1fr',gap:14,alignItems:'start'}}>
+        {/* LEFT RAIL — sticks to viewport as the right column scrolls. Hidden
+            on a sub-page so the page gets the full width instead of an empty
+            column beside it. */}
+        <div className="appraisal-left" style={sub?{display:'none'}:{position:'sticky',top:64,alignSelf:'start',maxHeight:'calc(100vh - 76px)',overflowY:'auto',overflowX:'hidden',paddingBottom:8}}>
+      <Sec title="Vehicle" icon={Car} accent hidden={!!sub}>
         {/* VIN. Decodes on entry, so there's no Decode button. Once decoded the
             field itself is the VIN display — tap it to copy rather than parking
             a second button beside it. */}
@@ -2324,7 +2347,7 @@ function AppraisalForm({initial,onSave,onBack,showToast,onConvert,onFinalize,onU
         </div>
       </Sec>
 
-      <Sec title="Notes" icon={FileText} open={false}>
+      <Sec title="Notes" icon={FileText} hidden={sub!=='notes'} bare>
         <textarea value={a.notes} onChange={e=>set('notes',e.target.value)} placeholder="Recon items, special options, condition observations..." rows={4} style={{width:'100%',padding:'10px 12px',background:'#fff',border:`1px solid ${C.borderStr}`,borderRadius:7,fontSize:13,fontFamily:'inherit',resize:'vertical',outline:'none',boxSizing:'border-box',lineHeight:1.6,color:C.textDark}}/>
       </Sec>
       {/* Offer & Pricing moved to top of right column (above Vehicle History) */}
@@ -2334,7 +2357,7 @@ function AppraisalForm({initial,onSave,onBack,showToast,onConvert,onFinalize,onU
         {/* RIGHT COLUMN — all other sections scroll past the sticky vehicle panel */}
         <div style={{minWidth:0}}>
 
-      <Sec title="Offer & Pricing" icon={DollarSign} accent>
+      <Sec title="Offer & Pricing" icon={DollarSign} accent hidden={!!sub}>
         <div style={{display:'grid',gridTemplateColumns:'repeat(auto-fit,minmax(135px,1fr))',gap:10,marginBottom:12,alignItems:'start'}}>
           <div style={{minWidth:0}}><label style={{display:'block',fontSize:11,fontWeight:600,color:C.textMid,marginBottom:5}}>Recon Cost ($)</label><Input value={a.reconCost} onChange={v=>set('reconCost',v)} type="number" /></div>
           <div style={{minWidth:0}}><label style={{display:'block',fontSize:11,fontWeight:600,color:C.textMid,marginBottom:5}}>Cert / Transport ($)</label><Input value={a.certCost||''} onChange={v=>set('certCost',v)} type="number" /></div>
@@ -2451,11 +2474,11 @@ function AppraisalForm({initial,onSave,onBack,showToast,onConvert,onFinalize,onU
         </div>
       </Sec>
 
-      <Sec title="Vehicle History" icon={ShieldCheck} tone="purple" badge={a.carfax?(a.carfax.clean?'✓ Clean':'⚠ Issues Found'):'Not Pulled'}>
+      <Sec title="Vehicle History" icon={ShieldCheck} tone="purple" hidden={sub!=='history'} bare>
         <CarfaxBadge carfax={a.carfax} onFetch={pullCarfax} loading={cl} canPull={can('carfax')}/>
       </Sec>
 
-      <Sec title="Market Intelligence" icon={BarChart2} tone="blue" badge={a.marketMid?(marketStale?'Updating…':'Live Data'):'No Data'}>
+      <Sec title="Market Intelligence" icon={BarChart2} tone="blue" hidden={sub!=='market'} bare>
         {/* Second opinion now sits beside Suggested Buy — no separate block. */}
         {a._marketMeta?.trimMixed&&!marketStale&&(
           <div style={{margin:'0 0 10px',padding:'8px 12px',background:'#FEF2F2',border:`1px solid ${C.red}`,borderRadius:6,fontSize:11,color:C.textMid,display:'flex',alignItems:'flex-start',gap:8}}>
@@ -2596,7 +2619,7 @@ function AppraisalForm({initial,onSave,onBack,showToast,onConvert,onFinalize,onU
         )}
       </Sec>
 
-      <Sec title="Vehicle Condition" icon={CheckCircle}>
+      <Sec title="Vehicle Condition" icon={CheckCircle} hidden={sub!=='condition'} bare>
         <div style={{display:'grid',gridTemplateColumns:'repeat(2,1fr)',gap:10,marginBottom:10}}>
           {[{f:'tires',l:'Tires',o:['Good','Fair','Needs Replacement']},{f:'paint',l:'Paint / Body',o:['Clean','Minor Scratches','Needs Work','Repainted']},{f:'interior',l:'Interior',o:['Clean','Fair','Poor']},{f:'mechanical',l:'Mechanical',o:['Good','Minor Issues','Major Issues']}].map(x=><Field key={x.f} label={x.l}><Sel value={a[x.f]} onChange={v=>set(x.f,v)} options={x.o}/></Field>)}
         </div>
@@ -2607,7 +2630,7 @@ function AppraisalForm({initial,onSave,onBack,showToast,onConvert,onFinalize,onU
         </div>
       </Sec>
 
-      <Sec title="Customer Information" icon={User} tone="orange" open={false}>
+      <Sec title="Customer Information" icon={User} tone="orange" hidden={sub!=='customer'} bare>
         <div style={{display:'flex',flexWrap:'wrap',gap:10}}>
           <Field label="First Name" half><Input value={a.firstName} onChange={v=>set('firstName',v)} placeholder="John"/></Field>
           <Field label="Last Name" half><Input value={a.lastName} onChange={v=>set('lastName',v)} placeholder="Smith"/></Field>
@@ -2618,10 +2641,31 @@ function AppraisalForm({initial,onSave,onBack,showToast,onConvert,onFinalize,onU
         </div>
       </Sec>
 
-      <Sec title="Action Log" icon={Activity} open={false} badge={(a.log||[]).length||null}>
+      <Sec title="Action Log" icon={Activity} hidden={sub!=='log'} bare>
         <ActionLog entries={a.log}/>
       </Sec>
 
+          {/* Each area opens as its own page; the row carries its current value
+              so you can tell whether it's worth opening. */}
+          {!sub&&(
+            <div style={{marginTop:14,border:`1px solid ${C.border}`,borderRadius:10,overflow:'hidden',background:'#fff'}}>
+              {[
+                {id:'market',   label:'Comparables',    value:a.marketMid?`${(a._comps||[]).length||a.activeComps||0} listings · ${fmt(a.marketMid)} mid`:'Not loaded'},
+                {id:'condition',label:'Condition',      value:[a.tires,a.paint,a.interior,a.mechanical].filter(Boolean).length?`${[a.tires,a.paint,a.interior,a.mechanical].filter(Boolean).length} recorded`:'Not recorded'},
+                {id:'history',  label:'History report', value:a.carfax?(a.carfax.clean?'Clean':'Issues found'):'Not pulled'},
+                {id:'customer', label:'Customer',       value:[a.firstName,a.lastName].filter(Boolean).join(' ')||'None'},
+                {id:'notes',    label:'Notes',          value:a.notes?`${a.notes.slice(0,26)}${a.notes.length>26?'…':''}`:'None'},
+                {id:'log',      label:'Activity',       value:`${(a.log||[]).length} entries`},
+              ].map((r,i,arr)=>(
+                <button key={r.id} onClick={()=>{setSub(r.id);window.scrollTo(0,0);}}
+                  style={{width:'100%',display:'flex',alignItems:'center',gap:12,padding:'14px 16px',background:'none',border:'none',borderBottom:i<arr.length-1?`1px solid ${C.border}`:'none',cursor:'pointer',fontFamily:'inherit',textAlign:'left'}}>
+                  <span style={{fontSize:13.5,color:C.textDark,fontWeight:600,flexShrink:0}}>{r.label}</span>
+                  <span style={{fontSize:12.5,color:C.textLight,marginLeft:'auto',whiteSpace:'nowrap',overflow:'hidden',textOverflow:'ellipsis',minWidth:0}}>{r.value}</span>
+                  <ChevronRight size={15} color={C.textLight} style={{flexShrink:0}}/>
+                </button>
+              ))}
+            </div>
+          )}
         </div>{/* end RIGHT COLUMN */}
       </div>{/* end two-col */}
 
