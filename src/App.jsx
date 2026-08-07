@@ -808,8 +808,8 @@ function Btn({children,onClick,variant='primary',size='md',disabled,full,style:s
   const V={primary:{background:C.navy,color:'#fff',border:'none'},teal:{background:C.teal,color:'#fff',border:'none'},ghost:{background:'transparent',color:C.textMid,border:`1px solid ${C.borderStr}`},danger:{background:C.red,color:'#fff',border:'none'},success:{background:C.green,color:'#fff',border:'none'},outline:{background:'#fff',color:C.navy,border:`1.5px solid ${C.navy}`}};
   return <button className={className} onClick={onClick} disabled={disabled} style={{...S[size],...V[variant],borderRadius:6,fontWeight:600,cursor:disabled?'not-allowed':'pointer',opacity:disabled?0.5:1,display:'inline-flex',alignItems:'center',gap:6,fontFamily:'inherit',transition:'all 0.15s',width:full?'100%':undefined,justifyContent:full?'center':undefined,...sx}}>{children}</button>;
 }
-function Input({value,onChange,placeholder,type='text',style:sx={}}) {
-  return <input type={type} value={value} onChange={e=>onChange(e.target.value)} placeholder={placeholder} style={{width:'100%',padding:'8px 12px',background:'#fff',border:`1px solid ${C.borderStr}`,borderRadius:6,fontSize:13,color:C.textDark,fontFamily:'inherit',outline:'none',boxSizing:'border-box',...sx}} onFocus={e=>e.target.style.borderColor=C.navy} onBlur={e=>e.target.style.borderColor=C.borderStr}/>;
+function Input({value,onChange,placeholder,type='text',style:sx={},autoFocus}) {
+  return <input type={type} autoFocus={autoFocus} value={value} onChange={e=>onChange(e.target.value)} placeholder={placeholder} style={{width:'100%',padding:'8px 12px',background:'#fff',border:`1px solid ${C.borderStr}`,borderRadius:6,fontSize:13,color:C.textDark,fontFamily:'inherit',outline:'none',boxSizing:'border-box',...sx}} onFocus={e=>e.target.style.borderColor=C.navy} onBlur={e=>e.target.style.borderColor=C.borderStr}/>;
 }
 function Sel({value,onChange,options,placeholder}) {
   return <select value={value} onChange={e=>onChange(e.target.value)} style={{width:'100%',padding:'8px 12px',background:'#fff',border:`1px solid ${C.borderStr}`,borderRadius:6,fontSize:13,color:value?C.textDark:C.textLight,fontFamily:'inherit',outline:'none',appearance:'none'}}><option value="">{placeholder||'Select...'}</option>{options.map(o=><option key={o.value||o} value={o.value||o}>{o.label||o}</option>)}</select>;
@@ -1993,19 +1993,61 @@ function AppraisalForm({initial,onSave,onBack,showToast,onConvert,onFinalize,onU
   // lookups, but the backend now caches each vehicle for 24h, so a repeat view
   // costs nothing — there's no reason to make someone click. Runs once per
   // appraisal as soon as we have enough to search on.
+  // VIN + odometer is everything the lookup needs. Once both are present the
+  // market pulls itself and the AI appraisal follows — no button to hunt for.
   const autoMktRef=useRef(false);
   useEffect(()=>{
     if(locked) return;
     if(autoMktRef.current) return;
     if(a.marketMid) return;                 // already have data
     if(!a.vin||a.vin.length!==17) return;
+    if(!Number(a.odometer)) return;         // odometer drives the whole valuation
     if(!(a.postal||dealer?.postal)) return; // need a location to search around
     autoMktRef.current=true;
     const t=setTimeout(()=>{ fetchMkt(); },600);
     return()=>clearTimeout(t);
-  },[a.vin,a.postal,a.marketMid,locked]);
+  },[a.vin,a.odometer,a.postal,a.marketMid,locked]);
   // Reset the guard when the appraiser switches to a different vehicle.
-  useEffect(()=>{ autoMktRef.current=false; },[a.id]);
+  useEffect(()=>{ autoMktRef.current=false; aiRef.current=false; },[a.id]);
+
+  // ── AI appraisal ────────────────────────────────────────────────
+  // Runs once market data lands. Claude sees the real comps we just pulled and
+  // writes the number plus the reasoning behind it.
+  const [aiBusy,setAiBusy]=useState(false);
+  const aiRef=useRef(false);
+  const runAppraisal=useCallback(async(appr)=>{
+    const src=appr||aRef.current; if(!src) return;
+    const comps=src._comps||[];
+    if(!comps.length) return;
+    setAiBusy(true);
+    try{
+      const r=await fetch(`${API_BASE}/api/appraise`,{
+        method:'POST',headers:{'Content-Type':'application/json'},
+        body:JSON.stringify({
+          vehicle:{year:src.year,make:src.make,model:src.model,trim:src.series,
+            odometer:src.odometer,condition:src.conditionNotes||src.mechanical||'',
+            accident:src.accidentVisible?(src.accidentAmount?`Declared ~$${src.accidentAmount}`:'Declared'):'',
+            notes:src.notes||''},
+          market:{marketLow:src.marketLow,marketMid:src.marketMid,marketHigh:src.marketHigh,
+            count:src.marketCount,medianCompMileage:src._medianCompMileage,
+            medianDaysListed:src.marketDaysSupply,comps},
+        }),
+      });
+      const d=await r.json();
+      if(d&&d.success){
+        setA(prev=>({...prev,_ai:d}));
+        showToast(`AI appraisal: buy at ${fmt(d.buy)}`, d.outOfBand?'info':'success');
+      } else if(d&&d.error){ showToast(d.error,'error'); }
+    }catch{ showToast('AI appraisal failed','error'); }
+    finally{ setAiBusy(false); }
+  },[]);
+  // Fire once per vehicle as soon as comps exist.
+  useEffect(()=>{
+    if(locked||aiRef.current) return;
+    if(!a.marketMid||!(a._comps||[]).length) return;
+    aiRef.current=true;
+    runAppraisal(a);
+  },[a.marketMid,a._comps,locked,runAppraisal]);
 
   // ── Keep the market estimate in step with the trim ──────────────
   // The band is trim-sensitive (an XLT and a Platinum are different markets),
@@ -2213,10 +2255,19 @@ function AppraisalForm({initial,onSave,onBack,showToast,onConvert,onFinalize,onU
             <div style={{display:'grid',gridTemplateColumns:'repeat(3,1fr)',gap:8,marginBottom:8}}>
               {[{f:'year',l:'Year',ph:''},{f:'make',l:'Make',ph:''},{f:'model',l:'Model',ph:''},{f:'series',l:'Trim',ph:''},{f:'bodyType',l:'Body',ph:''},{f:'engine',l:'Engine',ph:''},{f:'odometer',l:'Odometer (km)',ph:'',t:'number'},{f:'extColour',l:'Ext. Colour',ph:''},{f:'intColour',l:'Int. Colour',ph:''}].map(x=>(
                 <div key={x.f} style={{minWidth:0}}>
-                  <label style={{display:'block',fontSize:10,fontWeight:600,color:C.textMid,marginBottom:4}}>{x.l}{x.f==='series'&&a.trimOptions?.length>1&&!a.series&&<span style={{color:C.orange,marginLeft:4}}>• pick</span>}</label>
+                  {/* Odometer is the one field the appraiser must supply — the
+                      VIN decodes itself and the valuation can't run without km,
+                      so it's called out until it's filled. */}
+                  <label style={{display:'block',fontSize:10,fontWeight:600,color:x.f==='odometer'&&!a.odometer&&a.vin?.length===17?C.orange:C.textMid,marginBottom:4}}>
+                    {x.l}
+                    {x.f==='series'&&a.trimOptions?.length>1&&!a.series&&<span style={{color:C.orange,marginLeft:4}}>• pick</span>}
+                    {x.f==='odometer'&&!a.odometer&&a.vin?.length===17&&<span style={{color:C.orange,marginLeft:4}}>• enter to price</span>}
+                  </label>
                   {x.f==='series'
                     ? <TrimField value={a.series} onChange={v=>set('series',v)} options={a.trimOptions}/>
-                    : <Input value={a[x.f]} onChange={v=>set(x.f,v)} placeholder={x.ph} type={x.t||'text'}/>}
+                    : <Input value={a[x.f]} onChange={v=>set(x.f,v)} placeholder={x.ph} type={x.t||'text'}
+                        autoFocus={x.f==='odometer'&&!a.odometer&&a.vin?.length===17}
+                        style={x.f==='odometer'&&!a.odometer&&a.vin?.length===17?{borderColor:C.orange,boxShadow:`0 0 0 3px ${C.orange}22`}:undefined}/>}
                 </div>
               ))}
               <div style={{minWidth:0}}>
@@ -2340,6 +2391,39 @@ function AppraisalForm({initial,onSave,onBack,showToast,onConvert,onFinalize,onU
       </Sec>
 
       <Sec title="Market Intelligence" icon={BarChart2} tone="blue" badge={a.marketMid?(marketStale?'Updating…':'Live Data'):'No Data'}>
+        {(aiBusy||a._ai)&&(
+          <div style={{margin:'0 0 12px',padding:'14px 16px',background:C.navyMuted,border:`1px solid ${C.navy}22`,borderRadius:10}}>
+            <div style={{display:'flex',alignItems:'center',gap:8,marginBottom:aiBusy?0:10}}>
+              <Sparkles size={14} color={C.navy}/>
+              <span style={{fontSize:12,fontWeight:800,color:C.navy,letterSpacing:0.3}}>AI APPRAISAL</span>
+              {a._ai?.confidence&&<span style={{marginLeft:'auto',fontSize:10,fontWeight:700,padding:'2px 8px',borderRadius:20,background:a._ai.confidence==='High'?C.greenBg:a._ai.confidence==='Low'?C.orangeBg:C.navyMuted,color:a._ai.confidence==='High'?C.green:a._ai.confidence==='Low'?C.orange:C.navy}}>{a._ai.confidence} confidence</span>}
+            </div>
+            {aiBusy?(
+              <div style={{fontSize:12,color:C.textMid}}>Reading the comparables and working out a number…</div>
+            ):(
+              <>
+                <div style={{display:'flex',gap:20,flexWrap:'wrap',marginBottom:10}}>
+                  <div>
+                    <div style={{fontSize:10,color:C.textLight,fontWeight:700,letterSpacing:0.4}}>BUY AT</div>
+                    <div style={{fontSize:24,fontWeight:800,color:C.navy}}>{fmt(a._ai.buy)}</div>
+                  </div>
+                  <div>
+                    <div style={{fontSize:10,color:C.textLight,fontWeight:700,letterSpacing:0.4}}>RETAILS FOR</div>
+                    <div style={{fontSize:24,fontWeight:800,color:C.teal}}>{fmt(a._ai.retail)}</div>
+                  </div>
+                  <button onClick={()=>runAppraisal(a)} style={{marginLeft:'auto',alignSelf:'flex-end',background:'none',border:`1px solid ${C.border}`,borderRadius:6,padding:'5px 10px',fontSize:11,color:C.textMid,cursor:'pointer'}}>Re-run</button>
+                </div>
+                {a._ai.outOfBand&&(
+                  <div style={{fontSize:11,color:C.red,background:'#FEF2F2',border:`1px solid ${C.red}`,borderRadius:6,padding:'7px 10px',marginBottom:8}}>
+                    This number sits outside the range of the actual listings — treat it as a prompt to look closer, not an answer.
+                  </div>
+                )}
+                <div style={{fontSize:12.5,color:C.textMid,lineHeight:1.55}}>{a._ai.reasoning}</div>
+                <div style={{fontSize:10,color:C.textLight,marginTop:8}}>Based on {a._ai.compsUsed} live comparables. A starting point for your judgment — not a replacement for it.</div>
+              </>
+            )}
+          </div>
+        )}
         {a._marketMeta?.trimMixed&&!marketStale&&(
           <div style={{margin:'0 0 10px',padding:'8px 12px',background:'#FEF2F2',border:`1px solid ${C.red}`,borderRadius:6,fontSize:11,color:C.textMid,display:'flex',alignItems:'flex-start',gap:8}}>
             <AlertTriangle size={12} color={C.red} style={{flexShrink:0,marginTop:1}}/>

@@ -395,6 +395,100 @@ app.post('/api/claude', strictLimiter, async (req, res) => {
   }
 })
 
+// ── AI APPRAISAL ─────────────────────────────────────────────────────
+// Claude writes the appraised number and the reasoning behind it, grounded in
+// the actual comparable listings we just pulled. Two deliberate guardrails:
+//   1. It only ever sees real comps — it is never asked to recall market prices
+//      from memory, which is where a language model would invent numbers.
+//   2. Its number is sanity-checked against the comp range. If it lands outside,
+//      we return it flagged rather than silently trusting it.
+app.post('/api/appraise', strictLimiter, async (req, res) => {
+  const key = ANTHROPIC_KEY || ''
+  if (!key || key === 'YOUR_ANTHROPIC_API_KEY_HERE') {
+    return res.status(400).json({ error: 'Anthropic API key not configured.' })
+  }
+  const b = req.body || {}
+  const v = b.vehicle || {}
+  const m = b.market || {}
+  const comps = Array.isArray(m.comps) ? m.comps.slice(0, 25) : []
+  if (!comps.length) return res.status(400).json({ error: 'No comparable listings to appraise against.' })
+
+  const compLines = comps.map(c =>
+    `- ${c.year || ''} ${c.make || ''} ${c.model || ''} ${c.trim || ''} | ${
+      Number.isFinite(c.mileage) ? c.mileage.toLocaleString('en-CA') + ' km' : 'km n/a'} | $${
+      Number.isFinite(c.price) ? c.price.toLocaleString('en-CA') : '?'}${
+      c.daysListed != null ? ` | ${c.daysListed}d listed` : ''}${c.certified ? ' | certified' : ''}`
+  ).join('\n')
+
+  const prompt = `You are appraising a used vehicle for a Canadian dealership that will BUY it and resell it.
+
+SUBJECT VEHICLE
+${v.year || ''} ${v.make || ''} ${v.model || ''} ${v.trim || ''}
+Odometer: ${v.odometer ? Number(v.odometer).toLocaleString('en-CA') + ' km' : 'not provided'}
+${v.condition ? `Condition noted: ${v.condition}` : ''}${v.accident ? `\nAccident history: ${v.accident}` : ''}${v.notes ? `\nAppraiser notes: ${v.notes}` : ''}
+
+LIVE COMPARABLE LISTINGS (active retail asking prices, same market, pulled just now)
+${compLines}
+
+MARKET SUMMARY
+Retail asking band: low $${m.marketLow || '?'} / mid $${m.marketMid || '?'} / high $${m.marketHigh || '?'}
+Comps used: ${m.count || comps.length}${m.medianCompMileage ? ` | median comp odometer: ${Number(m.medianCompMileage).toLocaleString('en-CA')} km` : ''}${m.medianDaysListed ? ` | median days listed: ${m.medianDaysListed}` : ''}
+
+TASK
+Work only from the listings above — do not use remembered prices. Reason about how the
+subject's odometer compares to the comps, how quickly this segment is moving, and any
+condition or accident disclosure. Then give:
+  retail — what this vehicle realistically RETAILS for here
+  buy — the maximum the dealer should PAY, leaving normal recon and margin
+  reasoning — 2-4 sentences a manager can read and act on, in plain language
+  confidence — "High", "Medium" or "Low" based on how many comps and how well they match
+
+Respond with ONLY raw JSON, no markdown fences:
+{"retail": 12345, "buy": 12345, "reasoning": "...", "confidence": "Medium"}`
+
+  try {
+    const r = await fetch('https://api.anthropic.com/v1/messages', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'x-api-key': key, 'anthropic-version': '2023-06-01' },
+      body: JSON.stringify({
+        model: 'claude-sonnet-4-6',
+        max_tokens: 900,
+        messages: [{ role: 'user', content: prompt }],
+      }),
+    })
+    const data = await r.json()
+    if (data.error) return res.status(502).json({ error: data.error.message || 'AI request failed' })
+    const text = (data.content || []).filter(x => x.type === 'text').map(x => x.text).join('').trim()
+    let out
+    try { out = JSON.parse(text.replace(/```json|```/g, '').trim()) }
+    catch { return res.status(502).json({ error: 'AI returned an unreadable response.' }) }
+
+    const retail = Number(out.retail), buy = Number(out.buy)
+    if (!Number.isFinite(retail) || !Number.isFinite(buy)) {
+      return res.status(502).json({ error: 'AI did not return usable numbers.' })
+    }
+    // Sanity check against the real comps — a value far outside the observed
+    // range is reported as suspect rather than presented as fact.
+    const prices = comps.map(c => c.price).filter(Number.isFinite)
+    const lo = Math.min(...prices), hi = Math.max(...prices)
+    const outOfBand = prices.length ? (retail < lo * 0.6 || retail > hi * 1.25 || buy > retail) : false
+
+    res.json({
+      success: true,
+      retail: Math.round(retail),
+      buy: Math.round(buy),
+      reasoning: String(out.reasoning || '').slice(0, 1200),
+      confidence: ['High', 'Medium', 'Low'].includes(out.confidence) ? out.confidence : 'Medium',
+      outOfBand,
+      compsUsed: comps.length,
+      generatedAt: new Date().toISOString(),
+    })
+  } catch (err) {
+    console.error('appraise error:', err.message)
+    res.status(500).json({ error: 'Appraisal failed.' })
+  }
+})
+
 // ── VINAUDIT MARKET LISTINGS — Canadian comps, active + dropped blend ──
 // Helpers (pure, testable)
 function percentile(sorted, p) {
