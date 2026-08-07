@@ -48,6 +48,10 @@ export default function VINScanner({ onVINDetected, onClose }){
   const [verified, setVerified] = useState(false)
   const [progress, setProgress] = useState(0)        // 0..17 chars locked, for the live bar
   const [landscape, setLandscape] = useState(window.innerWidth > window.innerHeight)
+  // Portrait scanning is supported — landscape is a suggestion, not a gate. A
+  // door-jamb sticker is easy to shoot in portrait, and forcing a rotation just
+  // to start is friction. The tip stays until dismissed or the phone is turned.
+  const [tipDismissed, setTipDismissed] = useState(false)
 
   const videoRef = useRef(null)
   const canvasRef = useRef(null)
@@ -143,7 +147,13 @@ export default function VINScanner({ onVINDetected, onClose }){
     if(!video||!canvas) return null
     const vw=video.videoWidth, vh=video.videoHeight
     if(!vw||!vh) return null
-    const sx=vw*0.04, sw=vw*0.92, sy=vh*0.42, sh=vh*0.16, scale=2.5
+    // Portrait frames are narrow: the VIN spans less of the sensor, so we take a
+    // proportionally taller band and upscale harder to keep the glyphs legible.
+    const isPortrait = vh > vw
+    const sx=vw*0.04, sw=vw*0.92
+    const sy = isPortrait ? vh*0.44 : vh*0.42
+    const sh = isPortrait ? vh*0.12 : vh*0.16
+    const scale = isPortrait ? 3.5 : 2.5
     canvas.width=sw*scale; canvas.height=sh*scale
     const ctx=canvas.getContext('2d')
     ctx.drawImage(video, sx, sy, sw, sh, 0, 0, canvas.width, canvas.height)
@@ -178,23 +188,28 @@ export default function VINScanner({ onVINDetected, onClose }){
           <video ref={videoRef} style={{width:'100%',height:'100%',objectFit:'cover',display:'block'}} autoPlay playsInline muted/>
           <canvas ref={canvasRef} style={{display:'none'}}/>
 
-          {/* Rotate-to-landscape nudge (overlay) when held in portrait */}
-          {!landscape && (
-            <div style={{position:'absolute',inset:0,background:'rgba(0,0,0,0.78)',display:'flex',flexDirection:'column',alignItems:'center',justifyContent:'center',gap:16,padding:24,textAlign:'center',zIndex:6}}>
-              <RotateCw size={48} color={TEAL} style={{animation:'rock 1.6s ease-in-out infinite'}}/>
-              <div style={{fontSize:18,fontWeight:800,color:'#fff'}}>Turn your phone sideways</div>
-              <div style={{fontSize:14,color:'rgba(255,255,255,0.65)',maxWidth:300,lineHeight:1.5}}>VINs are long and horizontal — landscape fills the frame and reads far more accurately.</div>
+          {/* Rotate hint — advisory only. Scanning runs in portrait too. */}
+          {!landscape && !tipDismissed && (
+            <div style={{position:'absolute',left:12,right:12,bottom:100,background:'rgba(0,0,0,0.82)',borderRadius:12,padding:'12px 14px',display:'flex',alignItems:'center',gap:12,zIndex:6}}>
+              <RotateCw size={22} color={TEAL} style={{flexShrink:0,animation:'rock 1.6s ease-in-out infinite'}}/>
+              <div style={{flex:1,minWidth:0}}>
+                <div style={{fontSize:13,fontWeight:700,color:'#fff'}}>Sideways reads better</div>
+                <div style={{fontSize:12,color:'rgba(255,255,255,0.6)',lineHeight:1.4}}>VINs are long and horizontal — but portrait works too, just get closer.</div>
+              </div>
+              <button onClick={()=>setTipDismissed(true)} aria-label="Dismiss"
+                style={{flexShrink:0,background:'rgba(255,255,255,0.1)',border:'none',color:'rgba(255,255,255,0.7)',borderRadius:6,padding:'6px 10px',fontSize:12,cursor:'pointer'}}>Got it</button>
             </div>
           )}
 
           {/* Horizontal scan band (VIN-shaped) + live progress */}
-          {landscape && (
+          {(
             <div style={{position:'absolute',inset:0,pointerEvents:'none'}}>
-              {/* dim above/below the band */}
-              <div style={{position:'absolute',top:0,left:0,right:0,height:'42%',background:'rgba(0,0,0,0.5)'}}/>
-              <div style={{position:'absolute',top:'58%',left:0,right:0,bottom:0,background:'rgba(0,0,0,0.5)'}}/>
+              {/* Band geometry mirrors cropBand() exactly — the guide must show
+                  precisely what is being read, or it misleads the user. */}
+              <div style={{position:'absolute',top:0,left:0,right:0,height:landscape?'42%':'44%',background:'rgba(0,0,0,0.5)'}}/>
+              <div style={{position:'absolute',top:landscape?'58%':'56%',left:0,right:0,bottom:0,background:'rgba(0,0,0,0.5)'}}/>
               {/* the band */}
-              <div style={{position:'absolute',top:'42%',left:'4%',right:'4%',height:'16%',border:`2px solid ${pct>0?TEAL:'rgba(255,255,255,0.7)'}`,borderRadius:8,boxShadow:`0 0 0 9999px rgba(0,0,0,0) , 0 0 ${10+pct/4}px ${pct>0?TEAL:'transparent'}`,transition:'box-shadow 0.2s,border-color 0.2s'}}>
+              <div style={{position:'absolute',top:landscape?'42%':'44%',left:'4%',right:'4%',height:landscape?'16%':'12%',border:`2px solid ${pct>0?TEAL:'rgba(255,255,255,0.7)'}`,borderRadius:8,boxShadow:`0 0 0 9999px rgba(0,0,0,0) , 0 0 ${10+pct/4}px ${pct>0?TEAL:'transparent'}`,transition:'box-shadow 0.2s,border-color 0.2s'}}>
                 {/* progress fill — the "thicker as it reads" cue */}
                 <div style={{position:'absolute',left:0,bottom:0,top:0,width:`${pct}%`,background:`linear-gradient(90deg, rgba(0,180,166,0.05), rgba(0,180,166,0.22))`,borderRight:pct>0&&pct<100?`2px solid ${TEAL}`:'none',transition:'width 0.25s ease-out'}}/>
               </div>
