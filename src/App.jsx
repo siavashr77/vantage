@@ -1925,47 +1925,24 @@ function consumerOfferPrint(a, dealer){
 function VehicleSummary({data,onEdit}){
   const decoded = data.year||data.make||data.model||data.vin
   return(
-    <div style={{background:C.navyMuted,borderRadius:8,border:`1px solid ${C.navyBorder}`,overflow:'hidden'}}>
+    <div>
       {decoded?(
         <div>
-          {/* Main info row */}
-          <div style={{padding:'12px 14px',display:'flex',alignItems:'flex-start',gap:12}}>
-            <div style={{width:38,height:38,background:C.navy,borderRadius:8,display:'flex',alignItems:'center',justifyContent:'center',flexShrink:0}}>
-              <Car size={18} color="#fff"/>
+          {/* Spec line only. The vehicle name and kilometres are already in the
+              page header — repeating them here was the same fact three times. */}
+          <div style={{padding:'2px 0 10px',display:'flex',alignItems:'center',gap:10}}>
+            <div style={{flex:1,minWidth:0,fontSize:12.5,color:C.textMid,lineHeight:1.5}}>
+              {[data.engine,data.drivetrain,data.transmission].filter(Boolean).join(' · ')||'Specs pending'}
+              {(data.extColour||data.intColour)&&<span style={{color:C.textLight}}>{' · '}{[data.extColour,data.intColour].filter(Boolean).join(' / ')}</span>}
             </div>
-            <div style={{flex:1,minWidth:0}}>
-              <div style={{fontWeight:800,fontSize:15,color:C.navy,letterSpacing:-0.3,lineHeight:1.2}}>
-                {[data.year,data.make,data.model,data.series].filter(Boolean).join(' ')}
-              </div>
-              <div style={{fontSize:12,color:C.textMid,marginTop:2}}>
-                {[data.engine,data.drivetrain,data.transmission].filter(Boolean).join(' · ')}
-              </div>
-              {(data.extColour||data.intColour)&&(
-                <div style={{fontSize:11,color:C.textLight,marginTop:2}}>
-                  {[data.extColour,data.intColour].filter(Boolean).join(' / ')}
-                </div>
-              )}
-            </div>
-            <button onClick={onEdit} style={{background:'#fff',border:`1px solid ${C.navyBorder}`,borderRadius:6,padding:'5px 10px',fontSize:11,fontWeight:600,color:C.navy,cursor:'pointer',flexShrink:0,display:'flex',alignItems:'center',gap:4}}>
-              <Edit3 size={10}/>Edit
+            <button onClick={onEdit} style={{background:'none',border:'none',padding:0,fontSize:12,color:C.textMid,cursor:'pointer',flexShrink:0,fontFamily:'inherit'}}>
+              Edit
             </button>
           </div>
 
-          {/* Mileage — large and prominent */}
-          {data.odometer&&(
-            <div style={{padding:'8px 14px',borderTop:`1px solid ${C.navyBorder}`,display:'flex',alignItems:'center',justifyContent:'space-between',background:'rgba(28,45,94,0.04)'}}>
-              <span style={{fontSize:11,fontWeight:600,color:C.textLight,textTransform:'uppercase',letterSpacing:1}}>Odometer</span>
-              <span style={{fontSize:15,fontWeight:800,color:C.navy,fontFamily:'monospace',letterSpacing:-0.3}}>
-                {Number(data.odometer).toLocaleString('en-CA')} <span style={{fontSize:11,fontWeight:500,color:C.textLight}}>km</span>
-              </span>
-            </div>
-          )}
-
-          {/* VIN shown once in the editable row above — no duplicate here */}
-
           {/* Carfax tags */}
           {(data.carfax||(data.odometer&&data.marketAvgOdometer))&&(
-            <div style={{padding:'8px 14px',borderTop:`1px solid ${C.navyBorder}`}}>
+            <div style={{padding:'0 0 8px'}}>
               <CarfaxTags carfax={data.carfax} odometer={data.odometer} marketAvgOdometer={data.marketAvgOdometer}/>
             </div>
           )}
@@ -1997,6 +1974,7 @@ function AppraisalForm({initial,onSave,onBack,showToast,onConvert,onFinalize,onU
   const [dupMatch,setDupMatch]=useState(null);   // existing active appraisal/inventory for this VIN
   const locked=!!a.finalizedAt;
   const [vehExpanded,setVehExpanded]=useState(!initial?.year);
+  const [vinCopied,setVinCopied]=useState(false);
   const [showVINScanner,setShowVINScanner]=useState(false);
   const [savedAt,setSavedAt]=useState(initial?.updatedAt||null);
   const [isDirty,setIsDirty]=useState(false);
@@ -2033,7 +2011,7 @@ function AppraisalForm({initial,onSave,onBack,showToast,onConvert,onFinalize,onU
   // Runs once market data lands. Claude sees the real comps we just pulled and
   // writes the number plus the reasoning behind it.
   const [aiBusy,setAiBusy]=useState(false);
-  const [aiOpen,setAiOpen]=useState(false);
+  const [whyOpen,setWhyOpen]=useState(false);
   const aiRef=useRef(false);
   const runAppraisal=useCallback(async(appr)=>{
     const src=appr||aRef.current; if(!src) return;
@@ -2262,14 +2240,25 @@ function AppraisalForm({initial,onSave,onBack,showToast,onConvert,onFinalize,onU
         {/* LEFT RAIL — sticks to viewport as the right column scrolls */}
         <div className="appraisal-left" style={{position:'sticky',top:64,alignSelf:'start',maxHeight:'calc(100vh - 76px)',overflowY:'auto',overflowX:'hidden',paddingBottom:8}}>
       <Sec title="Vehicle" icon={Car} accent>
-        {/* VIN row */}
-        <div style={{display:'flex',gap:8,marginBottom:10,alignItems:'center'}}>
-          <div style={{flex:1}}>
-            <Input value={a.vin} onChange={v=>set('vin',v.toUpperCase().replace(/[^A-Z0-9]/g,'').substring(0,17))} placeholder="17-character VIN" style={{fontFamily:'monospace',letterSpacing:1,fontSize:14}}/>
+        {/* VIN. Decodes on entry, so there's no Decode button. Once decoded the
+            field itself is the VIN display — tap it to copy rather than parking
+            a second button beside it. */}
+        <div style={{display:'flex',gap:8,marginBottom:12,alignItems:'center'}}>
+          <div style={{flex:1,position:'relative'}}>
+            <Input value={a.vin} onChange={v=>set('vin',v.toUpperCase().replace(/[^A-Z0-9]/g,'').substring(0,17))} placeholder="17-character VIN" style={{fontFamily:'monospace',letterSpacing:0.5,fontSize:14,paddingRight:a.vin.length===17?34:12}}/>
+            {a.vin.length===17&&(
+              <button onClick={()=>{navigator.clipboard?.writeText(a.vin);setVinCopied(true);setTimeout(()=>setVinCopied(false),1400);}}
+                aria-label="Copy VIN" title="Copy VIN"
+                style={{position:'absolute',right:6,top:'50%',transform:'translateY(-50%)',background:'none',border:'none',padding:4,color:vinCopied?C.green:C.textLight,cursor:'pointer',display:'flex'}}>
+                {vinCopied?<Check size={14}/>:<Copy size={14}/>}
+              </button>
+            )}
           </div>
-          {a.vin&&a.vin.length>=10&&<CopyVIN vin={a.vin}/>}
-          <Btn onClick={()=>setShowVINScanner(true)} variant="ghost" size="sm" className="cap-only"><ScanLine size={13}/>Scan</Btn>
-          <Btn onClick={decode} disabled={vl||a.vin.length!==17} size="sm"><RefreshCw size={12} style={{animation:vl?'spin 1s linear infinite':undefined}}/>{vl?'...':'Decode'}</Btn>
+          {vl&&<RefreshCw size={14} color={C.textLight} style={{animation:'spin 1s linear infinite',flexShrink:0}}/>}
+          <button onClick={()=>setShowVINScanner(true)} aria-label="Scan VIN"
+            style={{background:'none',border:`1px solid ${C.borderStr}`,borderRadius:7,padding:'8px 10px',color:C.textMid,cursor:'pointer',display:'flex',alignItems:'center',gap:5,fontSize:12,fontFamily:'inherit',flexShrink:0}}>
+            <ScanLine size={14}/>Scan
+          </button>
         </div>
         {/* No VIN → manual year/make/model/trim picker only. Once a VIN is
             decoded OR the user has picked a vehicle manually, show the summary
@@ -2284,7 +2273,7 @@ function AppraisalForm({initial,onSave,onBack,showToast,onConvert,onFinalize,onU
             {vehExpanded&&(
           <div style={{marginTop:10,paddingTop:10,borderTop:`1px solid ${C.navyBorder}`}}>
             <div style={{display:'grid',gridTemplateColumns:'repeat(3,1fr)',gap:8,marginBottom:8}}>
-              {[{f:'year',l:'Year',ph:''},{f:'make',l:'Make',ph:''},{f:'model',l:'Model',ph:''},{f:'series',l:'Trim',ph:''},{f:'bodyType',l:'Body',ph:''},{f:'engine',l:'Engine',ph:''},{f:'odometer',l:'Odometer (km)',ph:'',t:'number'},{f:'extColour',l:'Ext. Colour',ph:''},{f:'intColour',l:'Int. Colour',ph:''}].map(x=>(
+              {[{f:'year',l:'Year',ph:''},{f:'make',l:'Make',ph:''},{f:'model',l:'Model',ph:''},{f:'series',l:'Trim',ph:''},{f:'bodyType',l:'Body',ph:''},{f:'engine',l:'Engine',ph:''},{f:'odometer',l:'km',ph:'',t:'number'},{f:'extColour',l:'Ext. Colour',ph:''},{f:'intColour',l:'Int. Colour',ph:''}].map(x=>(
                 <div key={x.f} style={{minWidth:0}}>
                   {/* Odometer is the one field the appraiser must supply — the
                       VIN decodes itself and the valuation can't run without km,
@@ -2363,21 +2352,66 @@ function AppraisalForm({initial,onSave,onBack,showToast,onConvert,onFinalize,onU
           const sb=computeSuggestedBuy({...a,comps:a._comps},dealer);
           if(!sb) return null;
           const confColor=sb.confidence==='High'?C.green:sb.confidence==='Medium'?C.navy:C.orange;
+          const aiSecond=a._ai?.buy?(()=>{
+            const gap=Math.round(((a._ai.buy-sb.suggested)/sb.suggested)*100);
+            return {buy:a._ai.buy,gap,disagrees:Math.abs(gap)>=8};
+          })():null;
+          // The two numbers sit together, at the same weight, because they
+          // answer the same question by different methods — separating them
+          // made the second one look like trivia.
           return(
-            <div style={{marginBottom:12,maxWidth:480,background:C.tealMuted,border:`1px solid ${C.teal}`,borderRadius:10,padding:'12px 14px'}}>
-              <div style={{display:'flex',alignItems:'center',justifyContent:'space-between',flexWrap:'wrap',gap:8}}>
-                <div style={{display:'flex',alignItems:'center',gap:8}}>
-                  <Sparkles size={15} color={C.teal}/>
-                  <span style={{fontSize:11,fontWeight:800,color:C.teal,textTransform:'uppercase',letterSpacing:0.5}}>Suggested Buy</span>
-                  <span style={{fontSize:9,fontWeight:700,color:confColor,background:'#fff',border:`1px solid ${confColor}`,borderRadius:10,padding:'1px 7px'}}>{sb.confidence} confidence</span>
+            <div style={{marginBottom:14,maxWidth:520}}>
+              <div style={{display:'flex',gap:0,alignItems:'stretch',border:`1px solid ${C.border}`,borderRadius:10,overflow:'hidden'}}>
+                <div style={{flex:1,padding:'12px 14px',minWidth:0}}>
+                  <div style={{fontSize:10.5,fontWeight:700,color:C.textLight,letterSpacing:0.4,marginBottom:4}}>SUGGESTED BUY</div>
+                  <div style={{fontSize:24,fontWeight:800,color:C.navy,letterSpacing:-0.5,lineHeight:1.1}}>{fmt(sb.suggested)}</div>
+                  <div style={{fontSize:10.5,color:confColor,marginTop:3}}>{sb.confidence.toLowerCase()} confidence · formula</div>
                 </div>
-                <span style={{fontSize:20,fontWeight:800,color:C.teal,fontFamily:'monospace'}}>{fmt(sb.suggested)}</span>
+                {aiSecond&&(
+                  <div style={{flex:1,padding:'12px 14px',minWidth:0,borderLeft:`1px solid ${C.border}`,background:aiSecond.disagrees?C.orangeBg:'transparent'}}>
+                    <div style={{fontSize:10.5,fontWeight:700,color:C.textLight,letterSpacing:0.4,marginBottom:4}}>SECOND OPINION</div>
+                    <div style={{fontSize:24,fontWeight:800,color:aiSecond.disagrees?C.orange:C.navy,letterSpacing:-0.5,lineHeight:1.1}}>{fmt(aiSecond.buy)}</div>
+                    <div style={{fontSize:10.5,color:aiSecond.disagrees?C.orange:C.textLight,marginTop:3}}>
+                      {aiSecond.gap>0?'+':''}{aiSecond.gap}% · Claude on the comps
+                    </div>
+                  </div>
+                )}
+                {aiBusy&&!aiSecond&&(
+                  <div style={{flex:1,padding:'12px 14px',borderLeft:`1px solid ${C.border}`,display:'flex',alignItems:'center'}}>
+                    <span style={{fontSize:11,color:C.textLight}}>Second opinion…</span>
+                  </div>
+                )}
               </div>
-              <div style={{marginTop:8,display:'flex',flexDirection:'column',gap:3}}>
-                {sb.reasons.map((r,i)=><div key={i} style={{fontSize:11,color:C.textMid,display:'flex',gap:6,lineHeight:1.4}}><span style={{color:C.teal,flexShrink:0}}>·</span><span>{r}</span></div>)}
+
+              {aiSecond?.disagrees&&(
+                <div style={{fontSize:12,color:C.orange,marginTop:8,lineHeight:1.5}}>
+                  The two methods disagree by {Math.abs(aiSecond.gap)}% — worth a look before you offer.
+                </div>
+              )}
+
+              <div style={{display:'flex',gap:14,alignItems:'center',marginTop:10,flexWrap:'wrap'}}>
+                {(!a.appraisedValue)&&<button onClick={()=>set('appraisedValue',String(sb.suggested))} style={{background:C.navy,color:'#fff',border:'none',borderRadius:7,padding:'9px 16px',fontSize:12.5,fontWeight:700,cursor:'pointer',fontFamily:'inherit'}}>Use {fmt(sb.suggested)}</button>}
+                <button onClick={()=>setWhyOpen(o=>!o)} style={{background:'none',border:'none',padding:0,fontSize:12,color:C.textMid,cursor:'pointer',fontFamily:'inherit'}}>{whyOpen?'Hide reasoning':'Why these numbers'}</button>
               </div>
-              {(!a.appraisedValue)&&<button onClick={()=>set('appraisedValue',String(sb.suggested))} style={{marginTop:10,background:C.teal,color:'#fff',border:'none',borderRadius:7,padding:'8px 14px',fontSize:12,fontWeight:700,cursor:'pointer'}}>Use this offer →</button>}
-              <div style={{marginTop:8,fontSize:9.5,color:C.textLight,fontStyle:'italic'}}>A suggestion based on your pricing strategy and current market — adjust as you see fit.</div>
+
+              {whyOpen&&(
+                <div style={{marginTop:10,paddingTop:10,borderTop:`1px solid ${C.border}`,display:'flex',flexDirection:'column',gap:8}}>
+                  <div>
+                    <div style={{fontSize:10.5,fontWeight:700,color:C.textLight,letterSpacing:0.4,marginBottom:4}}>FORMULA</div>
+                    {sb.reasons.map((r,i)=><div key={i} style={{fontSize:12,color:C.textMid,lineHeight:1.5}}>{r}</div>)}
+                  </div>
+                  {a._ai&&(
+                    <div>
+                      <div style={{fontSize:10.5,fontWeight:700,color:C.textLight,letterSpacing:0.4,marginBottom:4}}>CLAUDE</div>
+                      <div style={{fontSize:12,color:C.textMid,lineHeight:1.5}}>{a._ai.reasoning}</div>
+                      <div style={{fontSize:11,color:C.textLight,marginTop:4}}>
+                        Retail read {fmt(a._ai.retail)} · {a._ai.compsUsed} comps
+                        {a._ai.outOfBand&&<span style={{color:C.red}}> · outside the listing range</span>}
+                      </div>
+                    </div>
+                  )}
+                </div>
+              )}
             </div>
           );
         })()}
@@ -2422,41 +2456,7 @@ function AppraisalForm({initial,onSave,onBack,showToast,onConvert,onFinalize,onU
       </Sec>
 
       <Sec title="Market Intelligence" icon={BarChart2} tone="blue" badge={a.marketMid?(marketStale?'Updating…':'Live Data'):'No Data'}>
-        {(aiBusy||a._ai)&&(()=>{
-          // Second opinion, not a competing answer. The formula stays the number
-          // of record because it is auditable; this is here to catch what a
-          // formula can't see. One line unless it disagrees or you expand it.
-          const buy=Number(a.suggestedBuy||a.appraisedValue)||null;
-          const gap=buy&&a._ai?.buy?Math.round(((a._ai.buy-buy)/buy)*100):null;
-          const disagrees=gap!==null&&Math.abs(gap)>=8;
-          return (
-            <div style={{margin:'0 0 14px',padding:'10px 0 0',borderTop:`1px solid ${C.border}`}}>
-              {aiBusy?(
-                <div style={{fontSize:12,color:C.textLight}}>Reading the comparables…</div>
-              ):(
-                <>
-                  <div style={{display:'flex',alignItems:'baseline',gap:8,flexWrap:'wrap'}}>
-                    <span style={{fontSize:11,fontWeight:700,color:C.textLight,letterSpacing:0.3}}>SECOND OPINION</span>
-                    <span style={{fontSize:14,fontWeight:700,color:disagrees?C.orange:C.textDark}}>{fmt(a._ai.buy)}</span>
-                    {gap!==null&&<span style={{fontSize:11,color:disagrees?C.orange:C.textLight}}>{gap>0?'+':''}{gap}% vs suggested</span>}
-                    <button onClick={()=>setAiOpen(o=>!o)} style={{marginLeft:'auto',background:'none',border:'none',padding:0,fontSize:11,color:C.textMid,cursor:'pointer',fontFamily:'inherit'}}>
-                      {aiOpen?'Less':'Why'}
-                    </button>
-                  </div>
-                  {aiOpen&&(
-                    <div style={{fontSize:12.5,color:C.textMid,lineHeight:1.55,marginTop:8}}>
-                      {a._ai.reasoning}
-                      <div style={{fontSize:11,color:C.textLight,marginTop:6}}>
-                        Retail read {fmt(a._ai.retail)} · {a._ai.compsUsed} comps · {a._ai.confidence?.toLowerCase()} confidence
-                        {a._ai.outOfBand&&<span style={{color:C.red}}> · outside the listing range, check before relying on it</span>}
-                      </div>
-                    </div>
-                  )}
-                </>
-              )}
-            </div>
-          );
-        })()}
+        {/* Second opinion now sits beside Suggested Buy — no separate block. */}
         {a._marketMeta?.trimMixed&&!marketStale&&(
           <div style={{margin:'0 0 10px',padding:'8px 12px',background:'#FEF2F2',border:`1px solid ${C.red}`,borderRadius:6,fontSize:11,color:C.textMid,display:'flex',alignItems:'flex-start',gap:8}}>
             <AlertTriangle size={12} color={C.red} style={{flexShrink:0,marginTop:1}}/>
