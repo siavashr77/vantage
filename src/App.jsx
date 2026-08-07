@@ -7,7 +7,7 @@ import {
   Activity, Sparkles, Globe, AlertCircle, LayoutDashboard,
   ClipboardList, Package, Settings, Bell, ChevronRight,
   Printer, Image, Building2, ShieldCheck, Zap,
-  FileSearch, Mail, ExternalLink, ScanLine, Edit3, Share2, Info, Copy, Check
+  FileSearch, Mail, ExternalLink, ScanLine, Edit3, Share2, Info, Copy, Check, MoreVertical
 } from "lucide-react";
 import VINScanner from './VINScanner.jsx'
 import { computeSuggestedBuy, confidenceFrom, LUXURY_MAKES } from '../shared/suggestedBuy.js'
@@ -867,6 +867,39 @@ function ManualVehicleEntry({ data, onSet, postal, onMarket, busy }) {
 // Trim picker: when the VIN decode returns multiple candidate trims, show a
 // dropdown (with an "Other…" escape to type a custom value); otherwise a plain
 // editable input, for when the decode can't pin the exact trim.
+// One menu for every page-level action. Keeps the header to a single line and
+// stops secondary actions competing with the work for attention.
+function ActionMenu({items}){
+  const [open,setOpen]=useState(false);
+  const ref=useRef(null);
+  useEffect(()=>{
+    if(!open) return;
+    const close=e=>{ if(ref.current&&!ref.current.contains(e.target)) setOpen(false); };
+    document.addEventListener('mousedown',close);
+    return()=>document.removeEventListener('mousedown',close);
+  },[open]);
+  const shown=(items||[]).filter(Boolean);
+  if(!shown.length) return null;
+  return (
+    <div ref={ref} style={{position:'relative',flexShrink:0}}>
+      <button onClick={()=>setOpen(o=>!o)} aria-label="Actions" aria-expanded={open}
+        style={{background:'none',border:'none',padding:6,margin:-6,color:C.textMid,cursor:'pointer',display:'flex',alignItems:'center'}}>
+        <MoreVertical size={20}/>
+      </button>
+      {open&&(
+        <div style={{position:'absolute',right:0,top:'calc(100% + 6px)',background:'#fff',border:`1px solid ${C.border}`,borderRadius:10,boxShadow:'0 8px 28px rgba(0,0,0,0.14)',minWidth:190,zIndex:60,overflow:'hidden'}}>
+          {shown.map((it,i)=>(
+            <button key={i} onClick={()=>{setOpen(false);it.onClick&&it.onClick();}}
+              style={{width:'100%',display:'flex',alignItems:'center',gap:10,padding:'11px 14px',background:'none',border:'none',borderBottom:i<shown.length-1?`1px solid ${C.border}`:'none',fontSize:13,color:C.textDark,fontFamily:'inherit',cursor:'pointer',textAlign:'left'}}>
+              {it.icon&&<it.icon size={15} color={C.textMid}/>}{it.label}
+            </button>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
 function TrimField({value,onChange,options}){
   const opts = Array.isArray(options) ? options : [];
   // Show the picker whenever we have real options to offer — not just when the
@@ -2000,6 +2033,7 @@ function AppraisalForm({initial,onSave,onBack,showToast,onConvert,onFinalize,onU
   // Runs once market data lands. Claude sees the real comps we just pulled and
   // writes the number plus the reasoning behind it.
   const [aiBusy,setAiBusy]=useState(false);
+  const [aiOpen,setAiOpen]=useState(false);
   const aiRef=useRef(false);
   const runAppraisal=useCallback(async(appr)=>{
     const src=appr||aRef.current; if(!src) return;
@@ -2162,54 +2196,45 @@ function AppraisalForm({initial,onSave,onBack,showToast,onConvert,onFinalize,onU
   return (
     <div>
       {showVINScanner&&<VINScanner onVINDetected={v=>{set('vin',v);setVehExpanded(true);}} onClose={()=>setShowVINScanner(false)}/>}
-      <Card style={{marginBottom:12,overflow:'hidden'}}>
-        {/* Compact single-row header (matches inventory top bar) */}
-        <div style={{padding:'12px 16px',borderBottom:`1px solid ${C.border}`,display:'flex',alignItems:'center',gap:10,flexWrap:'wrap'}}>
-          <button onClick={onBack} style={{display:'flex',alignItems:'center',gap:4,background:'none',border:`1px solid ${C.borderStr}`,borderRadius:7,padding:'8px 12px',fontSize:12,fontWeight:600,color:C.textMid,cursor:'pointer',fontFamily:'inherit',flexShrink:0}}><ChevronLeft size={14}/>Back</button>
-          <div style={{display:'flex',alignItems:'center',gap:8,minWidth:0,flex:'1 1 220px'}}>
-            <span style={{fontSize:15,fontWeight:800,color:C.navy,whiteSpace:'nowrap',overflow:'hidden',textOverflow:'ellipsis'}}>{[a.year,a.make,a.model,a.series].filter(Boolean).join(' ')||'New Appraisal'}</span>
-            {a.vin&&<><span style={{fontSize:11,fontFamily:'monospace',color:C.textLight,letterSpacing:0.3,whiteSpace:'nowrap',flexShrink:0}}>{a.vin}</span><CopyVIN vin={a.vin}/></>}
+      {/* Header — one line. Back is a bare arrow, the vehicle is named once
+          (the VIN lives in its own field below, not repeated here), and every
+          action folds into a single menu so the page opens on the work, not on
+          a row of buttons. Saving is automatic, so there's no save state to
+          report. */}
+      <div style={{display:'flex',alignItems:'center',gap:10,padding:'4px 2px 14px'}}>
+        <button onClick={onBack} aria-label="Back"
+          style={{background:'none',border:'none',padding:4,margin:'0 -4px 0 0',color:C.textMid,cursor:'pointer',display:'flex',alignItems:'center',flexShrink:0}}>
+          <ChevronLeft size={22}/>
+        </button>
+        <div style={{flex:1,minWidth:0}}>
+          <div style={{fontSize:16,fontWeight:700,color:C.navy,whiteSpace:'nowrap',overflow:'hidden',textOverflow:'ellipsis',letterSpacing:-0.2}}>
+            {[a.year,a.make,a.model,a.series].filter(Boolean).join(' ')||'New appraisal'}
           </div>
-          <div style={{flexShrink:0}}><SaveStatus isDirty={isDirty} savedAt={savedAt} onSave={forceSave}/></div>
-          {locked&&<span style={{display:'inline-flex',alignItems:'center',gap:4,background:C.purpleBg,color:C.purple,borderRadius:12,padding:'4px 10px',fontSize:11,fontWeight:700,flexShrink:0}}><ShieldCheck size={12}/>Finalized</span>}
-          <select value={a.status} disabled={locked} onChange={e=>set('status',e.target.value)} style={{padding:'7px 10px',border:`1px solid ${C.borderStr}`,borderRadius:7,fontSize:12,fontFamily:'inherit',color:C.textDark,background:locked?C.bgDark:'#fff',cursor:locked?'not-allowed':'pointer',flexShrink:0}}>
-            {Object.entries(AS).map(([k,v])=><option key={k} value={k}>{v.label}</option>)}
-          </select>
+          {a.odometer&&<div style={{fontSize:12,color:C.textLight,marginTop:1}}>{fmtN(a.odometer)} km</div>}
         </div>
-        {/* Action bar — only the contextual actions, no duplicated save/vehicle info */}
-        <div style={{padding:'10px 16px',display:'flex',gap:8,flexWrap:'wrap',alignItems:'center',background:'rgba(28,45,94,0.02)'}}>
-          {locked?(
-            <>
-              <div style={{flex:'1 1 200px',display:'flex',alignItems:'center',gap:6,fontSize:12,color:C.textMid}}>
-                <ShieldCheck size={14} color={C.purple}/>Finalized by {a.finalizedBy||'—'} on {new Date(a.finalizedAt).toLocaleString('en-CA',{dateStyle:'medium',timeStyle:'short'})}
-              </div>
-              {a.appraisedValue&&<button onClick={printConsumerOffer} style={{display:'flex',alignItems:'center',justifyContent:'center',gap:5,padding:'9px 14px',borderRadius:7,border:`1px solid ${C.navyBorder}`,background:C.navyMuted,color:C.navy,fontSize:12,fontWeight:700,cursor:'pointer'}}><Printer size={13}/>Consumer Offer</button>}
-              {a.status!=='purchased'&&a.vin&&a.year&&<button onClick={()=>onConvert(aRef.current)} style={{display:'flex',alignItems:'center',justifyContent:'center',gap:5,padding:'9px 14px',borderRadius:7,border:'none',background:C.teal,color:'#fff',fontSize:12,fontWeight:700,cursor:'pointer'}}><CheckCircle size={13}/>To Inventory</button>}
-              <button onClick={()=>onUnlock&&onUnlock(aRef.current)} style={{display:'flex',alignItems:'center',justifyContent:'center',gap:5,padding:'9px 14px',borderRadius:7,border:`1px solid ${C.orange}`,background:C.orangeBg,color:C.orange,fontSize:12,fontWeight:700,cursor:'pointer'}}><Edit3 size={13}/>Unlock</button>
-            </>
-          ):(
-            <>
-              {a.year&&a.make&&<button onClick={async()=>{
-                const r=await shareVehicle(aRef.current,null)
-                if(r.copied) showToast('Copied to clipboard','success')
-                else if(r.success) showToast('Shared!','success')
-              }} style={{display:'flex',alignItems:'center',justifyContent:'center',gap:5,padding:'9px 14px',borderRadius:7,border:`1px solid ${C.navyBorder}`,background:C.navyMuted,color:C.navy,fontSize:12,fontWeight:700,cursor:'pointer'}}>
-                <Share2 size={13}/>Share
-              </button>}
-              {a.appraisedValue&&<button onClick={printConsumerOffer} style={{display:'flex',alignItems:'center',justifyContent:'center',gap:5,padding:'9px 14px',borderRadius:7,border:`1px solid ${C.navyBorder}`,background:'#fff',color:C.navy,fontSize:12,fontWeight:700,cursor:'pointer'}}>
-                <Printer size={13}/>Consumer Offer
-              </button>}
-              <div style={{flex:1}}/>
-              {can('finalize')&&a.vin&&a.year&&a.appraisedValue&&<button onClick={doFinalize} style={{display:'flex',alignItems:'center',justifyContent:'center',gap:5,padding:'9px 14px',borderRadius:7,border:'none',background:C.navy,color:'#fff',fontSize:12,fontWeight:700,cursor:'pointer'}}>
-                <ShieldCheck size={13}/>Finalize
-              </button>}
-              {a.status!=='purchased'&&a.vin&&a.year&&<button onClick={()=>onConvert(aRef.current)} style={{display:'flex',alignItems:'center',justifyContent:'center',gap:5,padding:'9px 14px',borderRadius:7,border:'none',background:C.teal,color:'#fff',fontSize:12,fontWeight:700,cursor:'pointer'}}>
-                <CheckCircle size={13}/>To Inventory
-              </button>}
-            </>
-          )}
+        {locked&&<ShieldCheck size={16} color={C.purple} title="Finalized" style={{flexShrink:0}}/>}
+        <select value={a.status} disabled={locked} onChange={e=>set('status',e.target.value)}
+          style={{padding:'6px 8px',border:'none',background:'none',fontSize:12,fontFamily:'inherit',color:C.textMid,cursor:locked?'not-allowed':'pointer',flexShrink:0,textAlign:'right'}}>
+          {Object.entries(AS).map(([k,v])=><option key={k} value={k}>{v.label}</option>)}
+        </select>
+        <ActionMenu items={[
+          ...(locked?[]:[{label:'Share',icon:Share2,onClick:async()=>{
+            const r=await shareVehicle(aRef.current,null)
+            if(r.copied) showToast('Copied to clipboard','success')
+            else if(r.success) showToast('Shared','success')
+          },show:!!(a.year&&a.make)}]),
+          {label:'Copy VIN',icon:Copy,onClick:()=>{navigator.clipboard?.writeText(a.vin);showToast('VIN copied','success')},show:!!a.vin},
+          {label:'Consumer offer',icon:Printer,onClick:printConsumerOffer,show:!!a.appraisedValue},
+          {label:'Move to inventory',icon:CheckCircle,onClick:()=>onConvert(aRef.current),show:a.status!=='purchased'&&!!a.vin&&!!a.year},
+          {label:'Finalize',icon:ShieldCheck,onClick:doFinalize,show:!locked&&can('finalize')&&!!a.vin&&!!a.year&&!!a.appraisedValue},
+          {label:'Unlock',icon:Edit3,onClick:()=>onUnlock&&onUnlock(aRef.current),show:locked},
+        ].filter(x=>x.show!==false)}/>
+      </div>
+      {locked&&(
+        <div style={{fontSize:11,color:C.textLight,margin:'-6px 0 12px 32px'}}>
+          Finalized by {a.finalizedBy||'—'} on {new Date(a.finalizedAt).toLocaleString('en-CA',{dateStyle:'medium',timeStyle:'short'})}
         </div>
-      </Card>
+      )}
 
       {/* Duplicate-VIN warning — this car already has an active appraisal or is in
           inventory. Soft warning (never blocks); offers a jump to the existing record. */}
@@ -2397,39 +2422,41 @@ function AppraisalForm({initial,onSave,onBack,showToast,onConvert,onFinalize,onU
       </Sec>
 
       <Sec title="Market Intelligence" icon={BarChart2} tone="blue" badge={a.marketMid?(marketStale?'Updating…':'Live Data'):'No Data'}>
-        {(aiBusy||a._ai)&&(
-          <div style={{margin:'0 0 12px',padding:'14px 16px',background:C.navyMuted,border:`1px solid ${C.navy}22`,borderRadius:10}}>
-            <div style={{display:'flex',alignItems:'center',gap:8,marginBottom:aiBusy?0:10}}>
-              <Sparkles size={14} color={C.navy}/>
-              <span style={{fontSize:12,fontWeight:800,color:C.navy,letterSpacing:0.3}}>AI APPRAISAL</span>
-              {a._ai?.confidence&&<span style={{marginLeft:'auto',fontSize:10,fontWeight:700,padding:'2px 8px',borderRadius:20,background:a._ai.confidence==='High'?C.greenBg:a._ai.confidence==='Low'?C.orangeBg:C.navyMuted,color:a._ai.confidence==='High'?C.green:a._ai.confidence==='Low'?C.orange:C.navy}}>{a._ai.confidence} confidence</span>}
+        {(aiBusy||a._ai)&&(()=>{
+          // Second opinion, not a competing answer. The formula stays the number
+          // of record because it is auditable; this is here to catch what a
+          // formula can't see. One line unless it disagrees or you expand it.
+          const buy=Number(a.suggestedBuy||a.appraisedValue)||null;
+          const gap=buy&&a._ai?.buy?Math.round(((a._ai.buy-buy)/buy)*100):null;
+          const disagrees=gap!==null&&Math.abs(gap)>=8;
+          return (
+            <div style={{margin:'0 0 14px',padding:'10px 0 0',borderTop:`1px solid ${C.border}`}}>
+              {aiBusy?(
+                <div style={{fontSize:12,color:C.textLight}}>Reading the comparables…</div>
+              ):(
+                <>
+                  <div style={{display:'flex',alignItems:'baseline',gap:8,flexWrap:'wrap'}}>
+                    <span style={{fontSize:11,fontWeight:700,color:C.textLight,letterSpacing:0.3}}>SECOND OPINION</span>
+                    <span style={{fontSize:14,fontWeight:700,color:disagrees?C.orange:C.textDark}}>{fmt(a._ai.buy)}</span>
+                    {gap!==null&&<span style={{fontSize:11,color:disagrees?C.orange:C.textLight}}>{gap>0?'+':''}{gap}% vs suggested</span>}
+                    <button onClick={()=>setAiOpen(o=>!o)} style={{marginLeft:'auto',background:'none',border:'none',padding:0,fontSize:11,color:C.textMid,cursor:'pointer',fontFamily:'inherit'}}>
+                      {aiOpen?'Less':'Why'}
+                    </button>
+                  </div>
+                  {aiOpen&&(
+                    <div style={{fontSize:12.5,color:C.textMid,lineHeight:1.55,marginTop:8}}>
+                      {a._ai.reasoning}
+                      <div style={{fontSize:11,color:C.textLight,marginTop:6}}>
+                        Retail read {fmt(a._ai.retail)} · {a._ai.compsUsed} comps · {a._ai.confidence?.toLowerCase()} confidence
+                        {a._ai.outOfBand&&<span style={{color:C.red}}> · outside the listing range, check before relying on it</span>}
+                      </div>
+                    </div>
+                  )}
+                </>
+              )}
             </div>
-            {aiBusy?(
-              <div style={{fontSize:12,color:C.textMid}}>Reading the comparables and working out a number…</div>
-            ):(
-              <>
-                <div style={{display:'flex',gap:20,flexWrap:'wrap',marginBottom:10}}>
-                  <div>
-                    <div style={{fontSize:10,color:C.textLight,fontWeight:700,letterSpacing:0.4}}>BUY AT</div>
-                    <div style={{fontSize:24,fontWeight:800,color:C.navy}}>{fmt(a._ai.buy)}</div>
-                  </div>
-                  <div>
-                    <div style={{fontSize:10,color:C.textLight,fontWeight:700,letterSpacing:0.4}}>RETAILS FOR</div>
-                    <div style={{fontSize:24,fontWeight:800,color:C.teal}}>{fmt(a._ai.retail)}</div>
-                  </div>
-                  <button onClick={()=>runAppraisal(a)} style={{marginLeft:'auto',alignSelf:'flex-end',background:'none',border:`1px solid ${C.border}`,borderRadius:6,padding:'5px 10px',fontSize:11,color:C.textMid,cursor:'pointer'}}>Re-run</button>
-                </div>
-                {a._ai.outOfBand&&(
-                  <div style={{fontSize:11,color:C.red,background:'#FEF2F2',border:`1px solid ${C.red}`,borderRadius:6,padding:'7px 10px',marginBottom:8}}>
-                    This number sits outside the range of the actual listings — treat it as a prompt to look closer, not an answer.
-                  </div>
-                )}
-                <div style={{fontSize:12.5,color:C.textMid,lineHeight:1.55}}>{a._ai.reasoning}</div>
-                <div style={{fontSize:10,color:C.textLight,marginTop:8}}>Based on {a._ai.compsUsed} live comparables. A starting point for your judgment — not a replacement for it.</div>
-              </>
-            )}
-          </div>
-        )}
+          );
+        })()}
         {a._marketMeta?.trimMixed&&!marketStale&&(
           <div style={{margin:'0 0 10px',padding:'8px 12px',background:'#FEF2F2',border:`1px solid ${C.red}`,borderRadius:6,fontSize:11,color:C.textMid,display:'flex',alignItems:'flex-start',gap:8}}>
             <AlertTriangle size={12} color={C.red} style={{flexShrink:0,marginTop:1}}/>
@@ -2465,14 +2492,18 @@ function AppraisalForm({initial,onSave,onBack,showToast,onConvert,onFinalize,onU
               <span style={{fontSize:10,color:C.textLight}}>km</span>
             </div>
           </div>
-          <Btn onClick={fetchMkt} disabled={ml||a.vin.length!==17} size="sm">
-            <RefreshCw size={11} style={{animation:ml?'spin 1s linear infinite':undefined}}/>{ml?'Fetching...':'Fetch'}
-          </Btn>
+          <button onClick={fetchMkt} disabled={ml||a.vin.length!==17} aria-label="Refresh market data"
+            style={{background:'none',border:'none',padding:4,color:C.textLight,cursor:ml?'default':'pointer',display:'flex',alignItems:'center'}}>
+            <RefreshCw size={13} style={{animation:ml?'spin 1s linear infinite':undefined}}/>
+          </button>
         </div>
         {!a.marketMid?(
-          <div style={{textAlign:'center',padding:'12px 0',background:C.navyMuted,borderRadius:7}}>
-            <div style={{fontSize:12,color:C.textLight,marginBottom:8}}>Set criteria above and fetch market data</div>
-            <Btn onClick={fetchMkt} disabled={ml||a.vin.length!==17}><TrendingUp size={13}/>{ml?'Fetching...':'Fetch Market Data'}</Btn>
+          <div style={{padding:'14px 0',fontSize:12.5,color:C.textLight,lineHeight:1.5}}>
+            {ml?'Pulling comparable listings…'
+              :a.vin.length!==17?'Enter the VIN to identify the vehicle.'
+              :!a.make?'Decoding the VIN…'
+              :!Number(a.odometer)?'Enter the odometer reading — pricing needs the kilometres.'
+              :'Comparable listings will load automatically.'}
           </div>
         ):(
           <div>
