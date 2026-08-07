@@ -25,7 +25,19 @@ app.use(helmet({ contentSecurityPolicy: false, crossOriginResourcePolicy: { poli
 // (comma-separated list, e.g. "https://your-site.netlify.app,https://app.yourdomain.com").
 // If unset, allow all (local dev only — ALWAYS set this in production).
 const ALLOWED_ORIGIN = process.env.ALLOWED_ORIGIN || ''
-const allowedOrigins = ALLOWED_ORIGIN.split(',').map(s => s.trim()).filter(Boolean)
+// First-party sites are always allowed. These are our own front-ends; leaving
+// them to env config alone meant TradeLane's lead POSTs were silently blocked by
+// CORS the moment it moved to its own domain (the browser rejects the preflight,
+// so the lead never reaches the server and the visitor sees nothing).
+const FIRST_PARTY_ORIGINS = [
+  'https://tradelane.ca',
+  'https://www.tradelane.ca',
+  'https://ornate-marshmallow-236af3.netlify.app',
+]
+const allowedOrigins = [
+  ...ALLOWED_ORIGIN.split(',').map(s => s.trim()).filter(Boolean),
+  ...FIRST_PARTY_ORIGINS,
+].filter((v, i, arr) => arr.indexOf(v) === i)
 app.use(cors(allowedOrigins.length ? {
   origin(origin, cb) {
     // Allow same-origin / server-to-server (no Origin header) and whitelisted origins.
