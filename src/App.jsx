@@ -1396,7 +1396,7 @@ function leadUrgency(lead){
   if(h>=4) return {level:'med',label:'Follow up soon',color:C.orange,bg:C.orangeBg};
   return {level:'new',label:'New',color:C.green,bg:C.greenBg};
 }
-function LeadsInbox({leads,loading,onRefresh,onOpen,onDismiss,error}){
+function LeadsInbox({leads,loading,onRefresh,onOpen,onDismiss,error,filter,onFilter}){
   // Sort: specialist/high urgency first, then oldest first within a tier.
   const sorted=[...leads].sort((a,b)=>{
     const ua=leadUrgency(a), ub=leadUrgency(b);
@@ -1419,6 +1419,19 @@ function LeadsInbox({leads,loading,onRefresh,onOpen,onDismiss,error}){
         <Sparkles size={14} color={C.orange}/> These are warm leads — customers who requested an instant offer. Contact them fast.
       </div>
 
+      {/* Working a lead marks it converted, which used to remove it from view
+          with no way back. These tabs keep every lead reachable. */}
+      <div style={{display:'flex',gap:6,marginBottom:14,flexWrap:'wrap'}}>
+        {[['pending','New'],['converted','Worked'],['dismissed','Dismissed'],['all','All']].map(([v,label])=>(
+          <button key={v} onClick={()=>onFilter&&onFilter(v)}
+            style={{padding:'6px 14px',borderRadius:20,fontSize:12,fontWeight:700,cursor:'pointer',
+              border:`1px solid ${filter===v?C.navy:C.border}`,
+              background:filter===v?C.navy:'#fff',color:filter===v?'#fff':C.textMid}}>
+            {label}
+          </button>
+        ))}
+      </div>
+
       {error?(
         <Card style={{padding:'32px',textAlign:'center',border:`1px solid ${C.red}`,background:'#FEF2F2'}}>
           <AlertTriangle size={30} color={C.red} style={{marginBottom:10}}/>
@@ -1435,7 +1448,7 @@ function LeadsInbox({leads,loading,onRefresh,onOpen,onDismiss,error}){
       ):leads.length===0?(
         <Card style={{padding:'48px',textAlign:'center'}}>
           <Zap size={32} color={C.navyBorder} style={{marginBottom:10}}/>
-          <div style={{fontSize:14,fontWeight:700,color:C.textMid}}>No pending leads</div>
+          <div style={{fontSize:14,fontWeight:700,color:C.textMid}}>{filter==='pending'?'No new leads':filter==='converted'?'No worked leads yet':filter==='dismissed'?'No dismissed leads':'No leads yet'}</div>
           <div style={{fontSize:12,color:C.textLight,marginTop:4}}>New customer submissions from your widget will appear here.</div>
         </Card>
       ):(
@@ -1444,7 +1457,10 @@ function LeadsInbox({leads,loading,onRefresh,onOpen,onDismiss,error}){
             const u=leadUrgency(lead);
             const specialist=lead.thin_market||lead.offer_amount==null;
             return (
-              <div key={lead.id} style={{background:'#fff',borderRadius:12,border:`1px solid ${C.border}`,borderLeft:`4px solid ${u.color}`,padding:16,boxShadow:'0 1px 3px rgba(0,0,0,0.05)'}}>
+              <div key={lead.id} role="button" tabIndex={0}
+                onClick={()=>onOpen(lead)}
+                onKeyDown={e=>{if(e.key==='Enter'||e.key===' '){e.preventDefault();onOpen(lead);}}}
+                style={{background:'#fff',borderRadius:12,border:`1px solid ${C.border}`,borderLeft:`4px solid ${u.color}`,padding:16,boxShadow:'0 1px 3px rgba(0,0,0,0.05)',cursor:'pointer',WebkitTapHighlightColor:'transparent'}}>
                 <div style={{display:'flex',justifyContent:'space-between',alignItems:'flex-start',gap:12}}>
                   <div style={{flex:1,minWidth:0}}>
                     {/* Urgency + time */}
@@ -1496,8 +1512,8 @@ function LeadsInbox({leads,loading,onRefresh,onOpen,onDismiss,error}){
                 </div>
                 {/* Actions */}
                 <div style={{display:'flex',gap:8,marginTop:14,paddingTop:12,borderTop:`1px solid ${C.border}`}}>
-                  <Btn size="sm" variant="teal" onClick={()=>onOpen(lead)}><ArrowRight size={13}/>Work this lead</Btn>
-                  <Btn size="sm" variant="ghost" onClick={()=>onDismiss(lead.id)}><X size={13}/>Dismiss</Btn>
+                  <Btn size="sm" variant="teal" onClick={e=>{e.stopPropagation();onOpen(lead);}}><ArrowRight size={13}/>Work this lead</Btn>
+                  <Btn size="sm" variant="ghost" onClick={e=>{e.stopPropagation();onDismiss(lead.id);}}><X size={13}/>Dismiss</Btn>
                 </div>
               </div>
             );
@@ -3345,13 +3361,15 @@ export default function Vantage() {
   const [leads,setLeads]=useState([]);
   const [leadsLoading,setLeadsLoading]=useState(false);
   const [leadsError,setLeadsError]=useState(null);
+  const [leadFilter,setLeadFilter]=useState('pending');
   const showToast=useCallback((m,t='info')=>setToast({message:m,type:t}),[]);
 
   // Pull pending customer leads from the backend. Polls so new submissions show up.
   const loadLeads=useCallback(async()=>{
     setLeadsLoading(true);
     try{
-      const r=await fetch(`${API_BASE}/api/leads?status=pending`,{headers:teamHeaders()});
+      const q=leadFilter==='all'?'':`?status=${encodeURIComponent(leadFilter)}`;
+      const r=await fetch(`${API_BASE}/api/leads${q}`,{headers:teamHeaders()});
       const d=await r.json().catch(()=>null);
       if(r.status===401||r.status===403){
         // Real leads may exist — we just aren't authorised to read them. Showing
@@ -3365,7 +3383,7 @@ export default function Vantage() {
       }
     }catch{ setLeadsError('network'); }
     finally{setLeadsLoading(false);}
-  },[]);
+  },[leadFilter]);
 
   // Mark a lead worked (converted/dismissed) on the backend, then refresh.
   const updateLeadStatus=useCallback(async(id,status)=>{
@@ -3486,6 +3504,7 @@ export default function Vantage() {
     a.email=lead.customer_email||''; a.phone=lead.customer_phone||'';
     a.postal=lead.postal||'';
     a.marketMid=lead.market_mid||null;
+    a.postal=lead.postal||a.postal;
     a.accidentVisible=!!lead.accident;
     a._leadId=lead.id;
     // Customer-reported condition → appraisal fields (appraiser verifies).
@@ -3507,6 +3526,25 @@ export default function Vantage() {
     a.comments=[{ts:new Date().toISOString(),user:'System',text:`Imported from customer lead #${lead.id}. Customer contact: ${lead.customer_email||''} ${lead.customer_phone||''}`.trim()}];
     setActiveA(a);
     goto('appraisal_form', a);
+    // The lead only stores a single market_mid from submission time — no comps,
+    // no band, and possibly days old. Pull fresh market data straight away so
+    // the appraiser isn't staring at an empty Market Intelligence panel.
+    if(a.vin&&a.vin.length===17&&a.postal){
+      fetchMarketData(a.vin,a.postal,a.searchDistance||250,a.drivetrain||'',a.series||'')
+        .then(m=>{
+          if(!m) return;
+          setActiveA(prev=>{
+            if(!prev||prev._leadId!==lead.id) return prev;   // user moved on
+            return {...prev,
+              marketLow:m.marketLow,marketMid:m.marketMid,marketHigh:m.marketHigh,
+              marketAvg:m.marketAvg,marketCount:m.count,marketDataFetched:new Date().toISOString(),
+              _marketMeta:m.meta||null,_medianCompMileage:m.medianCompMileage,_comps:m.comps,
+              _marketTrim:(prev.series||''),_marketDrive:(prev.drivetrain||''),
+            };
+          });
+        })
+        .catch(()=>{});
+    }
     if(lead.id) updateLeadStatus(lead.id,'converted');
     showToast('Lead opened as appraisal — verify details and finalize','success');
   }
@@ -3779,7 +3817,7 @@ export default function Vantage() {
       {/* CONTENT */}
       <div className='content-pad' style={{maxWidth:1200,margin:'0 auto',padding:'24px 24px 60px'}}>
         {page==='dashboard'&&<Dashboard vehicles={vehicles} appraisals={appraisals} dealer={dealer} onNav={nav} onOpenVehicle={v=>{setActiveV({...v});goto('vehicle_detail',v);}} onOpenAppraisal={a=>{setActiveA({...a});goto('appraisal_form',a);}}/>}
-        {page==='leads'&&<LeadsInbox leads={leads} loading={leadsLoading} error={leadsError} onRefresh={loadLeads} onOpen={openLead} onDismiss={id=>updateLeadStatus(id,'dismissed')}/>}
+        {page==='leads'&&<LeadsInbox leads={leads} loading={leadsLoading} error={leadsError} filter={leadFilter} onFilter={setLeadFilter} onRefresh={loadLeads} onOpen={openLead} onDismiss={id=>updateLeadStatus(id,'dismissed')}/>}
         {page==='appraisals'&&<AppraisalList appraisals={appraisals} onNew={()=>nav('new_appraisal')} onEdit={a=>{setActiveA({...a});goto('appraisal_form',a);}}/>}
         {page==='appraisal_form'&&activeA&&<AppraisalForm key={activeA.id} initial={activeA} user={actingUser} can={can} onSave={(a,silent=false)=>saveAppraisal(a,silent)} onBack={()=>goto('appraisals')} showToast={showToast} onConvert={convertToInventory} onFinalize={finalizeAppraisal} onUnlock={unlockAppraisal} onGetDealer={()=>dealer} onCheckDup={checkDuplicate} onOpenExisting={openExistingDup}/>}
         {page==='inventory'&&<InventoryList vehicles={vehicles} onAdd={()=>nav('new_vehicle')} onImport={()=>setShowBulkImport(true)} onEdit={v=>{setActiveV({...v});goto('vehicle_detail',v);}}/>}
