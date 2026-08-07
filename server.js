@@ -1049,7 +1049,9 @@ function relevantText(text) {
 // arrays plus context, runs dedup/filter/band, and sends the JSON response.
 // Used by both the VIN endpoint and the manual spec_id endpoint.
 async function buildMarketResponse(active, dropped, ctx, res) {
-  const { req, radius, match, widened, historyWidened, historyDays } = ctx
+  // cacheKey is optional: only the VIN route caches (spec searches vary too much
+  // to key reliably). When absent we simply don't store.
+  const { req, radius, match, widened, historyWidened, historyDays, cacheKey } = ctx
     const blended = [...dropped, ...active]
     const deduped = dedupeByVin(blended)
 
@@ -1215,7 +1217,7 @@ async function buildMarketResponse(active, dropped, ctx, res) {
     }
     // Store so repeat lookups of the same vehicle are free for 24h — this is what
     // makes auto-fetching on the appraisal page affordable on a metered plan.
-    setCachedMarket(mktKey, payload).catch(() => {})
+    if (cacheKey) setCachedMarket(cacheKey, payload).catch(() => {})
     res.json(payload)
 }
 
@@ -1285,7 +1287,7 @@ app.get('/api/market/:vin', strictLimiter, async (req, res) => {
 
     // Blend: dropped (closer to transacted) + active (current asking),
     // then collapse duplicate VINs so stats and comps count UNIQUE cars.
-    await buildMarketResponse(active, dropped, { req, radius, match, widened, historyWidened, historyDays }, res)
+    await buildMarketResponse(active, dropped, { req, radius, match, widened, historyWidened, historyDays, cacheKey: mktKey }, res)
   } catch (err) {
     console.error('VinAudit market error:', err.message)
     res.status(500).json({ error: 'Market data failed: ' + err.message })
