@@ -104,6 +104,34 @@ const DEFAULT_BRANDING = {
 function Widget({ branding } = {}) {
   const B = { ...DEFAULT_BRANDING, ...(branding || {}) }
   const [step, setStep] = useState('vehicle')     // vehicle → details → contact → result
+  // ── Mobile focus mode ──────────────────────────────────────────────
+  // Embedded in a long marketing page, the form on a phone is surrounded by
+  // page content, so the customer scrolls up and down hunting for fields. Once
+  // they start, we take over the viewport and show ONLY the current step.
+  const [isPhone, setIsPhone] = useState(() =>
+    typeof window !== 'undefined' && window.matchMedia('(max-width: 720px)').matches)
+  const [focusMode, setFocusMode] = useState(false)
+  const bodyRef = useRef(null)
+  useEffect(() => {
+    if (typeof window === 'undefined') return
+    const mq = window.matchMedia('(max-width: 720px)')
+    const on = e => setIsPhone(e.matches)
+    mq.addEventListener ? mq.addEventListener('change', on) : mq.addListener(on)
+    return () => { mq.removeEventListener ? mq.removeEventListener('change', on) : mq.removeListener(on) }
+  }, [])
+  const immersive = isPhone && focusMode
+  // Lock the page behind the sheet so only the step scrolls.
+  useEffect(() => {
+    if (typeof document === 'undefined') return
+    if (!immersive) return
+    const prev = document.body.style.overflow
+    document.body.style.overflow = 'hidden'
+    return () => { document.body.style.overflow = prev }
+  }, [immersive])
+  // New step starts at the top — never mid-question.
+  useEffect(() => {
+    if (bodyRef.current) bodyRef.current.scrollTop = 0
+  }, [step])
   const [vinMode, setVinMode] = useState(true)     // VIN entry vs YMMT dropdowns
 
   // Vehicle
@@ -299,15 +327,56 @@ function Widget({ branding } = {}) {
   const btnGhost = { ...btn, background: '#fff', color: C.navy, border: `1.5px solid ${C.borderStr}` }
   const errBox = error ? <div style={{ background: C.redBg || 'rgba(197,48,48,0.08)', color: C.red, padding: '10px 12px', borderRadius: 8, fontSize: 13, marginTop: 12 }}>{error}</div> : null
 
+  // Step metadata for the progress indicator.
+  const STEPS = ['vehicle', 'details', 'contact']
+  const stepIdx = STEPS.indexOf(step)
+  const stepLabel = { vehicle: 'Your vehicle', details: 'Condition', contact: 'Your details', result: 'Your estimate' }[step] || ''
+
+  // In focus mode the sheet owns the viewport: fixed header, scrollable body.
+  const shellStyle = immersive
+    ? { position: 'fixed', inset: 0, zIndex: 9999, background: C.card, display: 'flex', flexDirection: 'column' }
+    : wrap
+  const cardStyle = immersive
+    ? { display: 'flex', flexDirection: 'column', flex: 1, minHeight: 0, background: C.card }
+    : card
+
   return (
     <div id="widget-root">
-      <div style={wrap}>
-        <div style={card}>
-          {/* Header */}
-          <div style={{ textAlign: 'center', marginBottom: 20 }}>
-            <div style={{ fontSize: 20, fontWeight: 800, color: C.navy }}>{B.title}</div>
-            <div style={{ fontSize: 13, color: C.textLight, marginTop: 4 }}>{B.subtitle}</div>
-          </div>
+      <div style={shellStyle}>
+        <div style={cardStyle}>
+          {/* Header — compact and pinned while focused, so the customer always
+              knows where they are without scrolling up to find out. */}
+          {immersive ? (
+            <div style={{ flexShrink: 0, padding: '14px 16px 10px', borderBottom: `1px solid ${C.border}`, background: C.card }}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
+                <div style={{ flex: 1, minWidth: 0 }}>
+                  <div style={{ fontSize: 16, fontWeight: 800, color: C.navy, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{stepLabel}</div>
+                  {step !== 'result' && (
+                    <div style={{ fontSize: 12, color: C.textLight, marginTop: 2 }}>Step {stepIdx + 1} of {STEPS.length}</div>
+                  )}
+                </div>
+                <button onClick={() => setFocusMode(false)} aria-label="Close"
+                  style={{ flexShrink: 0, width: 34, height: 34, borderRadius: 17, border: `1px solid ${C.border}`, background: '#fff', color: C.textMid, fontSize: 18, lineHeight: 1, cursor: 'pointer' }}>×</button>
+              </div>
+              {step !== 'result' && (
+                <div style={{ display: 'flex', gap: 5, marginTop: 10 }}>
+                  {STEPS.map((sName, i) => (
+                    <div key={sName} style={{ flex: 1, height: 3, borderRadius: 2, background: i <= stepIdx ? C.teal : C.border }} />
+                  ))}
+                </div>
+              )}
+            </div>
+          ) : (
+            <div style={{ textAlign: 'center', marginBottom: 20 }}>
+              <div style={{ fontSize: 20, fontWeight: 800, color: C.navy }}>{B.title}</div>
+              <div style={{ fontSize: 13, color: C.textLight, marginTop: 4 }}>{B.subtitle}</div>
+            </div>
+          )}
+
+          {/* Scrollable body — only the current step lives in here. */}
+          <div ref={bodyRef} style={immersive
+            ? { flex: 1, minHeight: 0, overflowY: 'auto', WebkitOverflowScrolling: 'touch', padding: '16px 16px calc(20px + env(safe-area-inset-bottom))' }
+            : undefined}>
 
           {/* ── STEP: VEHICLE ── */}
           {step === 'vehicle' && (
@@ -399,7 +468,7 @@ function Widget({ branding } = {}) {
 
               {/* Proceed when vehicle + location ready */}
               {(vinLocked || vehicle) && fsaConfirmed && (
-                <button style={{ ...btn, marginTop: 16 }} onClick={() => { setError(''); setStep('details') }}>Next</button>
+                <button style={{ ...btn, marginTop: 16 }} onClick={() => { setError(''); setFocusMode(true); setStep('details') }}>Next</button>
               )}
               {errBox}
             </div>
@@ -504,7 +573,7 @@ function Widget({ branding } = {}) {
 
               <div style={{ display: 'flex', gap: 8, marginTop: 20 }}>
                 <button style={btnGhost} onClick={() => setStep('vehicle')}>Back</button>
-                <button style={btn} onClick={() => { setError(''); setStep('contact') }} disabled={accident === null}>Next</button>
+                <button style={btn} onClick={() => { setError(''); setFocusMode(true); setStep('contact') }} disabled={accident === null}>Next</button>
               </div>
               {accident === null && <div style={{ fontSize: 12, color: C.textLight, textAlign: 'center', marginTop: 10 }}>Please answer the accident question to continue.</div>}
               {errBox}
@@ -557,8 +626,9 @@ function Widget({ branding } = {}) {
               </div>
             </div>
           )}
+          </div>{/* /scrollable body */}
         </div>
-        {B.footer ? <div style={{ textAlign: 'center', fontSize: 11, color: C.textLight, marginTop: 12 }}>{B.footer}</div> : null}
+        {B.footer && !immersive ? <div style={{ textAlign: 'center', fontSize: 11, color: C.textLight, marginTop: 12 }}>{B.footer}</div> : null}
       </div>
     </div>
   )
