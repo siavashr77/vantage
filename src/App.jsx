@@ -1988,6 +1988,25 @@ function AppraisalForm({initial,onSave,onBack,showToast,onConvert,onFinalize,onU
     return()=>clearTimeout(autoSaveRef.current);
   },[a,isDirty]);
 
+  // ── Auto-fetch market data ──────────────────────────────────────
+  // Previously the appraiser had to press a button. That existed to limit paid
+  // lookups, but the backend now caches each vehicle for 24h, so a repeat view
+  // costs nothing — there's no reason to make someone click. Runs once per
+  // appraisal as soon as we have enough to search on.
+  const autoMktRef=useRef(false);
+  useEffect(()=>{
+    if(locked) return;
+    if(autoMktRef.current) return;
+    if(a.marketMid) return;                 // already have data
+    if(!a.vin||a.vin.length!==17) return;
+    if(!(a.postal||dealer?.postal)) return; // need a location to search around
+    autoMktRef.current=true;
+    const t=setTimeout(()=>{ fetchMkt(); },600);
+    return()=>clearTimeout(t);
+  },[a.vin,a.postal,a.marketMid,locked]);
+  // Reset the guard when the appraiser switches to a different vehicle.
+  useEffect(()=>{ autoMktRef.current=false; },[a.id]);
+
   // ── Keep the market estimate in step with the trim ──────────────
   // The band is trim-sensitive (an XLT and a Platinum are different markets),
   // so once market data exists, changing trim/drivetrain makes it stale. Flag

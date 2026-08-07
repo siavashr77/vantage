@@ -1172,7 +1172,7 @@ async function buildMarketResponse(active, dropped, ctx, res) {
       })
     }
 
-    res.json({
+    const payload = {
       success: true,
       found: true,
       // Mapped to Vantage's market fields — ACTIVE LISTINGS ONLY.
@@ -1212,7 +1212,11 @@ async function buildMarketResponse(active, dropped, ctx, res) {
         country: 'canada',
         ...(rawHostsDebug ? { rawHostsDebug } : {}),
       },
-    })
+    }
+    // Store so repeat lookups of the same vehicle are free for 24h — this is what
+    // makes auto-fetching on the appraisal page affordable on a metered plan.
+    setCachedMarket(mktKey, payload).catch(() => {})
+    res.json(payload)
 }
 
 app.get('/api/market/:vin', strictLimiter, async (req, res) => {
@@ -1232,6 +1236,15 @@ app.get('/api/market/:vin', strictLimiter, async (req, res) => {
   if (!postal) return res.status(400).json({ error: 'postal code required' })
   if (MARKET_PROVIDER === 'marketcheck' ? !MARKETCHECK_API_KEY : (!VINAUDIT_KEY || VINAUDIT_KEY === 'YOUR_VINAUDIT_API_KEY_HERE')) {
     return res.status(400).json({ error: 'Market data API key not configured.' })
+  }
+
+  // 24h cache. The appraisal route previously bypassed it, so every lookup was a
+  // fresh paid MarketCheck call — which is why fetching was a manual button.
+  // Keyed on everything that changes the answer so a trim change still refetches.
+  const mktKey = `mkt|${vin}|${(postal||'').toUpperCase().slice(0,3)}|${radius}|${callerTrim.toLowerCase()}|${callerDrive.toLowerCase()}`
+  if (!/^(1|true)$/i.test(String(req.query.refresh || ''))) {
+    const cached = await getCachedMarket(mktKey)
+    if (cached) return res.json({ ...cached, meta: { ...(cached.meta || {}), cached: true } })
   }
 
   try {
