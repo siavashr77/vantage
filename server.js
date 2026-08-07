@@ -1,3 +1,4 @@
+import crypto from 'crypto'
 import express from 'express'
 import cors from 'cors'
 import helmet from 'helmet'
@@ -83,9 +84,19 @@ const isPostal = v => typeof v === 'string' && /^[A-Za-z]\d[A-Za-z]/.test(v.trim
 const TEAM_API_KEY = process.env.TEAM_API_KEY || ''
 function requireTeamKey(req, res, next) {
   if (!TEAM_API_KEY) return next() // unset → open (dev/legacy); warn at boot below
-  const key = req.get('x-vantage-key') || ''
-  if (key && key === TEAM_API_KEY) return next()
+  // Trim both sides: a trailing newline or space picked up when copying the key
+  // between dashboards is invisible in the UI but breaks an exact comparison.
+  const key = (req.get('x-vantage-key') || '').trim()
+  if (key && key === TEAM_API_KEY.trim()) return next()
   return res.status(401).json({ error: 'Unauthorized' })
+}
+
+// Short, non-reversible fingerprint of the team key so the frontend and backend
+// can be compared without either side ever revealing the secret.
+function keyFingerprint(v) {
+  const t = (v || '').trim()
+  if (!t) return null
+  return crypto.createHash('sha256').update(t).digest('hex').slice(0, 8)
 }
 
 // ── Postgres dealer-fee ledger ───────────────────────────────────────
@@ -1717,6 +1728,7 @@ app.get('/api/health', (req, res) => {
   res.json({
     status: 'ok',
     vinDecode: 'NHTSA — free',
+    teamKeyFingerprint: keyFingerprint(TEAM_API_KEY),
     marketData: VINAUDIT_KEY && VINAUDIT_KEY !== 'YOUR_VINAUDIT_API_KEY_HERE' ? 'configured' : 'not configured',
     aiDescriptions: ANTHROPIC_KEY && ANTHROPIC_KEY !== 'YOUR_ANTHROPIC_API_KEY_HERE' ? 'configured' : 'not configured',
     leadsDb: LEADS_DB ? 'connected (DATABASE_URL present)' : 'NOT connected — attach Postgres in Railway to persist leads',
