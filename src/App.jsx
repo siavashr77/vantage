@@ -2077,6 +2077,22 @@ function AppraisalForm({initial,onSave,onBack,showToast,onConvert,onFinalize,onU
     // Duplicate check: does this VIN already have an active appraisal or sit in inventory?
     if(onCheckDup){const m=onCheckDup(a.vin.toUpperCase(),a.id);setDupMatch(m||null);}
   }catch{showToast('Could not decode — enter manually','error');}finally{setVl(false);}}
+  // ── Auto-decode ─────────────────────────────────────────────────
+  // A 17-character VIN is unambiguous — there's nothing to confirm, so waiting
+  // for a button press just leaves the appraiser staring at blank fields.
+  // Decodes once per VIN; the manual Decode button still works for re-runs.
+  const decodedVinRef=useRef('');
+  useEffect(()=>{
+    if(locked) return;
+    const v=(a.vin||'').toUpperCase().trim();
+    if(v.length!==17) return;
+    if(decodedVinRef.current===v) return;   // already handled this VIN
+    if(a.make&&a.model) { decodedVinRef.current=v; return; }  // came in pre-filled
+    decodedVinRef.current=v;
+    const t=setTimeout(()=>{ decode(); },400);
+    return()=>clearTimeout(t);
+  },[a.vin,locked]);
+
   async function fetchMkt(){
     if(a.vin.length!==17){showToast('Decode VIN first','error');return;}
     const dealer=onGetDealer?onGetDealer():null;
@@ -2258,16 +2274,16 @@ function AppraisalForm({initial,onSave,onBack,showToast,onConvert,onFinalize,onU
                   {/* Odometer is the one field the appraiser must supply — the
                       VIN decodes itself and the valuation can't run without km,
                       so it's called out until it's filled. */}
-                  <label style={{display:'block',fontSize:10,fontWeight:600,color:x.f==='odometer'&&!a.odometer&&a.vin?.length===17?C.orange:C.textMid,marginBottom:4}}>
+                  <label style={{display:'block',fontSize:10,fontWeight:600,color:x.f==='odometer'&&!a.odometer&&a.make?C.orange:C.textMid,marginBottom:4}}>
                     {x.l}
                     {x.f==='series'&&a.trimOptions?.length>1&&!a.series&&<span style={{color:C.orange,marginLeft:4}}>• pick</span>}
-                    {x.f==='odometer'&&!a.odometer&&a.vin?.length===17&&<span style={{color:C.orange,marginLeft:4}}>• enter to price</span>}
+                    {x.f==='odometer'&&!a.odometer&&a.make&&<span style={{color:C.orange,marginLeft:4}}>• enter to price</span>}
                   </label>
                   {x.f==='series'
                     ? <TrimField value={a.series} onChange={v=>set('series',v)} options={a.trimOptions}/>
                     : <Input value={a[x.f]} onChange={v=>set(x.f,v)} placeholder={x.ph} type={x.t||'text'}
-                        autoFocus={x.f==='odometer'&&!a.odometer&&a.vin?.length===17}
-                        style={x.f==='odometer'&&!a.odometer&&a.vin?.length===17?{borderColor:C.orange,boxShadow:`0 0 0 3px ${C.orange}22`}:undefined}/>}
+                        autoFocus={x.f==='odometer'&&!a.odometer&&!!a.make}
+                        style={x.f==='odometer'&&!a.odometer&&a.make?{borderColor:C.orange,boxShadow:`0 0 0 3px ${C.orange}22`}:undefined}/>}
                 </div>
               ))}
               <div style={{minWidth:0}}>
