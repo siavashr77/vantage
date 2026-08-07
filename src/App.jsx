@@ -649,6 +649,7 @@ function CompHistoryModal({ vin, onClose }){
 
 function CompSet({ comps, myPrice, myKm, myDays }) {
   const [historyVin, setHistoryVin] = useState(null);
+  const [openRow, setOpenRow] = useState(null);
   const onHistory = (vin) => setHistoryVin(vin);
   const [sort, setSort] = useState({ key: 'price', dir: 'asc' });
   // Both comp sections collapsed by default so they don't fill the page.
@@ -768,23 +769,35 @@ function CompSet({ comps, myPrice, myKm, myDays }) {
             const ago=mode==='sold'?soldAgo(c.dropDate):null;
             return (
               <div key={c.id||i} style={{padding:'11px 14px',borderTop:`1px solid ${C.border}`}}>
+                {/* Two lines: the price, then everything that qualifies it.
+                    VIN, copy and history are one tap away rather than four
+                    controls competing on every row. */}
                 <div style={{display:'flex',justifyContent:'space-between',alignItems:'baseline',gap:8}}>
-                  <span style={{fontFamily:'monospace',fontWeight:700,fontSize:15,color:C.textDark}}>{fmt(c.price)}{c.certified&&<span style={{marginLeft:6,fontSize:9,fontWeight:700,color:C.green,background:C.greenBg,padding:'1px 5px',borderRadius:8}}>CPO</span>}</span>
-                  {c.url&&<a href={c.url} target="_blank" rel="noopener noreferrer" style={{display:'inline-flex',alignItems:'center',gap:3,color:C.navy,fontSize:12,fontWeight:600,textDecoration:'none',flexShrink:0}}><ExternalLink size={13}/>View</a>}
+                  <span style={{fontWeight:700,fontSize:16,color:C.textDark,letterSpacing:-0.3}}>
+                    {fmt(c.price)}{c.certified&&<span style={{marginLeft:6,fontSize:10,fontWeight:600,color:C.textLight}}>CPO</span>}
+                  </span>
+                  <button onClick={()=>setOpenRow(openRow===(c.id||i)?null:(c.id||i))}
+                    style={{background:'none',border:'none',padding:0,fontSize:12,color:C.textLight,cursor:'pointer',fontFamily:'inherit',flexShrink:0}}>
+                    {openRow===(c.id||i)?'Less':'More'}
+                  </button>
                 </div>
-                <div style={{display:'flex',gap:12,marginTop:4,fontSize:12,color:C.textMid,fontFamily:'monospace'}}>
-                  <span>{c.mileage?fmtN(c.mileage)+' km':'— km'}</span>
-                  {mode==='sold'
-                    ? <span style={{color:ago!=null&&ago<=14?C.green:C.textMid}}>{ago!=null?`sold ${ago}d ago`:'—'}</span>
-                    : <span style={{color:c.days>45?C.orange:C.textMid}}>{c.days?`${c.days} days`:'—'}</span>}
-                  <span style={{color:C.textLight,fontFamily:'inherit'}}>{[c.city,c.region].filter(Boolean).join(', ')||'—'}</span>
+                <div style={{marginTop:3,fontSize:12.5,color:C.textMid,lineHeight:1.5}}>
+                  {[c.mileage?fmtN(c.mileage)+' km':null,
+                    mode==='sold'?(ago!=null?`sold ${ago}d ago`:null):(c.days?`${c.days} days listed`:null),
+                    c.dealer,
+                   ].filter(Boolean).join(' · ')}
                 </div>
-                <div style={{marginTop:5,display:'flex',gap:8,alignItems:'center',flexWrap:'wrap'}}>
-                  <span style={{fontSize:12,color:C.textDark}}>{c.url?<a href={c.url} target="_blank" rel="noopener noreferrer" style={{color:C.teal,fontWeight:700,textDecoration:'none',borderBottom:`1px solid ${C.teal}`,display:'inline-flex',alignItems:'center',gap:3}}>{c.dealer}<ExternalLink size={10}/></a>:c.dealer}</span>
-                  {/private/i.test(c.sellerType||'')&&<span style={{fontSize:9,fontWeight:700,color:C.purple,background:C.purpleBg,padding:'1px 6px',borderRadius:8}}>Private</span>}
-                  {c.source&&<span style={{fontSize:9,color:C.textLight,background:C.navyMuted,padding:'1px 6px',borderRadius:8}}>{c.source}</span>}
-                </div>
-                {c.vin&&<div style={{marginTop:4,fontSize:11,fontFamily:'monospace',color:C.textMid,letterSpacing:0.3,display:'flex',alignItems:'center',gap:6,flexWrap:'wrap'}}><span>{c.vin}</span><CopyVIN vin={c.vin}/><button onClick={()=>onHistory&&onHistory(c.vin)} style={{fontSize:10,fontWeight:700,color:C.navy,background:C.navyMuted,border:'none',borderRadius:6,padding:'2px 8px',cursor:'pointer',fontFamily:'inherit'}}>History ↗</button></div>}
+                {openRow===(c.id||i)&&(
+                  <div style={{marginTop:8,paddingTop:8,borderTop:`1px solid ${C.border}`,fontSize:12,color:C.textMid,lineHeight:1.7}}>
+                    <div>{[c.city,c.region].filter(Boolean).join(', ')||'Location not listed'}{/private/i.test(c.sellerType||'')?' · private seller':''}</div>
+                    {c.vin&&<div style={{fontFamily:'monospace',fontSize:11.5,letterSpacing:0.3}}>{c.vin}</div>}
+                    <div style={{display:'flex',gap:14,marginTop:4,flexWrap:'wrap'}}>
+                      {c.url&&<a href={c.url} target="_blank" rel="noopener noreferrer" style={{color:C.navy,fontSize:12,textDecoration:'none',fontWeight:600}}>Open listing ↗</a>}
+                      {c.vin&&<button onClick={()=>{navigator.clipboard?.writeText(c.vin);}} style={{background:'none',border:'none',padding:0,fontSize:12,color:C.textMid,cursor:'pointer',fontFamily:'inherit'}}>Copy VIN</button>}
+                      {c.vin&&<button onClick={()=>onHistory&&onHistory(c.vin)} style={{background:'none',border:'none',padding:0,fontSize:12,color:C.textMid,cursor:'pointer',fontFamily:'inherit'}}>Price history</button>}
+                    </div>
+                  </div>
+                )}
               </div>
             );
           });
@@ -796,7 +809,7 @@ function CompSet({ comps, myPrice, myKm, myDays }) {
   return (
     <div>
       {historyVin&&<CompHistoryModal vin={historyVin} onClose={()=>setHistoryVin(null)}/>}
-      {active.length>0&&block('Currently Listed', active, 'listed', true, myRank&&<span style={{fontSize:11,fontFamily:'monospace',color:C.teal,background:C.tealMuted,padding:'2px 10px',borderRadius:12}}>Your price ranks #{myRank} of {active.length+1}</span>, 'listed')}
+      {active.length>0&&block('', active, 'listed', true, myRank&&<span style={{fontSize:11,fontFamily:'monospace',color:C.teal,background:C.tealMuted,padding:'2px 10px',borderRadius:12}}>Your price ranks #{myRank} of {active.length+1}</span>, 'listed')}
       {sold.length>0&&block('Recently Sold · likely', sold, 'sold', false, <span style={{fontSize:10,color:C.textLight}} title="Listing dropped off the market — usually sold, not guaranteed">last 45 days</span>, 'sold')}
     </div>
   );
@@ -1981,6 +1994,7 @@ function AppraisalForm({initial,onSave,onBack,showToast,onConvert,onFinalize,onU
   const [vehExpanded,setVehExpanded]=useState(!initial?.year);
   const [vinCopied,setVinCopied]=useState(false);
   const [sub,setSub]=useState(null);   // null = hub; otherwise the open page
+  const [filtersOpen,setFiltersOpen]=useState(false);
   const [showVINScanner,setShowVINScanner]=useState(false);
   const [savedAt,setSavedAt]=useState(initial?.updatedAt||null);
   const [isDirty,setIsDirty]=useState(false);
@@ -2186,7 +2200,7 @@ function AppraisalForm({initial,onSave,onBack,showToast,onConvert,onFinalize,onU
           a row of buttons. Saving is automatic, so there's no save state to
           report. */}
       <div style={{display:'flex',alignItems:'center',gap:10,padding:'4px 2px 14px'}}>
-        <button onClick={onBack} aria-label="Back"
+        <button onClick={()=>sub?setSub(null):onBack()} aria-label="Back"
           style={{background:'none',border:'none',padding:4,margin:'0 -4px 0 0',color:C.textMid,cursor:'pointer',display:'flex',alignItems:'center',flexShrink:0}}>
           <ChevronLeft size={22}/>
         </button>
@@ -2245,14 +2259,8 @@ function AppraisalForm({initial,onSave,onBack,showToast,onConvert,onFinalize,onU
           each area opens on its own so you're never scrolling past sections you
           didn't want to reach the one you did. */}
       {sub&&(
-        <div style={{marginBottom:16}}>
-          <button onClick={()=>setSub(null)}
-            style={{display:'flex',alignItems:'center',gap:6,background:'none',border:'none',padding:'0 0 10px',color:C.textMid,fontSize:13,cursor:'pointer',fontFamily:'inherit'}}>
-            <ChevronLeft size={18}/>{[a.year,a.make,a.model].filter(Boolean).join(' ')||'Back'}
-          </button>
-          <div style={{fontSize:19,fontWeight:700,color:C.navy,letterSpacing:-0.3}}>
-            {{market:'Comparables',condition:'Condition',history:'History report',customer:'Customer',notes:'Notes',log:'Activity'}[sub]}
-          </div>
+        <div style={{fontSize:20,fontWeight:700,color:C.navy,letterSpacing:-0.3,marginBottom:16}}>
+          {{market:'Comparables',condition:'Condition',history:'History report',customer:'Customer',notes:'Notes',log:'Activity'}[sub]}
         </div>
       )}
 
@@ -2492,8 +2500,20 @@ function AppraisalForm({initial,onSave,onBack,showToast,onConvert,onFinalize,onU
             <span>Trim changed — re-running the market lookup for <strong>{a.series||'this trim'}</strong>. Figures below are from the previous trim.</span>
           </div>
         )}
-        {/* Competitive Criteria Controls */}
-        <div style={{display:'flex',gap:10,marginBottom:12,flexWrap:'wrap',alignItems:'flex-end'}}>
+        {/* Filters sit behind a control. Nobody opens this page to set a radius
+            — they open it to see the cars, so the cars come first. */}
+        <div style={{display:'flex',alignItems:'center',gap:14,marginBottom:12}}>
+          <button onClick={()=>setFiltersOpen(o=>!o)}
+            style={{background:'none',border:'none',padding:0,fontSize:12.5,color:C.textMid,cursor:'pointer',fontFamily:'inherit',display:'flex',alignItems:'center',gap:5}}>
+            {filtersOpen?'Hide filters':'Filters'}
+            <span style={{color:C.textLight}}>· {a.searchDistance||150} km</span>
+          </button>
+          <button onClick={fetchMkt} disabled={ml||a.vin.length!==17} aria-label="Refresh"
+            style={{background:'none',border:'none',padding:0,marginLeft:'auto',color:C.textLight,cursor:ml?'default':'pointer',display:'flex'}}>
+            <RefreshCw size={14} style={{animation:ml?'spin 1s linear infinite':undefined}}/>
+          </button>
+        </div>
+        <div style={{display:filtersOpen?'flex':'none',gap:10,marginBottom:14,flexWrap:'wrap',alignItems:'flex-end'}}>
           <div style={{minWidth:0}}>
             <label style={{display:'block',fontSize:10,fontWeight:600,color:C.textMid,marginBottom:4}}>Distance</label>
             <div style={{display:'flex',alignItems:'center',gap:6}}>
@@ -2515,10 +2535,6 @@ function AppraisalForm({initial,onSave,onBack,showToast,onConvert,onFinalize,onU
               <span style={{fontSize:10,color:C.textLight}}>km</span>
             </div>
           </div>
-          <button onClick={fetchMkt} disabled={ml||a.vin.length!==17} aria-label="Refresh market data"
-            style={{background:'none',border:'none',padding:4,color:C.textLight,cursor:ml?'default':'pointer',display:'flex',alignItems:'center'}}>
-            <RefreshCw size={13} style={{animation:ml?'spin 1s linear infinite':undefined}}/>
-          </button>
         </div>
         {!a.marketMid?(
           <div style={{padding:'14px 0',fontSize:12.5,color:C.textLight,lineHeight:1.5}}>
@@ -2530,49 +2546,44 @@ function AppraisalForm({initial,onSave,onBack,showToast,onConvert,onFinalize,onU
           </div>
         ):(
           <div>
-            {/* Market averages */}
-            <div style={{display:'grid',gridTemplateColumns:'repeat(3,1fr)',gap:8,marginBottom:10}}>
-              {[{l:'Market Low',v:fmt(a.marketLow),c:C.green,t:'10th percentile of active comparable listing prices — the low end of the market'},{l:'Market Mid',v:fmt(a.marketMid),c:C.navy,t:'Median (50th percentile) of active comparable listing prices'},{l:'Market High',v:fmt(a.marketHigh),c:C.orange,t:'90th percentile of active comparable listing prices — the high end of the market'}].map(s=>(
-                <div key={s.l} title={s.t} style={{background:C.navyMuted,borderRadius:7,padding:'10px 12px',textAlign:'center',cursor:'help'}}>
-                  <div style={{fontSize:10,color:C.textLight,marginBottom:3,fontWeight:600,display:'inline-flex',alignItems:'center',gap:3}}>{s.l}<Info size={10} color={C.textLight} style={{opacity:0.6}}/></div>
-                  <div style={{fontSize:16,fontWeight:800,color:s.c,fontFamily:'monospace'}}>{s.v}</div>
-                </div>
-              ))}
-            </div>
-            {/* Data quality banner — comp count, match mode, thin-data warning */}
-            {a._marketMeta&&(()=>{
-              const meta=a._marketMeta;
-              const thin=meta.comps<5;
-              const bg=thin?C.orangeBg:C.greenBg, fg=thin?C.orange:C.green;
+            {/* One summary, not seven boxes. The mid is the number; the spread
+                and the context sit under it as a sentence. Everything that was
+                a tinted tile — active count, day supply, median km, a letter
+                grade — is either here in words or gone, because a screen of
+                boxed numbers in five colours reads as noise. */}
+            {(()=>{
+              const meta=a._marketMeta||{};
+              const n=(a._comps||[]).length||meta.activeCount||a.activeComps||0;
+              const thin=n<5;
+              const days=(a.medianDaysListed!=null?a.medianDaysListed:a.marketDaysSupply);
+              const bits=[
+                `${n} listing${n===1?'':'s'}`,
+                meta.matchMode==='trim'?'same trim':'same model',
+                days!=null?`${days} days listed`:null,
+                a._medianCompMileage?`${fmtN(a._medianCompMileage)} km typical`:null,
+              ].filter(Boolean);
               return (
-                <div style={{display:'flex',alignItems:'center',gap:8,background:bg,border:`1px solid ${fg}`,borderRadius:7,padding:'8px 12px',marginBottom:10,fontSize:12}}>
-                  {thin?<AlertTriangle size={14} color={fg}/>:<CheckCircle size={14} color={fg}/>}
-                  <span style={{color:fg,fontWeight:700}}>{meta.comps} comparable{meta.comps===1?'':'s'}</span>
-                  <span style={{color:C.textMid}}>· {meta.matchMode==='trim'?'matched on trim':'matched on model'}{meta.widened?' (widened from trim)':''} · {meta.radius} km · Canada</span>
-                  {thin&&<span style={{color:fg,marginLeft:'auto',fontWeight:600}}>Thin data — treat as directional</span>}
+                <div style={{marginBottom:16}}>
+                  <div style={{fontSize:30,fontWeight:800,color:C.navy,letterSpacing:-0.8,lineHeight:1.05}}>{fmt(a.marketMid)}</div>
+                  <div style={{fontSize:13,color:C.textMid,marginTop:4}}>
+                    typical asking price · {fmt(a.marketLow)}–{fmt(a.marketHigh)} range
+                  </div>
+                  <div style={{fontSize:12.5,color:C.textLight,marginTop:6,lineHeight:1.5}}>
+                    {bits.join(' · ')}
+                  </div>
+                  {thin&&(
+                    <div style={{fontSize:12.5,color:C.orange,marginTop:8,lineHeight:1.5}}>
+                      Thin data — treat as directional.
+                    </div>
+                  )}
+                  {a._marketMeta?.trimMixed&&(
+                    <div style={{fontSize:12.5,color:C.orange,marginTop:6,lineHeight:1.5}}>
+                      Includes other trims — only {a._marketMeta.trimMatchCount??0} matched {a._marketMeta.subjectTrim||'this trim'}.
+                    </div>
+                  )}
                 </div>
               );
             })()}
-            {/* Key metrics */}
-            <div style={{display:'grid',gridTemplateColumns:'repeat(2,1fr)',gap:8,marginBottom:10}}>
-              {[
-                {l:'Active Comps',v:a._marketMeta?a._marketMeta.activeCount:a.activeComps,t:'Unique active comparable listings the price stats are built from'},
-                {l:'Market Day Supply',v:(a.marketDaySupply!=null)?a.marketDaySupply:null,t:'Days for the local market to sell current active inventory at the recent sales rate (active ÷ sold × 45). Lower = sells faster.'},
-                {l:'Median Days Listed',v:(a.medianDaysListed!=null?a.medianDaysListed:a.marketDaysSupply)??null,t:'Median days a current comparable listing has been on the market'},
-                {l:'Median Comp KM',v:a._medianCompMileage?fmtN(a._medianCompMileage)+' km':null,t:'Median odometer across active comparable listings'},
-              ].map(s=>(
-                <div key={s.l} title={s.t} style={{background:C.navyMuted,borderRadius:7,padding:'8px 12px',display:'flex',justifyContent:'space-between',alignItems:'center',cursor:'help'}}>
-                  <span style={{fontSize:11,color:C.textLight,fontWeight:600,display:'inline-flex',alignItems:'center',gap:4}}>{s.l}<Info size={11} color={C.textLight} style={{opacity:0.6}}/></span>
-                  <span style={{fontSize:13,fontWeight:700,color:C.navy,fontFamily:'monospace'}}>{s.v||s.v===0?s.v:'—'}</span>
-                </div>
-              ))}
-              {(()=>{const g=calcGrade(a.marketDaysSupply);if(!g)return null;const desc=g.grade==='A'?'sells fast':g.grade==='B'?'healthy':g.grade==='C+'?'steady':g.grade==='C'?'slowing':'slow mover';return(
-                <div title="Market demand for this vehicle, based on day supply (how fast it sells vs. how many are listed). Reflects the market, not your pricing." style={{background:C.navyMuted,borderRadius:7,padding:'8px 12px',display:'flex',justifyContent:'space-between',alignItems:'center',cursor:'help',gridColumn:'1 / -1'}}>
-                  <span style={{fontSize:11,color:C.textLight,fontWeight:600,display:'inline-flex',alignItems:'center',gap:4}}>Market Demand<Info size={11} color={C.textLight} style={{opacity:0.6}}/></span>
-                  <span style={{display:'inline-flex',alignItems:'center',gap:6}}><span style={{fontSize:11,color:C.textLight}}>{desc}</span><span style={{fontSize:15,fontWeight:900,color:g.grade==='A'?C.green:g.grade==='B'?C.blue:g.grade==='C+'?C.orange:C.red}}>{g.grade}</span></span>
-                </div>
-              );})()}
-            </div>
             {/* Live Competitive Set — real VinAudit listings with links */}
             {a._comps&&a._comps.length>0&&<div style={{marginBottom:10}}><CompSet comps={a._comps} myPrice={a.appraisedValue} myKm={a.odometer}/></div>}
             {/* Odometer Adjustment */}
