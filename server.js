@@ -1370,7 +1370,7 @@ app.get('/api/market/:vin', strictLimiter, async (req, res) => {
   // 24h cache. The appraisal route previously bypassed it, so every lookup was a
   // fresh paid MarketCheck call — which is why fetching was a manual button.
   // Keyed on everything that changes the answer so a trim change still refetches.
-  const mktKey = `mkt|${vin}|${(postal||'').toUpperCase().slice(0,3)}|${radius}|${callerTrim.toLowerCase()}|${callerDrive.toLowerCase()}`
+  const mktKey = `mkt|${MARKET_SHAPE_VERSION}|${vin}|${(postal||'').toUpperCase().slice(0,3)}|${radius}|${callerTrim.toLowerCase()}|${callerDrive.toLowerCase()}`
   if (!/^(1|true)$/i.test(String(req.query.refresh || ''))) {
     const cached = await getCachedMarket(mktKey)
     if (cached) return res.json({ ...cached, meta: { ...(cached.meta || {}), cached: true } })
@@ -1548,6 +1548,9 @@ const WIDGET_DEALER = { marketPositionPct: 97, targetGross: 2500, avgRecon: 1500
 
 // ── 24h market cache (Postgres-backed) ──
 const MARKET_CACHE_TTL_HOURS = 24
+// Bump when the comp object gains or changes fields, so cached payloads from an
+// older shape are not served as though they were complete.
+const MARKET_SHAPE_VERSION = 'v2-pricehist'
 // Build a stable cache key from VIN-or-spec + FSA (first 3 of postal). FSA-level
 // keying means nearby customers share a warm entry and the comp set is the same.
 function marketCacheKey({ vin, specId, postal }) {
