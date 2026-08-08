@@ -2635,6 +2635,16 @@ function AppraisalForm({initial,onSave,onBack,showToast,onConvert,onFinalize,onU
                   <div style={{fontSize:12.5,color:C.textLight,marginTop:6,lineHeight:1.5}}>
                     {bits.join(' · ')}
                   </div>
+                  {a._marketMeta?.staleFallback&&(
+                    <div style={{fontSize:12.5,color:C.orange,marginTop:8,lineHeight:1.5}}>
+                      Most of these have been listed over {a._marketMeta.staleDays||200} days. Long-sitting cars are often already sold or mispriced, so this range is weak evidence.
+                    </div>
+                  )}
+                  {a._marketMeta?.staleDropped>0&&(
+                    <div style={{fontSize:12.5,color:C.textLight,marginTop:6,lineHeight:1.5}}>
+                      {a._marketMeta.staleDropped} listing{a._marketMeta.staleDropped===1?'':'s'} excluded for sitting over {a._marketMeta.staleDays||200} days.
+                    </div>
+                  )}
                   {thin&&(
                     <div style={{fontSize:12.5,color:C.orange,marginTop:8,lineHeight:1.5}}>
                       Thin data — treat as directional.

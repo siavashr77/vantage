@@ -1017,6 +1017,8 @@ async function fetchListingsVinAudit({ vin, specId, match, status, postal, radiu
   return all
 }
 
+const STALE_DAYS = Number(process.env.STALE_DAYS || 200)
+const MIN_FRESH_COMPS = Number(process.env.MIN_FRESH_COMPS || 3)
 const MIN_COMPS = 5  // below this, widen match strictness
 
 // Identify where a listing lives from its URL, so the appraiser sees the
@@ -1281,6 +1283,24 @@ async function buildMarketResponse(active, dropped, ctx, res) {
     activeComps = filterPriceOutliers(activeComps)
     soldComps = filterPriceOutliers(soldComps)
 
+    // ── Stale-listing trim ──
+    // A car listed for 200+ days is usually one of two things: sold long ago and
+    // never removed from the dealer's site, or priced so far off the market that
+    // nobody wants it. Either way its asking price is not evidence of value, and
+    // leaving it in drags the band. Dropped unless doing so leaves too little to
+    // price against, in which case we keep the full set and flag it — a thin
+    // stale-based estimate is better than none, provided we say so.
+    let staleDropped = 0, staleFallback = false
+    {
+      const fresh = activeComps.filter(c => !(Number(c.days) > STALE_DAYS))
+      if (fresh.length >= MIN_FRESH_COMPS) {
+        staleDropped = activeComps.length - fresh.length
+        activeComps = fresh
+      } else if (fresh.length < activeComps.length) {
+        staleFallback = true   // not enough fresh comps — keep stale, but say so
+      }
+    }
+
     const comps = [...activeComps, ...soldComps]
 
     // Pricing band computed on the EXACT active comps displayed (deduped, ≥$1000).
@@ -1338,6 +1358,9 @@ async function buildMarketResponse(active, dropped, ctx, res) {
         radius,
         historyDays,              // archived window actually used (60 unless widened)
         historyWidened,           // true if we reached past 60 days for more comps
+        staleDropped,             // listings excluded for sitting past STALE_DAYS
+        staleFallback,            // true = too few fresh comps, stale ones kept
+        staleDays: STALE_DAYS,
         country: 'canada',
         ...(rawHostsDebug ? { rawHostsDebug } : {}),
       },
@@ -1550,7 +1573,7 @@ const WIDGET_DEALER = { marketPositionPct: 97, targetGross: 2500, avgRecon: 1500
 const MARKET_CACHE_TTL_HOURS = 24
 // Bump when the comp object gains or changes fields, so cached payloads from an
 // older shape are not served as though they were complete.
-const MARKET_SHAPE_VERSION = 'v2-pricehist'
+const MARKET_SHAPE_VERSION = 'v3-stale200'
 // Build a stable cache key from VIN-or-spec + FSA (first 3 of postal). FSA-level
 // keying means nearby customers share a warm entry and the comp set is the same.
 function marketCacheKey({ vin, specId, postal }) {
