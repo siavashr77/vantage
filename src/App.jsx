@@ -2653,11 +2653,16 @@ function AppraisalForm({initial,onSave,onBack,showToast,onConvert,onFinalize,onU
               const n=(a._comps||[]).length||meta.activeCount||a.activeComps||0;
               const thin=n<5;
               const days=(a.medianDaysListed!=null?a.medianDaysListed:a.marketDaysSupply);
+              // Day supply only appears when sold data supports it — the
+              // backend returns null rather than a guess, and a fabricated
+              // number here would be worse than a missing one.
+              const mds=a.marketDaySupply;
               const bits=[
                 `${n} listing${n===1?'':'s'}`,
                 meta.matchMode==='trim'?'same trim':'same model',
                 days!=null?`${days} days listed`:null,
                 a._medianCompMileage?`${fmtN(a._medianCompMileage)} km typical`:null,
+                mds!=null?`${mds}-day supply${mds<=45?' · moving fast':mds>=90?' · slow segment':''}`:null,
               ].filter(Boolean);
               return (
                 <div style={{marginBottom:16}}>
