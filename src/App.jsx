@@ -2378,7 +2378,7 @@ function AppraisalForm({initial,onSave,onBack,showToast,onConvert,onFinalize,onU
           {/* Notes sit with the car — recon items and condition observations are
               things you write while looking at it. */}
           <button onClick={()=>{setSub('notes');window.scrollTo(0,0);}}
-            style={{width:'100%',display:'flex',alignItems:'center',gap:10,padding:'12px 2px',marginBottom:4,background:'none',border:'none',borderTop:`1px solid ${C.border}`,cursor:'pointer',fontFamily:'inherit',textAlign:'left'}}>
+            style={{width:'100%',display:'flex',alignItems:'center',gap:10,padding:'12px 2px',marginBottom:4,background:'none',border:'none',cursor:'pointer',fontFamily:'inherit',textAlign:'left'}}>
             <span style={{fontSize:13,color:C.textDark,fontWeight:600}}>Notes</span>
             <span style={{fontSize:12.5,color:C.textLight,marginLeft:'auto',whiteSpace:'nowrap',overflow:'hidden',textOverflow:'ellipsis',minWidth:0}}>
               {a.notes?`${a.notes.slice(0,26)}${a.notes.length>26?'…':''}`:'None'}
@@ -2419,15 +2419,18 @@ function AppraisalForm({initial,onSave,onBack,showToast,onConvert,onFinalize,onU
         )}
       </Sec>
 
-      <Sec title="Notes" icon={FileText} hidden={sub!=='notes'} bare>
-        <textarea value={a.notes} onChange={e=>set('notes',e.target.value)} placeholder="Recon items, special options, condition observations..." rows={4} style={{width:'100%',padding:'10px 12px',background:'#fff',border:`1px solid ${C.borderStr}`,borderRadius:7,fontSize:13,fontFamily:'inherit',resize:'vertical',outline:'none',boxSizing:'border-box',lineHeight:1.6,color:C.textDark}}/>
-      </Sec>
       {/* Offer & Pricing moved to top of right column (above Vehicle History) */}
 
         </div>{/* end LEFT RAIL */}
 
         {/* RIGHT COLUMN — all other sections scroll past the sticky vehicle panel */}
         <div style={{minWidth:0}}>
+
+      {/* Notes must live outside the left rail: the rail is hidden while a
+          sub-page is open, which left the Notes page blank. */}
+      <Sec title="Notes" icon={FileText} hidden={sub!=='notes'} bare>
+        <textarea value={a.notes} onChange={e=>set('notes',e.target.value)} placeholder="Recon items, special options, condition observations..." rows={10} autoFocus style={{width:'100%',padding:'12px 14px',background:'#fff',border:`1px solid ${C.borderStr}`,borderRadius:8,fontSize:14,fontFamily:'inherit',resize:'vertical',outline:'none',boxSizing:'border-box',lineHeight:1.6,color:C.textDark}}/>
+      </Sec>
 
       {/* This exact VIN turned up in the market data — the car is advertised
           now, or has recently been through the market. Worth knowing before you
@@ -2483,7 +2486,7 @@ function AppraisalForm({initial,onSave,onBack,showToast,onConvert,onFinalize,onU
           <div style={{minWidth:0}}><label style={{display:'block',fontSize:11,fontWeight:600,color:C.textMid,marginBottom:5}}>Recon Cost ($)</label><Input value={a.reconCost} onChange={v=>set('reconCost',v)} type="number" /></div>
           <div style={{minWidth:0}}><label style={{display:'block',fontSize:11,fontWeight:600,color:C.textMid,marginBottom:5}}>Cert / Transport ($)</label><Input value={a.certCost||''} onChange={v=>set('certCost',v)} type="number" /></div>
           <div style={{minWidth:0}}><label style={{display:'block',fontSize:11,fontWeight:600,color:C.textMid,marginBottom:5}}>Pack ($)</label><Input value={a.pack||''} onChange={v=>set('pack',v)} type="number" /></div>
-          <div style={{minWidth:0}}><label style={{display:'block',fontSize:11,fontWeight:600,color:C.textMid,marginBottom:5}}>Offer Valid Until</label><Input value={a.offerExpiry||''} onChange={v=>set('offerExpiry',v)} type="date" style={{width:'100%',minWidth:0,boxSizing:'border-box',maxWidth:'100%'}}/></div>
+          <div style={{minWidth:0,gridColumn:'1 / -1'}}><label style={{display:'block',fontSize:11,fontWeight:600,color:C.textMid,marginBottom:5}}>Offer Valid Until</label><Input value={a.offerExpiry||''} onChange={v=>set('offerExpiry',v)} type="date" style={{width:'100%',minWidth:0,boxSizing:'border-box',maxWidth:'100%'}}/></div>
           <div style={{minWidth:0}}><label style={{display:'block',fontSize:11,fontWeight:600,color:C.textMid,marginBottom:5}}>Gross Override ($)</label><Input value={a.targetGrossOverride||''} onChange={v=>set('targetGrossOverride',v)} type="number" placeholder="optional"/></div>
           <div style={{minWidth:0}}><label style={{display:'block',fontSize:11,fontWeight:600,color:C.teal,marginBottom:5}}>Your Offer ($)</label><Input value={a.appraisedValue} onChange={v=>set('appraisedValue',v)} type="number" placeholder="Enter offer" style={{fontSize:15,fontWeight:700}}/></div>
         </div>
@@ -2580,14 +2583,14 @@ function AppraisalForm({initial,onSave,onBack,showToast,onConvert,onFinalize,onU
         {/* Lien Information */}
         <div style={{marginTop:10,paddingTop:10,borderTop:`1px solid ${C.border}`}}>
           <div style={{fontSize:10,color:C.textLight,fontWeight:600,marginBottom:8,textTransform:'uppercase',letterSpacing:0.5}}>Lien Information</div>
-          <div style={{display:'flex',gap:8,flexWrap:'wrap'}}>
-            <div style={{flex:1,minWidth:120}}>
-              <label style={{display:'block',fontSize:10,fontWeight:600,color:C.textMid,marginBottom:4}}>Lienholder (who the customer still owes)</label>
+          <div style={{display:'flex',gap:8,flexWrap:'wrap',alignItems:'flex-end'}}>
+            <div style={{flex:1,minWidth:120,display:'flex',flexDirection:'column'}}>
+              <label style={{display:'block',fontSize:10,fontWeight:600,color:C.textMid,marginBottom:4}}>Lienholder</label>
               <input value={a.lienHolder||''} onChange={e=>set('lienHolder',e.target.value)} placeholder="Bank / Finance Co."
                 style={{width:'100%',padding:'7px 10px',background:'#fff',border:`1px solid ${C.borderStr}`,borderRadius:6,fontSize:12,color:C.textDark,fontFamily:'inherit',outline:'none',boxSizing:'border-box'}}/>
             </div>
-            <div style={{flex:1,minWidth:100}}>
-              <label style={{display:'block',fontSize:10,fontWeight:600,color:C.textMid,marginBottom:4}}>Lien Payoff ($)</label>
+            <div style={{flex:1,minWidth:100,display:'flex',flexDirection:'column'}}>
+              <label style={{display:'block',fontSize:10,fontWeight:600,color:C.textMid,marginBottom:4}}>Payoff ($)</label>
               <input type="number" value={a.lienPayoff||''} onChange={e=>set('lienPayoff',e.target.value)} 
                 style={{width:'100%',padding:'7px 10px',background:'#fff',border:`1px solid ${C.borderStr}`,borderRadius:6,fontSize:12,color:C.textDark,fontFamily:'inherit',outline:'none',boxSizing:'border-box'}}/>
             </div>
