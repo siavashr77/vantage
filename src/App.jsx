@@ -2375,6 +2375,17 @@ function AppraisalForm({initial,onSave,onBack,showToast,onConvert,onFinalize,onU
         )}
         {/* Photos — combined into vehicle section */}
         <div style={{marginTop:12,paddingTop:12,borderTop:`1px solid ${C.navyBorder}`}}>
+          {/* Notes sit with the car — recon items and condition observations are
+              things you write while looking at it. */}
+          <button onClick={()=>{setSub('notes');window.scrollTo(0,0);}}
+            style={{width:'100%',display:'flex',alignItems:'center',gap:10,padding:'12px 2px',marginBottom:4,background:'none',border:'none',borderTop:`1px solid ${C.border}`,cursor:'pointer',fontFamily:'inherit',textAlign:'left'}}>
+            <span style={{fontSize:13,color:C.textDark,fontWeight:600}}>Notes</span>
+            <span style={{fontSize:12.5,color:C.textLight,marginLeft:'auto',whiteSpace:'nowrap',overflow:'hidden',textOverflow:'ellipsis',minWidth:0}}>
+              {a.notes?`${a.notes.slice(0,26)}${a.notes.length>26?'…':''}`:'None'}
+            </span>
+            <ChevronRight size={15} color={C.textLight} style={{flexShrink:0}}/>
+          </button>
+
           {/* One + rather than two large buttons. On a phone the camera option
               appears; on desktop it's a file picker. */}
           <div style={{display:'flex',alignItems:'center',gap:10,marginBottom:10}}>
@@ -2793,7 +2804,6 @@ function AppraisalForm({initial,onSave,onBack,showToast,onConvert,onFinalize,onU
             <div style={{marginTop:14,border:`1px solid ${C.border}`,borderRadius:10,overflow:'hidden',background:'#fff'}}>
               {[
                 {id:'customer', label:'Customer',       value:[a.firstName,a.lastName].filter(Boolean).join(' ')||'None'},
-                {id:'notes',    label:'Notes',          value:a.notes?`${a.notes.slice(0,26)}${a.notes.length>26?'…':''}`:'None'},
                 {id:'log',      label:'Activity',       value:`${(a.log||[]).length} entries`},
               ].map((r,i,arr)=>(
                 <button key={r.id} onClick={()=>{setSub(r.id);window.scrollTo(0,0);}}
