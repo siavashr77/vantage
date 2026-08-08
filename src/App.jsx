@@ -2039,14 +2039,14 @@ function AppraisalForm({initial,onSave,onBack,showToast,onConvert,onFinalize,onU
   // costs nothing — there's no reason to make someone click. Runs once per
   // appraisal as soon as we have enough to search on.
   // Reset AI guard when the appraiser switches vehicle.
-  useEffect(()=>{ aiRef.current=false; },[a.id]);
+  useEffect(()=>{ aiRef.current=null; },[a.id]);
 
   // ── AI appraisal ────────────────────────────────────────────────
   // Runs once market data lands. Claude sees the real comps we just pulled and
   // writes the number plus the reasoning behind it.
   const [aiBusy,setAiBusy]=useState(false);
   const [whyOpen,setWhyOpen]=useState(false);
-  const aiRef=useRef(false);
+  const aiRef=useRef(null);
   const runAppraisal=useCallback(async(appr)=>{
     const src=appr||aRef.current; if(!src) return;
     const comps=src._comps||[];
@@ -2073,14 +2073,20 @@ function AppraisalForm({initial,onSave,onBack,showToast,onConvert,onFinalize,onU
     }catch{ showToast('AI appraisal failed','error'); }
     finally{ setAiBusy(false); }
   },[]);
-  // Fire once per vehicle as soon as comps exist.
+  // Re-run whenever the comps change, not once per vehicle. The first fetch
+  // often lands before the trim is decoded, so it's a wide model-level set that
+  // prices high; the tighter trim-matched refetch that follows was leaving the
+  // AI number stale until someone manually refreshed. Keyed on the fetch
+  // timestamp so it recomputes for each new comp set but not on every render.
   useEffect(()=>{
-    if(locked||aiRef.current) return;
+    if(locked) return;
     if(!a.marketMid||!(a._comps||[]).length) return;
     if(!Number(a.odometer)) return;   // no km, no valuation
-    aiRef.current=true;
+    const stamp=a.marketDataFetched||'';
+    if(aiRef.current===stamp) return; // already appraised against this comp set
+    aiRef.current=stamp;
     runAppraisal(a);
-  },[a.marketMid,a._comps,locked,runAppraisal]);
+  },[a.marketMid,a.marketDataFetched,a._comps,a.odometer,locked,runAppraisal]);
 
   // ── Keep the market estimate in step with the trim ──────────────
   // The band is trim-sensitive (an XLT and a Platinum are different markets),
