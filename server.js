@@ -175,6 +175,28 @@ if (DATABASE_URL) {
   // A VIN's decode never changes, so we cache NeoVIN results permanently (one
   // paid decode per unique vehicle, ever). Every later appraisal of the same VIN
   // reads from here — no repeat NeoVIN call, no repeat cost.
+  // Every appraisal where a human commits a number is a labelled example: two
+  // methods made a prediction, and the appraiser decided what the car was worth.
+  // Recording all three lets us measure which method is closer, in which
+  // segments, and whether either carries a consistent bias worth correcting.
+  pool.query(`CREATE TABLE IF NOT EXISTS appraisal_calibration (
+    id SERIAL PRIMARY KEY,
+    appraisal_id TEXT,
+    vin TEXT,
+    year TEXT, make TEXT, model TEXT, trim TEXT,
+    odometer INTEGER,
+    market_mid INTEGER,
+    comp_count INTEGER,
+    match_mode TEXT,
+    formula_buy INTEGER,
+    ai_buy INTEGER,
+    final_value INTEGER NOT NULL,
+    appraiser TEXT,
+    created_at TIMESTAMPTZ DEFAULT now(),
+    UNIQUE (appraisal_id)
+  )`).then(() => console.log('   Calibration log: Postgres ready ✅'))
+    .catch(e => console.error('Calibration init error:', e.message))
+
   pool.query(`CREATE TABLE IF NOT EXISTS vin_decode_cache (
     vin TEXT PRIMARY KEY,
     decoded JSONB NOT NULL,
@@ -392,6 +414,71 @@ app.post('/api/claude', strictLimiter, async (req, res) => {
     res.json(data)
   } catch (err) {
     res.status(500).json({ error: err.message })
+  }
+})
+
+// ── CALIBRATION ──────────────────────────────────────────────────────
+// Record what the appraiser actually committed to, alongside what each method
+// predicted. Upserted on appraisal_id so revising an offer replaces the row
+// rather than logging the same car twice.
+app.post('/api/calibration', async (req, res) => {
+  if (!pool) return res.json({ success: true, stored: false })
+  const b = req.body || {}
+  const final = Number(b.finalValue)
+  if (!Number.isFinite(final) || final <= 0) return res.status(400).json({ error: 'finalValue required' })
+  try {
+    await pool.query(
+      `INSERT INTO appraisal_calibration
+        (appraisal_id, vin, year, make, model, trim, odometer, market_mid, comp_count,
+         match_mode, formula_buy, ai_buy, final_value, appraiser)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14)
+       ON CONFLICT (appraisal_id) DO UPDATE SET
+         final_value=$13, formula_buy=$11, ai_buy=$12, market_mid=$8,
+         comp_count=$9, match_mode=$10, odometer=$7, created_at=now()`,
+      [b.appraisalId || null, (b.vin || '').toUpperCase(), b.year || '', b.make || '', b.model || '',
+       b.trim || '', Number(b.odometer) || null, Number(b.marketMid) || null,
+       Number(b.compCount) || null, b.matchMode || '', Number(b.formulaBuy) || null,
+       Number(b.aiBuy) || null, Math.round(final), b.appraiser || '']
+    )
+    res.json({ success: true, stored: true })
+  } catch (e) {
+    console.error('calibration write:', e.message)
+    res.json({ success: true, stored: false })
+  }
+})
+
+// How well each method tracks the appraiser's decision.
+app.get('/api/calibration/summary', requireTeamKey, async (req, res) => {
+  if (!pool) return res.json({ success: true, n: 0 })
+  try {
+    const r = await pool.query(
+      `SELECT * FROM appraisal_calibration WHERE final_value > 0 ORDER BY created_at DESC LIMIT 1000`)
+    const rows = r.rows
+    const stat = key => {
+      const xs = rows.filter(x => Number(x[key]) > 0)
+      if (!xs.length) return null
+      // Signed error shows bias (is the method habitually high or low);
+      // absolute error shows accuracy regardless of direction.
+      const errs = xs.map(x => (Number(x[key]) - Number(x.final_value)) / Number(x.final_value) * 100)
+      const mean = errs.reduce((t, v) => t + v, 0) / errs.length
+      const absMean = errs.reduce((t, v) => t + Math.abs(v), 0) / errs.length
+      const sorted = [...errs].sort((a, b) => a - b)
+      return {
+        n: xs.length,
+        bias: Math.round(mean * 10) / 10,          // + = predicts above what we pay
+        avgError: Math.round(absMean * 10) / 10,   // typical distance either way
+        median: Math.round(sorted[Math.floor(sorted.length / 2)] * 10) / 10,
+        within5: Math.round(errs.filter(v => Math.abs(v) <= 5).length / errs.length * 100),
+      }
+    }
+    res.json({ success: true, n: rows.length, formula: stat('formula_buy'), ai: stat('ai_buy'),
+      recent: rows.slice(0, 25).map(x => ({
+        vin: x.vin, vehicle: [x.year, x.make, x.model, x.trim].filter(Boolean).join(' '),
+        odometer: x.odometer, formulaBuy: x.formula_buy, aiBuy: x.ai_buy,
+        finalValue: x.final_value, createdAt: x.created_at })) })
+  } catch (e) {
+    console.error('calibration summary:', e.message)
+    res.status(500).json({ error: 'Could not load calibration' })
   }
 })
 

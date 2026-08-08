@@ -2047,6 +2047,7 @@ function AppraisalForm({initial,onSave,onBack,showToast,onConvert,onFinalize,onU
   const [aiBusy,setAiBusy]=useState(false);
   const [whyOpen,setWhyOpen]=useState(false);
   const aiRef=useRef(null);
+  const formulaBuyRef=useRef(null);
   const runAppraisal=useCallback(async(appr)=>{
     const src=appr||aRef.current; if(!src) return;
     const comps=src._comps||[];
@@ -2082,11 +2083,21 @@ function AppraisalForm({initial,onSave,onBack,showToast,onConvert,onFinalize,onU
     if(locked) return;
     if(!a.marketMid||!(a._comps||[]).length) return;
     if(!Number(a.odometer)) return;   // no km, no valuation
+    // Wait until the picture has settled before spending a call. The first
+    // fetch often precedes the trim decode, and a refetch follows; appraising
+    // the interim set produces a number that visibly corrects itself. Hold off
+    // while a refetch is pending, and debounce so a burst of updates yields one
+    // appraisal rather than one per step.
+    if(marketStale) return;            // trim changed, comps are about to change
+    if(ml) return;                     // a fetch is in flight
     const stamp=a.marketDataFetched||'';
-    if(aiRef.current===stamp) return; // already appraised against this comp set
-    aiRef.current=stamp;
-    runAppraisal(a);
-  },[a.marketMid,a.marketDataFetched,a._comps,a.odometer,locked,runAppraisal]);
+    if(aiRef.current===stamp) return;  // already appraised against this comp set
+    const t=setTimeout(()=>{
+      aiRef.current=stamp;
+      runAppraisal(aRef.current);
+    },900);
+    return()=>clearTimeout(t);
+  },[a.marketMid,a.marketDataFetched,a._comps,a.odometer,locked,marketStale,ml,runAppraisal]);
 
   // ── Keep the market estimate in step with the trim ──────────────
   // The band is trim-sensitive (an XLT and a Platinum are different markets),
@@ -2211,8 +2222,29 @@ function AppraisalForm({initial,onSave,onBack,showToast,onConvert,onFinalize,onU
     const dealer=onGetDealer?onGetDealer():DEFAULT_DEALER;
     consumerOfferPrint(aRef.current, dealer);
   }
+  // Log what the appraiser committed to, next to what each method predicted.
+  // The entered number is the closest thing to ground truth we have, so this is
+  // the only way to find out which method is closer and whether either is
+  // consistently high or low. Fire-and-forget: never block finalizing.
+  const logCalibration=useCallback((appr)=>{
+    const src=appr||aRef.current; if(!src) return;
+    const finalValue=Number(src.appraisedValue);
+    if(!Number.isFinite(finalValue)||finalValue<=0) return;
+    fetch(`${API_BASE}/api/calibration`,{
+      method:'POST',headers:{'Content-Type':'application/json'},
+      body:JSON.stringify({
+        appraisalId:src.id, vin:src.vin, year:src.year, make:src.make, model:src.model,
+        trim:src.series, odometer:Number(src.odometer)||null, marketMid:src.marketMid,
+        compCount:(src._comps||[]).length, matchMode:src._marketMeta?.matchMode||'',
+        formulaBuy:Number(src.suggestedBuy)||formulaBuyRef.current||null, aiBuy:src._ai?.buy||null,
+        finalValue, appraiser:src.appraiser||'',
+      }),
+    }).catch(()=>{});
+  },[]);
+
   function doFinalize(){
     forceSave();
+    logCalibration(aRef.current);
     onFinalize&&onFinalize(aRef.current);
   }
 
@@ -2505,6 +2537,7 @@ function AppraisalForm({initial,onSave,onBack,showToast,onConvert,onFinalize,onU
           const sb=computeSuggestedBuy({...a,comps:a._comps},dealer);
           if(!sb) return null;
           const confColor=sb.confidence==='High'?C.green:sb.confidence==='Medium'?C.navy:C.orange;
+          formulaBuyRef.current=sb.suggested;
           const aiSecond=a._ai?.buy?(()=>{
             const gap=Math.round(((a._ai.buy-sb.suggested)/sb.suggested)*100);
             return {buy:a._ai.buy,gap,disagrees:Math.abs(gap)>=8};
