@@ -2413,6 +2413,39 @@ function AppraisalForm({initial,onSave,onBack,showToast,onConvert,onFinalize,onU
         {/* RIGHT COLUMN — all other sections scroll past the sticky vehicle panel */}
         <div style={{minWidth:0}}>
 
+      {/* This exact VIN turned up in the market data — the car is advertised
+          now, or has recently been through the market. Worth knowing before you
+          make an offer, so it sits above everything else. */}
+      {!sub&&a._marketMeta?.subjectListing&&(()=>{
+        const sl=a._marketMeta.subjectListing;
+        const live=sl.status!=='sold';
+        return (
+          <div style={{marginBottom:14,padding:'14px 16px',borderRadius:10,background:live?C.orangeBg:C.navyMuted,border:`1px solid ${live?C.orange:C.navyBorder}`}}>
+            <div style={{display:'flex',alignItems:'center',gap:8,marginBottom:6}}>
+              <AlertTriangle size={15} color={live?C.orange:C.navy}/>
+              <span style={{fontSize:13,fontWeight:800,color:live?C.orange:C.navy}}>
+                {live?'This car is advertised right now':'This car was recently on the market'}
+              </span>
+            </div>
+            <div style={{fontSize:12.5,color:C.textMid,lineHeight:1.6}}>
+              {live
+                ? `Listed by ${sl.dealer||'a seller'}${sl.city?` in ${sl.city}`:''} at ${fmt(sl.price)}${sl.days?`, ${sl.days} days on market`:''}.`
+                : `Listed by ${sl.dealer||'a seller'}${sl.city?` in ${sl.city}`:''} at ${fmt(sl.price)} before it came off the market${sl.days?` after ${sl.days} days`:''}.`}
+              {Number.isFinite(sl.priceChangePct)&&sl.priceChangePct!==0&&sl.prevPrice
+                ? ` Asking price ${sl.priceChangePct<0?'cut':'raised'} ${Math.abs(sl.priceChangePct)}% from ${fmt(sl.prevPrice)}.`
+                : ''}
+              {/private/i.test(sl.sellerType||'')?' Listed privately.':''}
+            </div>
+            <div style={{fontSize:12,color:C.textLight,marginTop:6,lineHeight:1.5}}>
+              {live
+                ? 'The customer may be shopping it themselves, or another store already has it. It is excluded from the comparables — a car cannot be its own comp.'
+                : 'It may have sold, or simply been withdrawn.'}
+            </div>
+            {sl.url&&<a href={sl.url} target="_blank" rel="noopener noreferrer" style={{display:'inline-block',marginTop:8,fontSize:12.5,fontWeight:600,color:C.navy,textDecoration:'none'}}>See the listing ↗</a>}
+          </div>
+        );
+      })()}
+
       {/* Comparables stands on its own between the car and the money, because
           it's the evidence you check before deciding what to pay. */}
       {!sub&&(

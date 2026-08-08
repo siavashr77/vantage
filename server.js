@@ -889,14 +889,12 @@ async function decodeVinYMMT(vin) { return decodeVinCached(vin) }
 async function fetchListingsMarketCheck({ vin, specId, match, status, postal, radius, callerTrim, callerDrive }) {
   if (!MARKETCHECK_API_KEY) throw new Error('MARKETCHECK_API_KEY not set')
   const isSold = status === 'dropped'
-  // On the free tier we fetch ACTIVE listings only — the sold/recent endpoint is
-  // a separate paid call that only feeds MDS (a secondary metric the pipeline
-  // already handles as null). Skipping it halves call usage. Re-enable when on a
-  // paid tier and the recent-endpoint path is verified.
-  if (isSold) return []
+  // Sold/expired listings come from a separate endpoint (note the plural path).
+  // They power Market Day Supply and, more importantly, let us tell whether the
+  // car we're appraising has recently been through the market.
   const [lat, lon] = fsaToPoint(postal)
   const radMiles = Math.min(100, Math.max(10, Math.round(Number(radius) || 100))) // free tier caps at 100mi
-  const base = `${MC_HOST}/search/car/active`
+  const base = isSold ? `${MC_HOST}/search/car/recents` : `${MC_HOST}/search/car/active`
   const params = new URLSearchParams({
     api_key: MARKETCHECK_API_KEY,
     country: 'CA',
@@ -1218,11 +1216,29 @@ async function buildMarketResponse(active, dropped, ctx, res) {
     // are dropped entirely (only recent sold comps are relevant).
     const known = await getKnownFeeDealers()
     const SOLD_MAX_AGE_DAYS = 30
+    // If the car we're appraising is itself advertised somewhere, that matters:
+    // the customer may be shopping it privately, or another dealer already has
+    // it listed. Flag the match and keep it out of the pricing set — a car can't
+    // be its own comparable.
+    const subjectVin = (req.params.vin || '').toUpperCase().trim()
+    let subjectListing = null
     const allComps = buildComps(deduped).map(c => {
       const k = dealerKey(c.dealer)
       if (known[k]) c.feeWarning = { avgFee: known[k].avgFee, count: known[k].count }
+      if (subjectVin && c.vin && c.vin.toUpperCase() === subjectVin) {
+        c.isSubject = true
+        subjectListing = {
+          // 'sold' = the listing has dropped off the market (usually sold);
+          // 'active' = it is advertised right now.
+          status: c.status === 'dropped' ? 'sold' : 'active',
+          price: c.price, mileage: c.mileage, days: c.days,
+          dealer: c.dealer, sellerType: c.sellerType, url: c.url,
+          city: c.city, region: c.region, dropDate: c.dropDate || '',
+          prevPrice: c.prevPrice, priceChangePct: c.priceChangePct,
+        }
+      }
       return c
-    })
+    }).filter(c => !c.isSubject)
     // Split the displayed set: active drives pricing; sold shown separately and
     // filtered to the last 30 days.
     let activeComps = allComps.filter(c => c.status !== 'dropped')
@@ -1303,6 +1319,8 @@ async function buildMarketResponse(active, dropped, ctx, res) {
 
     const comps = [...activeComps, ...soldComps]
 
+
+
     // Pricing band computed on the EXACT active comps displayed (deduped, ≥$1000).
     const stats = computeMarketFromComps(activeComps)
     const soldStats = computeSoldStatsFromComps(soldComps)
@@ -1358,6 +1376,7 @@ async function buildMarketResponse(active, dropped, ctx, res) {
         radius,
         historyDays,              // archived window actually used (60 unless widened)
         historyWidened,           // true if we reached past 60 days for more comps
+        subjectListing,           // the appraised VIN found among active or sold listings
         staleDropped,             // listings excluded for sitting past STALE_DAYS
         staleFallback,            // true = too few fresh comps, stale ones kept
         staleDays: STALE_DAYS,
@@ -1573,7 +1592,7 @@ const WIDGET_DEALER = { marketPositionPct: 97, targetGross: 2500, avgRecon: 1500
 const MARKET_CACHE_TTL_HOURS = 24
 // Bump when the comp object gains or changes fields, so cached payloads from an
 // older shape are not served as though they were complete.
-const MARKET_SHAPE_VERSION = 'v3-stale200'
+const MARKET_SHAPE_VERSION = 'v4-subjectvin'
 // Build a stable cache key from VIN-or-spec + FSA (first 3 of postal). FSA-level
 // keying means nearby customers share a warm entry and the comp set is the same.
 function marketCacheKey({ vin, specId, postal }) {
