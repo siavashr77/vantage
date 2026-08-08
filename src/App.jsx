@@ -4147,7 +4147,7 @@ export default function Vantage() {
       .dash-tiles { grid-template-columns: repeat(2, 1fr) !important; max-width: 100% !important; }
       .nav-links { display: none !important; }
       .nav-mobile-menu { display: flex !important; }
-      .content-pad { padding: 14px 14px 80px !important; }
+      .content-pad { padding: calc(14px + env(safe-area-inset-top)) 14px 80px !important; }
       .page-title { font-size: 16px !important; }
       .hide-mobile { display: none !important; }
       .hide-desktop { display: flex !important; }
