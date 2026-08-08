@@ -895,16 +895,25 @@ async function fetchListingsMarketCheck({ vin, specId, match, status, postal, ra
   const [lat, lon] = fsaToPoint(postal)
   const radMiles = Math.min(100, Math.max(10, Math.round(Number(radius) || 100))) // free tier caps at 100mi
   const base = isSold ? `${MC_HOST}/search/car/recents` : `${MC_HOST}/search/car/active`
-  const params = new URLSearchParams({
-    api_key: MARKETCHECK_API_KEY,
-    country: 'CA',
-    car_type: 'used',
-    latitude: String(lat),
-    longitude: String(lon),
-    radius: String(radMiles),
-    rows: '50',
-    stats: 'price,miles',
-  })
+  const params = isSold
+    ? new URLSearchParams({
+        api_key: MARKETCHECK_API_KEY,
+        country: 'CA',
+        latitude: String(lat),
+        longitude: String(lon),
+        radius: String(radMiles),
+        rows: '50',
+      })
+    : new URLSearchParams({
+        api_key: MARKETCHECK_API_KEY,
+        country: 'CA',
+        car_type: 'used',
+        latitude: String(lat),
+        longitude: String(lon),
+        radius: String(radMiles),
+        rows: '50',
+        stats: 'price,miles',
+      })
   // Search by SPEC (similar cars), not the exact VIN (MarketCheck's vin param
   // means the EXACT car → ~0 comps). Decode gives year+make+model always, plus
   // confirmed trim+drivetrain from NeoVIN. On a STRICT ('trim') match we add
@@ -933,7 +942,16 @@ async function fetchListingsMarketCheck({ vin, specId, match, status, postal, ra
   }
   const url = `${base}?${params.toString()}`
   const r = await fetch(url)
-  if (!r.ok) throw new Error(`MarketCheck HTTP ${r.status}`)
+  if (!r.ok) {
+    // The sold feed is supplementary: it powers Market Day Supply and the
+    // "already on the market" check. If it fails, the appraisal should still
+    // price off active listings rather than erroring out entirely.
+    if (isSold) {
+      console.error(`MarketCheck recents HTTP ${r.status} — continuing without sold data`)
+      return []
+    }
+    throw new Error(`MarketCheck HTTP ${r.status}`)
+  }
   const data = await r.json()
   const listings = Array.isArray(data.listings) ? data.listings : []
   return listings.map(l => {
