@@ -1971,16 +1971,24 @@ function VehicleSummary({data,onEdit}){
     <div>
       {decoded?(
         <div>
-          {/* Spec line only. The vehicle name and kilometres are already in the
-              page header — repeating them here was the same fact three times. */}
-          <div style={{padding:'2px 0 10px',display:'flex',alignItems:'center',gap:10}}>
-            <div style={{flex:1,minWidth:0,fontSize:12.5,color:C.textMid,lineHeight:1.5}}>
-              {[data.engine,data.drivetrain,data.transmission].filter(Boolean).join(' · ')||'Specs pending'}
-              {(data.extColour||data.intColour)&&<span style={{color:C.textLight}}>{' · '}{[data.extColour,data.intColour].filter(Boolean).join(' / ')}</span>}
+          {/* This section is the only place the vehicle is identified now, so it
+              carries the name and kilometres as well as the specs. */}
+          <div style={{padding:'2px 0 10px'}}>
+            <div style={{display:'flex',alignItems:'flex-start',gap:10}}>
+              <div style={{flex:1,minWidth:0}}>
+                <div style={{fontSize:17,fontWeight:700,color:C.navy,letterSpacing:-0.3,lineHeight:1.25}}>
+                  {[data.year,data.make,data.model,data.series].filter(Boolean).join(' ')||'Vehicle not identified'}
+                </div>
+                {data.odometer&&<div style={{fontSize:14,color:C.textDark,marginTop:2}}>{Number(data.odometer).toLocaleString('en-CA')} km</div>}
+              </div>
+              <button onClick={onEdit} style={{background:'none',border:'none',padding:0,fontSize:12,color:C.textMid,cursor:'pointer',flexShrink:0,fontFamily:'inherit'}}>
+                Edit
+              </button>
             </div>
-            <button onClick={onEdit} style={{background:'none',border:'none',padding:0,fontSize:12,color:C.textMid,cursor:'pointer',flexShrink:0,fontFamily:'inherit'}}>
-              Edit
-            </button>
+            <div style={{fontSize:12.5,color:C.textLight,lineHeight:1.5,marginTop:5}}>
+              {[data.engine,data.drivetrain,data.transmission].filter(Boolean).join(' · ')||'Specs pending'}
+              {(data.extColour||data.intColour)&&<span>{' · '}{[data.extColour,data.intColour].filter(Boolean).join(' / ')}</span>}
+            </div>
           </div>
 
           {/* Carfax tags */}
@@ -2373,12 +2381,18 @@ function AppraisalForm({initial,onSave,onBack,showToast,onConvert,onFinalize,onU
         )}
         {/* Photos — combined into vehicle section */}
         <div style={{marginTop:12,paddingTop:12,borderTop:`1px solid ${C.navyBorder}`}}>
-          <div style={{fontSize:11,fontWeight:700,color:C.navy,marginBottom:8,display:'flex',alignItems:'center',gap:6}}><Camera size={13}/>Photos {a.photos.length>0?`(${a.photos.length})`:''}</div>
-        <div style={{display:'flex',gap:8,marginBottom:12,flexWrap:'wrap'}}>
-          <label className="cap-only" style={{display:'inline-flex',alignItems:'center',gap:6,padding:'8px 16px',background:C.navy,color:'#fff',borderRadius:6,fontSize:13,fontWeight:600,cursor:'pointer'}}><Camera size={13}/>Take Photo<input type="file" accept="image/*" capture="environment" style={{display:'none'}} onChange={photo} multiple/></label>
-          <label style={{display:'inline-flex',alignItems:'center',gap:6,padding:'8px 16px',background:'#fff',color:C.textMid,border:`1px solid ${C.borderStr}`,borderRadius:6,fontSize:13,fontWeight:600,cursor:'pointer'}}><Upload size={13}/>Upload<input type="file" accept="image/*" style={{display:'none'}} onChange={photo} multiple/></label>
-        </div>
-        {a.photos.length>0?<div style={{display:'grid',gridTemplateColumns:'repeat(auto-fill,minmax(110px,1fr))',gap:8}}>{(a.photos||[]).map(p=><div key={p.id} style={{position:'relative',borderRadius:7,overflow:'hidden',border:`1px solid ${C.border}`}}><img src={p.dataUrl} style={{width:'100%',height:80,objectFit:'cover',display:'block'}} alt=""/><div style={{padding:'3px 5px',background:'#fff'}}><select value={p.category} onChange={e=>setA(prev=>({...prev,photos:prev.photos.map(ph=>ph.id===p.id?{...ph,category:e.target.value}:ph)}))} style={{width:'100%',fontSize:10,border:'none',background:'none',fontFamily:'inherit'}}>{['Front','Rear','Driver Side','Pass. Side','Interior','Odometer','Engine','Damage','Misc'].map(c=><option key={c}>{c}</option>)}</select></div><button onClick={()=>setA(prev=>({...prev,photos:prev.photos.filter(ph=>ph.id!==p.id)}))} style={{position:'absolute',top:3,right:3,background:'rgba(0,0,0,0.6)',border:'none',borderRadius:'50%',width:20,height:20,display:'flex',alignItems:'center',justifyContent:'center',cursor:'pointer'}}><X size={10} color="white"/></button></div>)}</div>:<div style={{padding:'20px',background:C.navyMuted,borderRadius:7,textAlign:'center',border:`1.5px dashed ${C.navyBorder}`}}><div style={{fontSize:12,color:C.textLight}}>No photos yet</div></div>}
+          {/* One + rather than two large buttons. On a phone the camera option
+              appears; on desktop it's a file picker. */}
+          <div style={{display:'flex',alignItems:'center',gap:10,marginBottom:10}}>
+            <span style={{fontSize:12.5,fontWeight:600,color:C.textMid}}>Photos{a.photos.length>0?` (${a.photos.length})`:''}</span>
+            <label className="cap-only" style={{marginLeft:'auto',display:'inline-flex',alignItems:'center',justifyContent:'center',width:30,height:30,borderRadius:15,border:`1px solid ${C.borderStr}`,color:C.textMid,cursor:'pointer',flexShrink:0}} title="Take photo">
+              <Camera size={15}/><input type="file" accept="image/*" capture="environment" style={{display:'none'}} onChange={photo} multiple/>
+            </label>
+            <label style={{display:'inline-flex',alignItems:'center',justifyContent:'center',width:30,height:30,borderRadius:15,border:`1px solid ${C.borderStr}`,color:C.textMid,cursor:'pointer',flexShrink:0}} title="Add photos">
+              <Plus size={16}/><input type="file" accept="image/*" style={{display:'none'}} onChange={photo} multiple/>
+            </label>
+          </div>
+        {a.photos.length>0?<div style={{display:'grid',gridTemplateColumns:'repeat(auto-fill,minmax(110px,1fr))',gap:8}}>{(a.photos||[]).map(p=><div key={p.id} style={{position:'relative',borderRadius:7,overflow:'hidden',border:`1px solid ${C.border}`}}><img src={p.dataUrl} style={{width:'100%',height:80,objectFit:'cover',display:'block'}} alt=""/><button onClick={()=>setA(prev=>({...prev,photos:prev.photos.filter(ph=>ph.id!==p.id)}))} style={{position:'absolute',top:3,right:3,background:'rgba(0,0,0,0.6)',border:'none',borderRadius:'50%',width:20,height:20,display:'flex',alignItems:'center',justifyContent:'center',cursor:'pointer'}}><X size={10} color="white"/></button></div>)}</div>:<div style={{fontSize:12,color:C.textLight,paddingBottom:4}}>No photos yet</div>}
         </div>
 
         {/* Condition and the history report describe the car, so they live in
