@@ -755,10 +755,23 @@ function CompSet({ comps, myPrice, myKm, myDays }) {
                   <td colSpan={6} style={{padding:'0 12px 12px',borderBottom:`1px solid ${C.border}`}}>
                     <div style={{fontSize:12,color:C.textMid,lineHeight:1.7}}>
                       {c.vin&&<div style={{fontFamily:'monospace',fontSize:11.5,letterSpacing:0.3}}>{c.vin}</div>}
-                      <div style={{display:'flex',gap:16,flexWrap:'wrap',marginTop:2}}>
+                      {/* Asking-price history — what the seller has done with this
+                          listing, which is more use than a paid history report
+                          on somebody else's car. */}
+                      {Number.isFinite(c.priceChangePct)&&c.priceChangePct!==0?(
+                        <div style={{marginTop:3,color:c.priceChangePct<0?C.orange:C.textMid}}>
+                          Asking price {c.priceChangePct<0?'cut':'raised'} {Math.abs(c.priceChangePct)}%
+                          {c.prevPrice?` — was ${fmt(c.prevPrice)}, now ${fmt(c.price)}`:''}
+                        </div>
+                      ):(
+                        <div style={{marginTop:3,color:C.textLight}}>
+                          No price change recorded{c.days?` in ${c.days} days listed`:''}
+                        </div>
+                      )}
+                      <div style={{display:'flex',gap:16,flexWrap:'wrap',marginTop:6}}>
                         {c.url&&<a href={c.url} target="_blank" rel="noopener noreferrer" style={{color:C.navy,fontSize:12,textDecoration:'none',fontWeight:600}}>Open listing ↗</a>}
                         {c.vin&&<button onClick={()=>{navigator.clipboard?.writeText(c.vin);}} style={{background:'none',border:'none',padding:0,fontSize:12,color:C.textMid,cursor:'pointer',fontFamily:'inherit'}}>Copy VIN</button>}
-                        {c.vin&&<button onClick={()=>onHistory&&onHistory(c.vin)} style={{background:'none',border:'none',padding:0,fontSize:12,color:C.textMid,cursor:'pointer',fontFamily:'inherit'}}>Vehicle history</button>}
+  
                         {Array.isArray(c.portals)&&c.portals.map(pt=>(
                           <a key={pt.name} href={pt.url} target="_blank" rel="noopener noreferrer" style={{color:C.textMid,fontSize:12,textDecoration:'none'}}>{pt.name} ↗</a>
                         ))}
@@ -819,10 +832,23 @@ function CompSet({ comps, myPrice, myKm, myDays }) {
                   <div style={{marginTop:8,paddingTop:8,borderTop:`1px solid ${C.border}`,fontSize:12,color:C.textMid,lineHeight:1.7}}>
                     <div>{[c.city,c.region].filter(Boolean).join(', ')||'Location not listed'}{/private/i.test(c.sellerType||'')?' · private seller':''}</div>
                     {c.vin&&<div style={{fontFamily:'monospace',fontSize:11.5,letterSpacing:0.3}}>{c.vin}</div>}
-                    <div style={{display:'flex',gap:14,marginTop:4,flexWrap:'wrap'}}>
+                    {/* Asking-price history — what the seller has done with this
+                        listing, which is more use than a paid history report
+                        on somebody else's car. */}
+                    {Number.isFinite(c.priceChangePct)&&c.priceChangePct!==0?(
+                      <div style={{marginTop:3,color:c.priceChangePct<0?C.orange:C.textMid}}>
+                        Asking price {c.priceChangePct<0?'cut':'raised'} {Math.abs(c.priceChangePct)}%
+                        {c.prevPrice?` — was ${fmt(c.prevPrice)}, now ${fmt(c.price)}`:''}
+                      </div>
+                    ):(
+                      <div style={{marginTop:3,color:C.textLight}}>
+                        No price change recorded{c.days?` in ${c.days} days listed`:''}
+                      </div>
+                    )}
+                    <div style={{display:'flex',gap:14,marginTop:6,flexWrap:'wrap'}}>
                       {c.url&&<a href={c.url} target="_blank" rel="noopener noreferrer" style={{color:C.navy,fontSize:12,textDecoration:'none',fontWeight:600}}>Open listing ↗</a>}
                       {c.vin&&<button onClick={()=>{navigator.clipboard?.writeText(c.vin);}} style={{background:'none',border:'none',padding:0,fontSize:12,color:C.textMid,cursor:'pointer',fontFamily:'inherit'}}>Copy VIN</button>}
-                      {c.vin&&<button onClick={()=>onHistory&&onHistory(c.vin)} style={{background:'none',border:'none',padding:0,fontSize:12,color:C.textMid,cursor:'pointer',fontFamily:'inherit'}}>Vehicle history</button>}
+
                     </div>
                   </div>
                 )}
