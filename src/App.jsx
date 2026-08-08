@@ -691,7 +691,7 @@ function CompSet({ comps, myPrice, myKm, myDays }) {
       <div onClick={()=>setOpenSec(s=>({...s,[secKey]:!s[secKey]}))} style={{padding:'10px 14px',borderBottom:isOpen?`1px solid ${C.border}`:'none',display:'flex',alignItems:'center',justifyContent:'space-between',gap:8,flexWrap:'wrap',cursor:'pointer',userSelect:'none',background:tint.head}}>
         <div style={{display:'flex',alignItems:'center',gap:8}}>
           <ChevronRight size={15} color={tint.ic} style={{transform:isOpen?'rotate(90deg)':'none',transition:'transform 0.15s'}}/>
-          <span style={{fontWeight:700,fontSize:13,color:tint.ic}}>{heading} <span style={{color:C.textLight,fontWeight:500}}>({rows.length})</span></span>
+          <span style={{fontWeight:700,fontSize:13,color:tint.ic}}>{heading}{heading?<span style={{color:C.textLight,fontWeight:500}}> ({rows.length})</span>:null}</span>
         </div>
         {badge}
       </div>
@@ -727,22 +727,47 @@ function CompSet({ comps, myPrice, myKm, myDays }) {
               }
               const ago=mode==='sold'?soldAgo(c.dropDate):null;
               return (
-              <tr key={c.id||i} style={{borderTop:`1px solid ${C.border}`}}>
+            <React.Fragment key={c.id||i}>
+              <tr style={{borderTop:`1px solid ${C.border}`}}>
                 <td style={{...cell,fontFamily:'monospace',fontWeight:600,color:C.textDark,whiteSpace:'nowrap'}}>{fmt(c.price)}{c.certified&&<span style={{marginLeft:6,fontSize:9,fontWeight:700,color:C.green,background:C.greenBg,padding:'1px 5px',borderRadius:8}}>CPO</span>}</td>
                 <td style={{...cell,fontFamily:'monospace',color:C.textMid,whiteSpace:'nowrap'}}>{c.mileage?fmtN(c.mileage):'—'}</td>
                 {mode==='sold'
                   ? <td style={{...cell,whiteSpace:'nowrap',fontWeight:600,color:ago!=null&&ago<=14?C.green:C.textMid}}>{ago!=null?ago:'—'}</td>
                   : <td style={{...cell,whiteSpace:'nowrap',color:c.days>45?C.orange:C.textMid}}>{c.days?c.days:'—'}</td>}
                 <td style={{...cell,color:C.textLight,whiteSpace:'nowrap'}}>{[c.city,c.region].filter(Boolean).join(', ')||'—'}</td>
+                {/* Dealer only. The VIN, its copy control, the price-history
+                    link, the source domain and the portal badges were five
+                    extra things on every row — they live in the expanded row
+                    now, one click away. */}
                 <td style={{...cell,color:C.textDark}}>
-                  <div>{c.url?<a href={c.url} target="_blank" rel="noopener noreferrer" style={{color:C.teal,fontWeight:700,textDecoration:'none',borderBottom:`1px solid ${C.teal}`,display:'inline-flex',alignItems:'center',gap:3}}>{c.dealer}<ExternalLink size={10}/></a>:c.dealer}{/private/i.test(c.sellerType||'')&&<span style={{marginLeft:6,fontSize:9,fontWeight:700,color:C.purple,background:C.purpleBg,padding:'1px 6px',borderRadius:8,whiteSpace:'nowrap'}}>Private</span>}</div>
-                  {c.vin&&<div style={{marginTop:2,fontSize:10,fontFamily:'monospace',color:C.textMid,letterSpacing:0.3,display:'flex',alignItems:'center',gap:6,flexWrap:'wrap'}}><span>{c.vin}</span><CopyVIN vin={c.vin}/><button onClick={()=>onHistory&&onHistory(c.vin)} style={{fontSize:9,fontWeight:700,color:C.navy,background:C.navyMuted,border:'none',borderRadius:6,padding:'2px 7px',cursor:'pointer',fontFamily:'inherit',whiteSpace:'nowrap'}}>History ↗</button></div>}
-                  <div style={{marginTop:2,display:'flex',gap:5,alignItems:'center',flexWrap:'wrap'}}>
-                    {c.source&&<span style={{fontSize:9,color:C.textLight,background:C.navyMuted,padding:'1px 6px',borderRadius:8,whiteSpace:'nowrap'}}>{c.source}</span>}{Array.isArray(c.portals)&&c.portals.map(p=><a key={p.name} href={p.url} target="_blank" rel="noopener noreferrer" style={{display:'inline-block',fontSize:9,fontWeight:600,color:C.teal,background:C.tealMuted,padding:'1px 6px',borderRadius:8,whiteSpace:'nowrap',textDecoration:'none',marginRight:4,marginTop:2}}>{p.name}</a>)}
-                  </div>
+                  <span style={{color:C.textDark}}>{c.dealer}</span>
+                  {/private/i.test(c.sellerType||'')&&<span style={{marginLeft:6,fontSize:10,color:C.textLight}}>private</span>}
                 </td>
-                <td style={{...cell,whiteSpace:'nowrap'}}>{c.url?<a href={c.url} target="_blank" rel="noopener noreferrer" style={{display:'inline-flex',alignItems:'center',gap:3,color:C.navy,fontSize:11,fontWeight:600,textDecoration:'none'}}><ExternalLink size={12}/>View</a>:<span style={{fontSize:10,color:C.textLight}}>—</span>}</td>
+                <td style={{...cell,whiteSpace:'nowrap',textAlign:'right'}}>
+                  <button onClick={()=>setOpenRow(openRow===(c.id||i)?null:(c.id||i))}
+                    style={{background:'none',border:'none',padding:0,fontSize:11.5,color:C.textLight,cursor:'pointer',fontFamily:'inherit'}}>
+                    {openRow===(c.id||i)?'Less':'More'}
+                  </button>
+                </td>
               </tr>
+              {openRow===(c.id||i)&&(
+                <tr key={(c.id||i)+'-x'}>
+                  <td colSpan={6} style={{padding:'0 12px 12px',borderBottom:`1px solid ${C.border}`}}>
+                    <div style={{fontSize:12,color:C.textMid,lineHeight:1.7}}>
+                      {c.vin&&<div style={{fontFamily:'monospace',fontSize:11.5,letterSpacing:0.3}}>{c.vin}</div>}
+                      <div style={{display:'flex',gap:16,flexWrap:'wrap',marginTop:2}}>
+                        {c.url&&<a href={c.url} target="_blank" rel="noopener noreferrer" style={{color:C.navy,fontSize:12,textDecoration:'none',fontWeight:600}}>Open listing ↗</a>}
+                        {c.vin&&<button onClick={()=>{navigator.clipboard?.writeText(c.vin);}} style={{background:'none',border:'none',padding:0,fontSize:12,color:C.textMid,cursor:'pointer',fontFamily:'inherit'}}>Copy VIN</button>}
+                        {c.vin&&<button onClick={()=>onHistory&&onHistory(c.vin)} style={{background:'none',border:'none',padding:0,fontSize:12,color:C.textMid,cursor:'pointer',fontFamily:'inherit'}}>Price history</button>}
+                        {Array.isArray(c.portals)&&c.portals.map(pt=>(
+                          <a key={pt.name} href={pt.url} target="_blank" rel="noopener noreferrer" style={{color:C.textMid,fontSize:12,textDecoration:'none'}}>{pt.name} ↗</a>
+                        ))}
+                      </div>
+                    </div>
+                  </td>
+                </tr>
+              )}
+            </React.Fragment>
             );});})()}
           </tbody>
         </table>
