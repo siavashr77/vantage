@@ -1629,128 +1629,79 @@ function LeadsInbox({leads,loading,onRefresh,onOpen,onDismiss,error,filter,onFil
   );
 }
 
-function Dashboard({vehicles,appraisals,dealer,onNav,onOpenVehicle,onOpenAppraisal}) {
-  const avail=vehicles.filter(v=>v.status==='available').length;
-  const recon=vehicles.filter(v=>v.status==='in_recon').length;
-  const inProg=appraisals.filter(a=>a.status==='in_progress').length;
-
-  // Is a vehicle advertised anywhere? (feeds toggled on)
-  const isAdvertised=(v)=>v.feeds&&Object.values(v.feeds).some(f=>f&&f.active);
-  // Build the attention list: each item = {id,type,title,issues[],advertised,onClick,priority}
-  const items=[];
-  vehicles.filter(v=>v.status==='available'||v.status==='in_recon').forEach(v=>{
-    const issues=[];
-    if(!(v.photos&&v.photos.length>0)) issues.push('No photos');
-    if(!v.description||!v.description.trim()) issues.push('No description');
-    if(!(v.features&&v.features.length>0)) issues.push('No options listed');
-    // Price flag: compare list price to fetched market band
-    if(v.listPrice&&v.marketLow&&v.marketHigh){
-      const lp=Number(v.listPrice);
-      if(lp>Number(v.marketHigh)) issues.push('Priced above market');
-      else if(lp<Number(v.marketLow)) issues.push('Priced below market');
-    }
-    if(issues.length>0){
-      const adv=isAdvertised(v);
-      items.push({
-        key:'v_'+v.id, type:'vehicle', advertised:adv,
-        title:[v.year,v.make,v.model,v.series].filter(Boolean).join(' ')||('Stock #'+v.stockNumber),
-        sub:'Stock #'+v.stockNumber, issues,
-        onClick:()=>onOpenVehicle(v),
-        // advertised cars with issues are most urgent; then by issue count
-        priority:(adv?100:0)+issues.length,
-      });
-    }
-  });
-  // sort: advertised+most issues first
-  items.sort((a,b)=>b.priority-a.priority);
-
-  const advertisedWithIssues=items.filter(i=>i.advertised).length;
+function Dashboard({vehicles,appraisals,dealer,onNav,onOpenVehicle,onOpenAppraisal,leads,onOpenLead}) {
+  // Retail operations aren't running yet, so the dashboard shows only the two
+  // things that matter day to day: customers waiting on an answer, and the
+  // appraisals in flight. Inventory tiles, recon flags and advertising checks
+  // are removed rather than sitting empty.
+  const pending=(leads||[]).filter(l=>!l.status||l.status==='pending');
+  const recent=[...appraisals].sort((x,y)=>new Date(y.updatedAt||y.createdAt||0)-new Date(x.updatedAt||x.createdAt||0)).slice(0,8);
 
   return (
     <div>
-      {dealer.logo&&<div style={{marginBottom:16}}><img src={dealer.logo} style={{maxHeight:48,objectFit:'contain'}} alt={dealer.name}/></div>}
-      <div style={{marginBottom:18}}><h1 style={{fontSize:22,fontWeight:800,color:C.navy,letterSpacing:-0.5}}>{dealer.name}</h1><p style={{fontSize:13,color:C.textLight}}>Vantage by ClickDocs · Dealer Command Centre</p></div>
+      <h2 className='page-title' style={{fontSize:20,fontWeight:700,color:C.navy,marginBottom:16,letterSpacing:-0.3}}>
+        {dealer?.name||'Your Dealership'}
+      </h2>
 
-      {/* Compact stat strip */}
-      <div className='dash-stats' style={{display:'grid',gridTemplateColumns:'repeat(4,1fr)',gap:12,marginBottom:22}}>
-        {[{l:'Available',v:avail,c:C.green,Icon:CheckCircle,go:'inventory'},{l:'In Recon',v:recon,c:C.orange,Icon:AlertTriangle,go:'inventory'},{l:'Active Appraisals',v:inProg,c:C.navy,Icon:ClipboardList,go:'appraisals'},{l:'Needs Attention',v:items.length,c:items.length>0?C.red:C.textLight,Icon:AlertCircle,go:null}].map(s=>(
-          <Card key={s.l} onClick={s.go?()=>onNav(s.go):undefined} style={{padding:'14px 16px',display:'flex',alignItems:'center',gap:10,cursor:s.go?'pointer':'default'}}>
-            <div style={{width:38,height:38,borderRadius:8,background:C.navyMuted,display:'flex',alignItems:'center',justifyContent:'center',flexShrink:0}}><s.Icon size={17} color={C.navy}/></div>
-            <div><div style={{fontSize:11,color:C.textLight,fontWeight:500,marginBottom:2}}>{s.l}</div><div style={{fontSize:22,fontWeight:800,color:s.c,fontFamily:'monospace'}}>{s.v}</div></div>
-          </Card>
-        ))}
-      </div>
-
-      {/* ── ACTION CENTER ── */}
-      <div style={{marginBottom:22}}>
-        <div style={{display:'flex',alignItems:'center',gap:8,marginBottom:10}}>
-          <AlertCircle size={17} color={items.length>0?C.orange:C.green}/>
-          <h2 style={{fontSize:16,fontWeight:800,color:C.navy}}>Needs Attention</h2>
-          {items.length>0&&<span style={{background:C.orangeBg,color:C.orange,borderRadius:12,padding:'2px 10px',fontSize:12,fontWeight:700}}>{items.length}</span>}
-          {advertisedWithIssues>0&&<span style={{background:C.redBg,color:C.red,borderRadius:12,padding:'2px 10px',fontSize:11,fontWeight:700,marginLeft:'auto'}}>⚠ {advertisedWithIssues} advertised with issues</span>}
-        </div>
-
-        {items.length===0?(
-          <Card style={{padding:'28px',textAlign:'center'}}>
-            <CheckCircle size={28} color={C.green} style={{marginBottom:8}}/>
-            <div style={{fontSize:14,fontWeight:700,color:C.textMid}}>Everything looks good</div>
-            <div style={{fontSize:12,color:C.textLight,marginTop:3}}>No inventory is missing photos, descriptions, options, or has a price flag.</div>
-          </Card>
-        ):(
-          <Card style={{overflow:'hidden'}}>
-            {items.map((it,i)=>(
-              <div key={it.key} onClick={it.onClick} style={{padding:'12px 14px',borderBottom:i<items.length-1?`1px solid ${C.border}`:'none',display:'flex',alignItems:'center',gap:12,cursor:'pointer',transition:'background 0.15s'}} onMouseEnter={e=>e.currentTarget.style.background=C.navyMuted} onMouseLeave={e=>e.currentTarget.style.background='transparent'}>
-                <div style={{width:36,height:36,background:it.advertised?C.redBg:C.navyMuted,borderRadius:8,display:'flex',alignItems:'center',justifyContent:'center',flexShrink:0}}><Car size={16} color={it.advertised?C.red:C.navy}/></div>
+      {/* New leads first — a customer waiting is the only thing on this screen
+          with a clock running on it. */}
+      {pending.length>0&&(
+        <div style={{marginBottom:22}}>
+          <div style={{display:'flex',alignItems:'center',gap:8,marginBottom:10}}>
+            <h3 style={{fontSize:14,fontWeight:700,color:C.navy}}>New leads</h3>
+            <span style={{fontSize:11,fontWeight:700,color:'#fff',background:C.orange,borderRadius:10,padding:'1px 8px'}}>{pending.length}</span>
+            <button onClick={()=>onNav('leads')} style={{marginLeft:'auto',fontSize:12,color:C.textMid,background:'none',border:'none',cursor:'pointer',fontFamily:'inherit'}}>View all →</button>
+          </div>
+          <div style={{border:`1px solid ${C.border}`,borderRadius:10,overflow:'hidden',background:'#fff'}}>
+            {pending.slice(0,5).map((l,i,arr)=>(
+              <div key={l.id} onClick={()=>onOpenLead&&onOpenLead(l)}
+                style={{padding:'13px 15px',borderBottom:i<arr.length-1?`1px solid ${C.border}`:'none',display:'flex',alignItems:'center',gap:12,cursor:'pointer'}}>
                 <div style={{flex:1,minWidth:0}}>
-                  <div style={{display:'flex',alignItems:'center',gap:8}}>
-                    <span style={{fontWeight:700,fontSize:13,color:C.navy}}>{it.title}</span>
-                    {it.advertised&&<span style={{fontSize:9,fontWeight:700,color:C.red,background:C.redBg,padding:'1px 6px',borderRadius:8,whiteSpace:'nowrap'}}>ADVERTISED</span>}
+                  <div style={{fontWeight:600,fontSize:13.5,color:C.textDark,whiteSpace:'nowrap',overflow:'hidden',textOverflow:'ellipsis'}}>
+                    {[l.year,l.make,l.model].filter(Boolean).join(' ')||l.vin||'Vehicle'}
                   </div>
-                  <div style={{fontSize:11,color:C.textLight,marginTop:1}}>{it.sub}</div>
-                  <div style={{display:'flex',gap:5,flexWrap:'wrap',marginTop:5}}>
-                    {it.issues.map(iss=><span key={iss} style={{fontSize:10,fontWeight:600,color:C.orange,background:C.orangeBg,padding:'2px 7px',borderRadius:8,whiteSpace:'nowrap'}}>{iss}</span>)}
+                  <div style={{fontSize:12,color:C.textLight,marginTop:2}}>
+                    {[l.customer_name||l.customerName,l.mileage?`${fmtN(l.mileage)} km`:null,fmtDate(l.created_at||l.createdAt)].filter(Boolean).join(' · ')}
                   </div>
                 </div>
-                <ChevronRight size={15} color={C.textLight}/>
+                {l.market_mid&&<span style={{fontSize:13,fontWeight:700,color:C.navy,flexShrink:0}}>{fmt(l.market_mid)}</span>}
+                <ChevronRight size={15} color={C.textLight} style={{flexShrink:0}}/>
               </div>
             ))}
-          </Card>
-        )}
-      </div>
-
-      {/* Active appraisals quick list */}
-      {appraisals.filter(a=>a.status==='in_progress').length>0&&(
-        <div style={{marginBottom:16}}>
-          <div style={{display:'flex',alignItems:'center',justifyContent:'space-between',marginBottom:10}}>
-            <h3 style={{fontSize:14,fontWeight:700,color:C.navy}}>Active Appraisals</h3>
-            <button onClick={()=>onNav('appraisals')} style={{fontSize:12,color:C.teal,background:'none',border:'none',cursor:'pointer',fontWeight:600}}>View all →</button>
           </div>
-          <Card style={{overflow:'hidden'}}>
-            {appraisals.filter(a=>a.status==='in_progress').slice(0,5).map((a,i,arr)=>(
-              <div key={a.id} onClick={()=>onOpenAppraisal(a)} style={{padding:'10px 14px',borderBottom:i<arr.length-1?`1px solid ${C.border}`:'none',display:'flex',alignItems:'center',gap:12,cursor:'pointer'}} onMouseEnter={e=>e.currentTarget.style.background=C.navyMuted} onMouseLeave={e=>e.currentTarget.style.background='transparent'}>
-                <Car size={16} color={C.navy}/>
-                <div style={{flex:1}}><div style={{fontWeight:600,fontSize:13,color:C.textDark}}>{[a.year,a.make,a.model].filter(Boolean).join(' ')||'Untitled'}</div><div style={{fontSize:11,color:C.textLight}}>{fmtDate(a.createdAt)}</div></div>
-                <ABadge status={a.status}/>{a.appraisedValue&&<div style={{fontSize:13,fontWeight:700,color:C.navy,fontFamily:'monospace'}}>{fmt(a.appraisedValue)}</div>}
-                <ChevronRight size={13} color={C.textLight}/>
-              </div>
-            ))}
-          </Card>
         </div>
       )}
 
-      {/* Quick actions */}
-      <div className='dash-tiles' style={{display:'grid',gridTemplateColumns:'repeat(4,1fr)',gap:12}}>
-        {[
-          {label:'New Appraisal',icon:ClipboardList,action:'new_appraisal'},
-          {label:'Add Vehicle',icon:Car,action:'new_vehicle'},
-          {label:'Inventory',icon:Package,action:'inventory'},
-          {label:'Reports',icon:BarChart2,action:'reports'},
-        ].map(t=>(
-          <button key={t.action} onClick={()=>onNav(t.action)} style={{background:C.card,border:`1px solid ${C.border}`,borderRadius:10,padding:'18px 12px',display:'flex',flexDirection:'column',alignItems:'center',gap:8,cursor:'pointer',transition:'all 0.2s',boxShadow:'0 1px 4px rgba(0,0,0,0.06)'}} onMouseEnter={e=>{e.currentTarget.style.borderColor=C.navy;e.currentTarget.style.transform='translateY(-2px)';}} onMouseLeave={e=>{e.currentTarget.style.borderColor=C.border;e.currentTarget.style.transform='none';}}>
-            <div style={{width:42,height:42,background:C.navyMuted,borderRadius:10,display:'flex',alignItems:'center',justifyContent:'center'}}><t.icon size={20} color={C.navy}/></div>
-            <div style={{fontWeight:700,fontSize:12,color:C.navy}}>{t.label}</div>
-          </button>
-        ))}
+      {/* Recent appraisals */}
+      <div>
+        <div style={{display:'flex',alignItems:'center',marginBottom:10}}>
+          <h3 style={{fontSize:14,fontWeight:700,color:C.navy}}>Recent appraisals</h3>
+          <button onClick={()=>onNav('appraisals')} style={{marginLeft:'auto',fontSize:12,color:C.textMid,background:'none',border:'none',cursor:'pointer',fontFamily:'inherit'}}>View all →</button>
+        </div>
+        {recent.length===0?(
+          <div style={{padding:'26px 0',fontSize:13,color:C.textLight}}>
+            No appraisals yet. Start one with New Appraisal.
+          </div>
+        ):(
+          <div style={{border:`1px solid ${C.border}`,borderRadius:10,overflow:'hidden',background:'#fff'}}>
+            {recent.map((a,i,arr)=>(
+              <div key={a.id} onClick={()=>onOpenAppraisal(a)}
+                style={{padding:'13px 15px',borderBottom:i<arr.length-1?`1px solid ${C.border}`:'none',display:'flex',alignItems:'center',gap:12,cursor:'pointer'}}>
+                <div style={{flex:1,minWidth:0}}>
+                  <div style={{fontWeight:600,fontSize:13.5,color:C.textDark,whiteSpace:'nowrap',overflow:'hidden',textOverflow:'ellipsis'}}>
+                    {[a.year,a.make,a.model,a.series].filter(Boolean).join(' ')||'Untitled'}
+                  </div>
+                  <div style={{fontSize:12,color:C.textLight,marginTop:2}}>
+                    {[a.odometer?`${fmtN(a.odometer)} km`:null,fmtDate(a.updatedAt||a.createdAt)].filter(Boolean).join(' · ')}
+                  </div>
+                </div>
+                {a.appraisedValue&&<span style={{fontSize:13,fontWeight:700,color:C.navy,flexShrink:0}}>{fmt(a.appraisedValue)}</span>}
+                <ABadge status={a.status}/>
+                <ChevronRight size={15} color={C.textLight} style={{flexShrink:0}}/>
+              </div>
+            ))}
+          </div>
+        )}
       </div>
     </div>
   );
@@ -4142,7 +4093,7 @@ export default function Vantage() {
 
       {/* CONTENT */}
       <div className='content-pad' style={{maxWidth:1200,margin:'0 auto',padding:'24px 24px 60px'}}>
-        {page==='dashboard'&&<Dashboard vehicles={vehicles} appraisals={appraisals} dealer={dealer} onNav={nav} onOpenVehicle={v=>{setActiveV({...v});goto('vehicle_detail',v);}} onOpenAppraisal={a=>{setActiveA({...a});goto('appraisal_form',a);}}/>}
+        {page==='dashboard'&&<Dashboard vehicles={vehicles} appraisals={appraisals} dealer={dealer} leads={leads} onOpenLead={openLead} onNav={nav} onOpenVehicle={v=>{setActiveV({...v});goto('vehicle_detail',v);}} onOpenAppraisal={a=>{setActiveA({...a});goto('appraisal_form',a);}}/>}
         {page==='leads'&&<LeadsInbox leads={leads} loading={leadsLoading} error={leadsError} filter={leadFilter} onFilter={setLeadFilter} onRefresh={loadLeads} onOpen={openLead} onDismiss={id=>updateLeadStatus(id,'dismissed')}/>}
         {page==='appraisals'&&<AppraisalList appraisals={appraisals} onNew={()=>nav('new_appraisal')} onEdit={a=>{setActiveA({...a});goto('appraisal_form',a);}}/>}
         {page==='appraisal_form'&&activeA&&<AppraisalForm key={activeA.id} initial={activeA} user={actingUser} can={can} onSave={(a,silent=false)=>saveAppraisal(a,silent)} onBack={()=>goto('appraisals')} showToast={showToast} onConvert={convertToInventory} onFinalize={finalizeAppraisal} onUnlock={unlockAppraisal} onGetDealer={()=>dealer} onCheckDup={checkDuplicate} onOpenExisting={openExistingDup}/>}
