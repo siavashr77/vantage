@@ -2027,6 +2027,7 @@ function AppraisalForm({initial,onSave,onBack,showToast,onConvert,onFinalize,onU
   const [vehExpanded,setVehExpanded]=useState(!initial?.year);
   const [vinCopied,setVinCopied]=useState(false);
   const [sub,setSub]=useState(null);   // null = hub; otherwise the open page
+  useEffect(()=>{ window.scrollTo(0,0); },[sub]);
   const [filtersOpen,setFiltersOpen]=useState(false);
   const [showVINScanner,setShowVINScanner]=useState(false);
   const [savedAt,setSavedAt]=useState(initial?.updatedAt||null);
@@ -3693,6 +3694,13 @@ export default function Vantage() {
     if(location.pathname!==url) navigate(url);
     setPage(pg);
   },[navigate,location.pathname]);
+
+  // Every page opens at the top. Without this the browser keeps the previous
+  // scroll offset, so opening an appraisal from halfway down the list dropped
+  // you into the middle of the record.
+  useEffect(()=>{
+    window.scrollTo(0,0);
+  },[location.pathname]);
 
   // Derive page + active record FROM the URL. Runs on direct loads, refresh,
   // and back/forward. Resolves :id paths into activeA/activeV once data is loaded.
