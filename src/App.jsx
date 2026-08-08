@@ -2229,11 +2229,13 @@ function AppraisalForm({initial,onSave,onBack,showToast,onConvert,onFinalize,onU
           style={{background:'none',border:'none',padding:4,margin:'0 -4px 0 0',color:C.textMid,cursor:'pointer',display:'flex',alignItems:'center',flexShrink:0}}>
           <ChevronLeft size={22}/>
         </button>
+        {/* No vehicle details here — they belong in the Vehicle section, and
+            repeating them made the same fact appear twice on one screen. On a
+            sub-page the header names the page instead. */}
         <div style={{flex:1,minWidth:0}}>
-          <div style={{fontSize:16,fontWeight:700,color:C.navy,whiteSpace:'nowrap',overflow:'hidden',textOverflow:'ellipsis',letterSpacing:-0.2}}>
-            {[a.year,a.make,a.model,a.series].filter(Boolean).join(' ')||'New appraisal'}
-          </div>
-          {a.odometer&&<div style={{fontSize:12,color:C.textLight,marginTop:1}}>{fmtN(a.odometer)} km</div>}
+          {sub&&<div style={{fontSize:15,fontWeight:700,color:C.navy,whiteSpace:'nowrap',overflow:'hidden',textOverflow:'ellipsis'}}>
+            {[a.year,a.make,a.model].filter(Boolean).join(' ')}
+          </div>}
         </div>
         {locked&&<ShieldCheck size={16} color={C.purple} title="Finalized" style={{flexShrink:0}}/>}
         <select value={a.status} disabled={locked} onChange={e=>set('status',e.target.value)}
@@ -2378,6 +2380,24 @@ function AppraisalForm({initial,onSave,onBack,showToast,onConvert,onFinalize,onU
         </div>
         {a.photos.length>0?<div style={{display:'grid',gridTemplateColumns:'repeat(auto-fill,minmax(110px,1fr))',gap:8}}>{(a.photos||[]).map(p=><div key={p.id} style={{position:'relative',borderRadius:7,overflow:'hidden',border:`1px solid ${C.border}`}}><img src={p.dataUrl} style={{width:'100%',height:80,objectFit:'cover',display:'block'}} alt=""/><div style={{padding:'3px 5px',background:'#fff'}}><select value={p.category} onChange={e=>setA(prev=>({...prev,photos:prev.photos.map(ph=>ph.id===p.id?{...ph,category:e.target.value}:ph)}))} style={{width:'100%',fontSize:10,border:'none',background:'none',fontFamily:'inherit'}}>{['Front','Rear','Driver Side','Pass. Side','Interior','Odometer','Engine','Damage','Misc'].map(c=><option key={c}>{c}</option>)}</select></div><button onClick={()=>setA(prev=>({...prev,photos:prev.photos.filter(ph=>ph.id!==p.id)}))} style={{position:'absolute',top:3,right:3,background:'rgba(0,0,0,0.6)',border:'none',borderRadius:'50%',width:20,height:20,display:'flex',alignItems:'center',justifyContent:'center',cursor:'pointer'}}><X size={10} color="white"/></button></div>)}</div>:<div style={{padding:'20px',background:C.navyMuted,borderRadius:7,textAlign:'center',border:`1.5px dashed ${C.navyBorder}`}}><div style={{fontSize:12,color:C.textLight}}>No photos yet</div></div>}
         </div>
+
+        {/* Condition and the history report describe the car, so they live in
+            this section rather than in a list further down the page. */}
+        {!sub&&(
+          <div style={{marginTop:12,borderTop:`1px solid ${C.border}`}}>
+            {[
+              {id:'condition',label:'Condition',      value:[a.tires,a.paint,a.interior,a.mechanical].filter(Boolean).length?`${[a.tires,a.paint,a.interior,a.mechanical].filter(Boolean).length} recorded`:'Not recorded'},
+              {id:'history',  label:'History report', value:a.carfax?(a.carfax.clean?'Clean':'Issues found'):'Not pulled'},
+            ].map((r,i)=>(
+              <button key={r.id} onClick={()=>{setSub(r.id);window.scrollTo(0,0);}}
+                style={{width:'100%',display:'flex',alignItems:'center',gap:10,padding:'12px 2px',background:'none',border:'none',borderBottom:i===0?`1px solid ${C.border}`:'none',cursor:'pointer',fontFamily:'inherit',textAlign:'left'}}>
+                <span style={{fontSize:13,color:C.textDark,fontWeight:600}}>{r.label}</span>
+                <span style={{fontSize:12.5,color:C.textLight,marginLeft:'auto'}}>{r.value}</span>
+                <ChevronRight size={15} color={C.textLight}/>
+              </button>
+            ))}
+          </div>
+        )}
       </Sec>
 
       <Sec title="Notes" icon={FileText} hidden={sub!=='notes'} bare>
@@ -2390,12 +2410,25 @@ function AppraisalForm({initial,onSave,onBack,showToast,onConvert,onFinalize,onU
         {/* RIGHT COLUMN — all other sections scroll past the sticky vehicle panel */}
         <div style={{minWidth:0}}>
 
+      {/* Comparables stands on its own between the car and the money, because
+          it's the evidence you check before deciding what to pay. */}
+      {!sub&&(
+        <button onClick={()=>{setSub('market');window.scrollTo(0,0);}}
+          style={{width:'100%',display:'flex',alignItems:'center',gap:12,padding:'15px 16px',marginBottom:12,background:'#fff',border:`1px solid ${C.border}`,borderRadius:10,cursor:'pointer',fontFamily:'inherit',textAlign:'left'}}>
+          <span style={{fontSize:14,fontWeight:700,color:C.navy}}>Comparables</span>
+          <span style={{fontSize:12.5,color:C.textLight,marginLeft:'auto',whiteSpace:'nowrap',overflow:'hidden',textOverflow:'ellipsis',minWidth:0}}>
+            {a.marketMid?`${(a._comps||[]).length||a.activeComps||0} listings · ${fmt(a.marketMid)} mid`:(ml?'Loading…':'Not loaded')}
+          </span>
+          <ChevronRight size={16} color={C.textLight} style={{flexShrink:0}}/>
+        </button>
+      )}
+
       <Sec title="Offer & Pricing" icon={DollarSign} accent hidden={!!sub}>
         <div style={{display:'grid',gridTemplateColumns:'repeat(auto-fit,minmax(135px,1fr))',gap:10,marginBottom:12,alignItems:'start'}}>
           <div style={{minWidth:0}}><label style={{display:'block',fontSize:11,fontWeight:600,color:C.textMid,marginBottom:5}}>Recon Cost ($)</label><Input value={a.reconCost} onChange={v=>set('reconCost',v)} type="number" /></div>
           <div style={{minWidth:0}}><label style={{display:'block',fontSize:11,fontWeight:600,color:C.textMid,marginBottom:5}}>Cert / Transport ($)</label><Input value={a.certCost||''} onChange={v=>set('certCost',v)} type="number" /></div>
           <div style={{minWidth:0}}><label style={{display:'block',fontSize:11,fontWeight:600,color:C.textMid,marginBottom:5}}>Pack ($)</label><Input value={a.pack||''} onChange={v=>set('pack',v)} type="number" /></div>
-          <div style={{minWidth:0}}><label style={{display:'block',fontSize:11,fontWeight:600,color:C.textMid,marginBottom:5}}>Offer Valid Until</label><Input value={a.offerExpiry||''} onChange={v=>set('offerExpiry',v)} type="date"/></div>
+          <div style={{minWidth:0}}><label style={{display:'block',fontSize:11,fontWeight:600,color:C.textMid,marginBottom:5}}>Offer Valid Until</label><Input value={a.offerExpiry||''} onChange={v=>set('offerExpiry',v)} type="date" style={{width:'100%',minWidth:0,boxSizing:'border-box',maxWidth:'100%'}}/></div>
           <div style={{minWidth:0}}><label style={{display:'block',fontSize:11,fontWeight:600,color:C.textMid,marginBottom:5}}>Gross Override ($)</label><Input value={a.targetGrossOverride||''} onChange={v=>set('targetGrossOverride',v)} type="number" placeholder="optional"/></div>
           <div style={{minWidth:0}}><label style={{display:'block',fontSize:11,fontWeight:600,color:C.teal,marginBottom:5}}>Your Offer ($)</label><Input value={a.appraisedValue} onChange={v=>set('appraisedValue',v)} type="number" placeholder="Enter offer" style={{fontSize:15,fontWeight:700}}/></div>
         </div>
@@ -2686,9 +2719,6 @@ function AppraisalForm({initial,onSave,onBack,showToast,onConvert,onFinalize,onU
           {!sub&&(
             <div style={{marginTop:14,border:`1px solid ${C.border}`,borderRadius:10,overflow:'hidden',background:'#fff'}}>
               {[
-                {id:'market',   label:'Comparables',    value:a.marketMid?`${(a._comps||[]).length||a.activeComps||0} listings · ${fmt(a.marketMid)} mid`:'Not loaded'},
-                {id:'condition',label:'Condition',      value:[a.tires,a.paint,a.interior,a.mechanical].filter(Boolean).length?`${[a.tires,a.paint,a.interior,a.mechanical].filter(Boolean).length} recorded`:'Not recorded'},
-                {id:'history',  label:'History report', value:a.carfax?(a.carfax.clean?'Clean':'Issues found'):'Not pulled'},
                 {id:'customer', label:'Customer',       value:[a.firstName,a.lastName].filter(Boolean).join(' ')||'None'},
                 {id:'notes',    label:'Notes',          value:a.notes?`${a.notes.slice(0,26)}${a.notes.length>26?'…':''}`:'None'},
                 {id:'log',      label:'Activity',       value:`${(a.log||[]).length} entries`},
