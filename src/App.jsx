@@ -758,7 +758,7 @@ function CompSet({ comps, myPrice, myKm, myDays }) {
                       <div style={{display:'flex',gap:16,flexWrap:'wrap',marginTop:2}}>
                         {c.url&&<a href={c.url} target="_blank" rel="noopener noreferrer" style={{color:C.navy,fontSize:12,textDecoration:'none',fontWeight:600}}>Open listing ↗</a>}
                         {c.vin&&<button onClick={()=>{navigator.clipboard?.writeText(c.vin);}} style={{background:'none',border:'none',padding:0,fontSize:12,color:C.textMid,cursor:'pointer',fontFamily:'inherit'}}>Copy VIN</button>}
-                        {c.vin&&<button onClick={()=>onHistory&&onHistory(c.vin)} style={{background:'none',border:'none',padding:0,fontSize:12,color:C.textMid,cursor:'pointer',fontFamily:'inherit'}}>Price history</button>}
+                        {c.vin&&<button onClick={()=>onHistory&&onHistory(c.vin)} style={{background:'none',border:'none',padding:0,fontSize:12,color:C.textMid,cursor:'pointer',fontFamily:'inherit'}}>Vehicle history</button>}
                         {Array.isArray(c.portals)&&c.portals.map(pt=>(
                           <a key={pt.name} href={pt.url} target="_blank" rel="noopener noreferrer" style={{color:C.textMid,fontSize:12,textDecoration:'none'}}>{pt.name} ↗</a>
                         ))}
@@ -819,7 +819,7 @@ function CompSet({ comps, myPrice, myKm, myDays }) {
                     <div style={{display:'flex',gap:14,marginTop:4,flexWrap:'wrap'}}>
                       {c.url&&<a href={c.url} target="_blank" rel="noopener noreferrer" style={{color:C.navy,fontSize:12,textDecoration:'none',fontWeight:600}}>Open listing ↗</a>}
                       {c.vin&&<button onClick={()=>{navigator.clipboard?.writeText(c.vin);}} style={{background:'none',border:'none',padding:0,fontSize:12,color:C.textMid,cursor:'pointer',fontFamily:'inherit'}}>Copy VIN</button>}
-                      {c.vin&&<button onClick={()=>onHistory&&onHistory(c.vin)} style={{background:'none',border:'none',padding:0,fontSize:12,color:C.textMid,cursor:'pointer',fontFamily:'inherit'}}>Price history</button>}
+                      {c.vin&&<button onClick={()=>onHistory&&onHistory(c.vin)} style={{background:'none',border:'none',padding:0,fontSize:12,color:C.textMid,cursor:'pointer',fontFamily:'inherit'}}>Vehicle history</button>}
                     </div>
                   </div>
                 )}
