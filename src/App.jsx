@@ -2237,6 +2237,14 @@ function AppraisalForm({initial,onSave,onBack,showToast,onConvert,onFinalize,onU
           style={{background:'none',border:'none',padding:4,margin:'0 -4px 0 0',color:C.textMid,cursor:'pointer',display:'flex',alignItems:'center',flexShrink:0}}>
           <ChevronLeft size={22}/>
         </button>
+        {/* Branding sits inline here on mobile now that the top bar is gone —
+            one row of chrome instead of two. */}
+        <div className="hide-desktop" style={{display:'flex',alignItems:'center',gap:7,flexShrink:0}}>
+          <div style={{width:24,height:24,borderRadius:6,background:C.navy,display:'flex',alignItems:'center',justifyContent:'center'}}>
+            <span style={{fontSize:11,fontWeight:900,color:'#fff',fontFamily:'monospace',letterSpacing:-1}}>V</span>
+          </div>
+          <span style={{fontSize:14,fontWeight:800,color:C.navy,letterSpacing:-0.3}}>Vantage</span>
+        </div>
         {/* No vehicle details here — they belong in the Vehicle section, and
             repeating them made the same fact appear twice on one screen. On a
             sub-page the header names the page instead. */}
@@ -4133,7 +4141,7 @@ export default function Vantage() {
     @media (max-width: 768px) {
       .cap-only { display: inline-flex !important; }
       .desktop-nav { display: none !important; }
-      .mobile-top-bar { display: flex !important; }
+      .mobile-top-bar { display: none !important; }
       .app-toast { bottom: 90px !important; right: 12px !important; left: 12px !important; max-width: none !important; }
       .dash-stats { grid-template-columns: repeat(2, 1fr) !important; }
       .dash-tiles { grid-template-columns: repeat(2, 1fr) !important; max-width: 100% !important; }
@@ -4142,6 +4150,7 @@ export default function Vantage() {
       .content-pad { padding: 14px 14px 80px !important; }
       .page-title { font-size: 16px !important; }
       .hide-mobile { display: none !important; }
+      .hide-desktop { display: flex !important; }
       .field-half { flex: 1 1 100% !important; }
       .field-third { flex: 1 1 100% !important; }
       .sticky-bar { padding: 10px 14px !important; }
@@ -4158,6 +4167,7 @@ export default function Vantage() {
     }
 
     /* Bottom nav for mobile */
+    .hide-desktop { display: none !important; }
     .mobile-bottom-nav {
       display: none;
       position: fixed;
