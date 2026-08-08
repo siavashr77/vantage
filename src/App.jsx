@@ -2169,7 +2169,12 @@ function AppraisalForm({initial,onSave,onBack,showToast,onConvert,onFinalize,onU
   useEffect(()=>{
     if(locked) return;
     if(a.vin?.length!==17){ autoFetchedRef.current=false; return; }
-    if(a._comps || a.marketMid) return;
+    // Existing appraisals hold results from before sold data and day supply were
+    // available. Auto-fetch normally skips them because they already have a mid,
+    // so they would keep showing the older, thinner picture indefinitely.
+    // Detect the previous payload shape and refresh those once.
+    const staleShape = !!(a.marketMid && a._marketMeta && a._marketMeta.staleDays===undefined);
+    if((a._comps || a.marketMid) && !staleShape) return;
     if(autoFetchedRef.current) return;
     if(!a.make) return;                 // wait until decode has populated the vehicle
     // Odometer is not optional: pricing a car without knowing its kilometres
