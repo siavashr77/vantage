@@ -2428,12 +2428,15 @@ function AppraisalForm({initial,onSave,onBack,showToast,onConvert,onFinalize,onU
           it's the evidence you check before deciding what to pay. */}
       {!sub&&(
         <button onClick={()=>{setSub('market');window.scrollTo(0,0);}}
-          style={{width:'100%',display:'flex',alignItems:'center',gap:12,padding:'15px 16px',marginBottom:12,background:'#fff',border:`1px solid ${C.border}`,borderRadius:10,cursor:'pointer',fontFamily:'inherit',textAlign:'left'}}>
-          <span style={{fontSize:14,fontWeight:700,color:C.navy}}>Comparables</span>
-          <span style={{fontSize:12.5,color:C.textLight,marginLeft:'auto',whiteSpace:'nowrap',overflow:'hidden',textOverflow:'ellipsis',minWidth:0}}>
-            {a.marketMid?`${(a._comps||[]).length||a.activeComps||0} listings · ${fmt(a.marketMid)} mid`:(ml?'Loading…':'Not loaded')}
-          </span>
-          <ChevronRight size={16} color={C.textLight} style={{flexShrink:0}}/>
+          style={{width:'100%',display:'flex',alignItems:'center',gap:14,padding:'18px 18px',marginBottom:14,background:C.teal,border:'none',borderRadius:12,cursor:'pointer',fontFamily:'inherit',textAlign:'left',boxShadow:'0 4px 14px rgba(0,180,166,0.28)'}}>
+          <BarChart2 size={22} color="#fff" style={{flexShrink:0}}/>
+          <div style={{flex:1,minWidth:0}}>
+            <div style={{fontSize:16,fontWeight:800,color:'#fff',letterSpacing:-0.2}}>Comparables</div>
+            <div style={{fontSize:13,color:'rgba(255,255,255,0.85)',marginTop:2,whiteSpace:'nowrap',overflow:'hidden',textOverflow:'ellipsis'}}>
+              {a.marketMid?`${(a._comps||[]).length||a.activeComps||0} listings · ${fmt(a.marketMid)} mid`:(ml?'Loading…':'Not loaded yet')}
+            </div>
+          </div>
+          <ChevronRight size={20} color="#fff" style={{flexShrink:0,opacity:0.9}}/>
         </button>
       )}
 
