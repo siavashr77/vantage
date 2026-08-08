@@ -811,6 +811,9 @@ function CompSet({ comps, myPrice, myKm, myDays }) {
                     mode==='sold'?(ago!=null?`sold ${ago}d ago`:null):(c.days?`${c.days} days listed`:null),
                     c.dealer,
                    ].filter(Boolean).join(' · ')}
+                  {Number.isFinite(c.priceChangePct)&&c.priceChangePct<0&&(
+                    <span style={{color:C.orange}}>{` · cut ${Math.abs(c.priceChangePct)}%`}</span>
+                  )}
                 </div>
                 {openRow===(c.id||i)&&(
                   <div style={{marginTop:8,paddingTop:8,borderTop:`1px solid ${C.border}`,fontSize:12,color:C.textMid,lineHeight:1.7}}>
@@ -2660,6 +2663,20 @@ function AppraisalForm({initial,onSave,onBack,showToast,onConvert,onFinalize,onU
                       Thin data — treat as directional.
                     </div>
                   )}
+                  {/* Widespread discounting means asking prices are ahead of what
+                      buyers will pay, so the band above reads high. */}
+                  {(()=>{
+                    const cs=(a._comps||[]).filter(c=>Number.isFinite(c.priceChangePct)&&c.priceChangePct<0);
+                    if(!cs.length||!n) return null;
+                    const share=Math.round((cs.length/n)*100);
+                    const avg=Math.round(cs.reduce((t,c)=>t+Math.abs(c.priceChangePct),0)/cs.length*10)/10;
+                    if(share<25) return null;
+                    return (
+                      <div style={{fontSize:12.5,color:C.orange,marginTop:8,lineHeight:1.5}}>
+                        {cs.length} of {n} have cut their price, averaging {avg}% — asks are running ahead of the market, so treat this range as optimistic.
+                      </div>
+                    );
+                  })()}
                   {a._marketMeta?.trimMixed&&(
                     <div style={{fontSize:12.5,color:C.orange,marginTop:6,lineHeight:1.5}}>
                       Includes other trims — only {a._marketMeta.trimMatchCount??0} matched {a._marketMeta.subjectTrim||'this trim'}.

@@ -413,11 +413,27 @@ app.post('/api/appraise', strictLimiter, async (req, res) => {
   const comps = Array.isArray(m.comps) ? m.comps.slice(0, 25) : []
   if (!comps.length) return res.status(400).json({ error: 'No comparable listings to appraise against.' })
 
+  // Market-wide repricing signal. One dealer cutting is noise; most of the
+  // market cutting means asking prices are ahead of what buyers will pay, and a
+  // valuation built on today's asks will be too high.
+  const repriced = comps.filter(c => Number.isFinite(c.priceChangePct) && c.priceChangePct !== 0)
+  const cut = repriced.filter(c => c.priceChangePct < 0)
+  const cutShare = comps.length ? Math.round((cut.length / comps.length) * 100) : 0
+  const avgCut = cut.length
+    ? Math.round(cut.reduce((t, c) => t + Math.abs(c.priceChangePct), 0) / cut.length * 10) / 10
+    : 0
+  const priceTrendLine = repriced.length
+    ? `${cut.length} of ${comps.length} comparables have CUT their asking price (${cutShare}% of the set), averaging ${avgCut}% off. ${repriced.length - cut.length} raised.`
+    : 'No comparables show a price change on record.'
+
   const compLines = comps.map(c =>
     `- ${c.year || ''} ${c.make || ''} ${c.model || ''} ${c.trim || ''} | ${
       Number.isFinite(c.mileage) ? c.mileage.toLocaleString('en-CA') + ' km' : 'km n/a'} | $${
       Number.isFinite(c.price) ? c.price.toLocaleString('en-CA') : '?'}${
-      c.daysListed != null ? ` | ${c.daysListed}d listed` : ''}${c.certified ? ' | certified' : ''}`
+      c.daysListed != null ? ` | ${c.daysListed}d listed` : ''}${c.certified ? ' | certified' : ''}${
+      Number.isFinite(c.priceChangePct) && c.priceChangePct !== 0
+        ? ` | repriced ${c.priceChangePct > 0 ? '+' : ''}${c.priceChangePct}%${c.prevPrice ? ` from $${Number(c.prevPrice).toLocaleString('en-CA')}` : ''}`
+        : ''}`
   ).join('\n')
 
   const prompt = `You are appraising a used vehicle for a Canadian dealership that will BUY it and resell it.
@@ -430,6 +446,9 @@ ${v.condition ? `Condition noted: ${v.condition}` : ''}${v.accident ? `\nAcciden
 LIVE COMPARABLE LISTINGS (active retail asking prices, same market, pulled just now)
 ${compLines}
 
+PRICE MOVEMENT
+${priceTrendLine}
+
 MARKET SUMMARY
 Retail asking band: low $${m.marketLow || '?'} / mid $${m.marketMid || '?'} / high $${m.marketHigh || '?'}
 Comps used: ${m.count || comps.length}${m.medianCompMileage ? ` | median comp odometer: ${Number(m.medianCompMileage).toLocaleString('en-CA')} km` : ''}${m.medianDaysListed ? ` | median days listed: ${m.medianDaysListed}` : ''}
@@ -437,7 +456,14 @@ Comps used: ${m.count || comps.length}${m.medianCompMileage ? ` | median comp od
 TASK
 Work only from the listings above — do not use remembered prices. Reason about how the
 subject's odometer compares to the comps, how quickly this segment is moving, and any
-condition or accident disclosure. Then give:
+condition or accident disclosure.
+
+Weigh the price movement carefully. Asking prices are what sellers WANT, not what buyers
+pay. If a large share of the set has cut prices, the asks are ahead of the market and the
+band above overstates real value — price the buy number accordingly and say so plainly in
+your reasoning. If prices are steady or rising, the band is trustworthy.
+
+Then give:
   retail — what this vehicle realistically RETAILS for here
   buy — the maximum the dealer should PAY, leaving normal recon and margin
   reasoning — 2-4 sentences a manager can read and act on, in plain language
@@ -920,6 +946,10 @@ async function fetchListingsMarketCheck({ vin, specId, match, status, postal, ra
       listing_price: l.price,
       listing_mileage: l.miles,        // CONFIRMED km on CA listings — no conversion
       days_seen: l.dom_active ?? l.dom,
+      // Price history: ref_price is the previous asking price, so a listing that
+      // has been cut tells us the seller isn't getting takers at the old number.
+      ref_price: l.ref_price ?? null,
+      price_change_percent: l.price_change_percent ?? null,
       certified_flag: l.is_certified === 1 || l.is_certified === true,
       listing_status: isSold ? 'dropped' : 'active',
       listing_drop_date: l.last_seen_at_date || '',
@@ -1047,6 +1077,9 @@ function mapComp(l) {
     mileage: Number(l.listing_mileage) || null,
     days: Number(l.days_seen) || null,
     certified: !!l.certified_flag,
+    // Previous asking price and the % move, when the listing has been repriced.
+    prevPrice: Number.isFinite(Number(l.ref_price)) ? Number(l.ref_price) : null,
+    priceChangePct: Number.isFinite(Number(l.price_change_percent)) ? Number(l.price_change_percent) : null,
     status: l.listing_status || '',
     dropDate: l.listing_drop_date || l.date_max || '',
     dealer: l.name || 'Dealer',
