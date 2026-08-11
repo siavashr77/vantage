@@ -1047,7 +1047,12 @@ async function fetchListingsMarketCheck({ vin, specId, match, status, postal, ra
       id: l.id,
       vin: l.vin || '',
       listing_price: l.price,
-      listing_mileage: l.miles,        // CONFIRMED km on CA listings — no conversion
+      // MarketCheck normalises odometers to MILES, including on Canadian
+      // listings. Verified against source: a Q5 the dealer advertises at
+      // 132,000 km comes back as miles: 82020 (132000 * 0.621371 = 82021).
+      // Canada runs on kilometres, so convert — leaving it raw understated
+      // every comparable by ~1.61x and skewed the mileage adjustment.
+      listing_mileage: Number.isFinite(Number(l.miles)) ? Math.round(Number(l.miles) * 1.609344) : null,
       days_seen: l.dom_active ?? l.dom,
       // Price history: ref_price is the previous asking price, so a listing that
       // has been cut tells us the seller isn't getting takers at the old number.
