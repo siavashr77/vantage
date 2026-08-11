@@ -2041,6 +2041,12 @@ function AppraisalForm({initial,onSave,onBack,showToast,onConvert,onFinalize,onU
   // Reset AI guard when the appraiser switches vehicle.
   useEffect(()=>{ aiRef.current=null; },[a.id]);
 
+  // Declared here because the AI effect below reads it in its dependency array,
+  // and dependency arrays evaluate during render — a const declared further down
+  // would be in the temporal dead zone and throw before the page could paint.
+  const marketStale = !!a.marketMid && a._marketTrim!==undefined &&
+    ((a.series||'')!==(a._marketTrim||'') || (a.drivetrain||'')!==(a._marketDrive||''));
+
   // ── AI appraisal ────────────────────────────────────────────────
   // Runs once market data lands. Claude sees the real comps we just pulled and
   // writes the number plus the reasoning behind it.
@@ -2105,8 +2111,6 @@ function AppraisalForm({initial,onSave,onBack,showToast,onConvert,onFinalize,onU
   // it immediately, then re-run the lookup after a short debounce so toggling
   // through the picker doesn't fire a request per keystroke.
   const mktRefreshRef=useRef(null);
-  const marketStale = !!a.marketMid && a._marketTrim!==undefined &&
-    ((a.series||'')!==(a._marketTrim||'') || (a.drivetrain||'')!==(a._marketDrive||''));
   useEffect(()=>{
     if(locked) return;
     if(!marketStale) return;
