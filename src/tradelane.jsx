@@ -51,13 +51,14 @@ function LogoMark({ size = 32, light }) {
 }
 
 function Logo({ light, height = 34 }) {
-  // The real wordmark: lowercase "tradelane" between two yellow rules. Drawn as
-  // SVG rather than an image file so it stays crisp at any size and can invert
-  // on a dark background without a second asset.
+  // The wordmark: lowercase "tradelane" between two rules. The viewBox is
+  // cropped tight to the artwork — the original screengrab carried ~40% empty
+  // padding, so setting a larger height just scaled up whitespace and the mark
+  // itself never appeared to grow.
   const word = light ? '#FFFFFF' : C.navy
   const rule = light ? '#FFD34D' : C.teal
   return (
-    <svg height={height} viewBox="0 0 543 176" role="img" aria-label="tradelane"
+    <svg height={height} viewBox="55 12 433 153" role="img" aria-label="tradelane"
          style={{ display: 'block' }} xmlns="http://www.w3.org/2000/svg">
       <title>tradelane</title>
       <rect x="60" y="18" width="423" height="13" rx="2" fill={rule} />
