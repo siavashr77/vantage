@@ -390,13 +390,14 @@ async function decodeVIN(vin) {
     } catch { /* best-effort */ }
   }
   if (!out.year && !out.make && !out.model) throw new Error('VIN not found')
-  // Parse candidate trims for a picker when the VIN is ambiguous.
+  // NHTSA's Trim and Series fields are unreliable as trim levels — they carry
+  // body classes ("Wagon Body Style") and generic codes ("F-Series"), which then
+  // get sent to the comp search, match nothing, and silently widen the set to
+  // every version of the model. They're kept only as picker suggestions; the
+  // authoritative trim comes from NeoVIN below.
   const trimOptions = parseTrimOptions(out._rawTrim, out._rawSeries)
   out.trimOptions = trimOptions
-  // If exactly one clean trim, prefill it; if several, leave series blank so the
-  // user picks. If the existing series is a messy multi-trim string, clear it.
-  if (trimOptions.length === 1) out.series = trimOptions[0]
-  else if (trimOptions.length > 1 && (out.series || '').includes(',')) out.series = ''
+  out.series = ''
   delete out._rawTrim; delete out._rawSeries
 
   // ── Upgrade with server-side data ──────────────────────────────
@@ -423,8 +424,7 @@ async function decodeVIN(vin) {
       // NeoVIN's trim is authoritative — it's a real trim level, where NHTSA
       // may have supplied a body description. Overwrite unless the user has
       // already chosen something themselves.
-      const bodyish = /\b(body style|body type|sport utility|utility vehicle|passenger car|wagon)\b/i;
-      if (neo.series && (!out.series || bodyish.test(out.series))) out.series = neo.series
+      if (neo.series) out.series = neo.series
       // Fill any gaps NHTSA left.
       if (neo.engine && !out.engine) out.engine = neo.engine
       if (neo.transmission && !out.transmission) out.transmission = neo.transmission

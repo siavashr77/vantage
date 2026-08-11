@@ -823,6 +823,8 @@ function fsaToPoint(postal) {
 // NeoVIN toggle. Default ON for best accuracy (confirmed trim/drivetrain →
 // tightest comps). Set USE_NEOVIN=false to run decode-free (pure NHTSA YMMT) —
 // useful for conserving free-tier calls during testing.
+// Bump to retire decodes captured under older, buggier parsing.
+const DECODE_VERSION = 2
 const USE_NEOVIN = (process.env.USE_NEOVIN || 'true').toLowerCase() !== 'false'
 
 // ── VIN DECODE (NeoVIN-first, cached, with NHTSA fallback) ──────────
@@ -851,6 +853,7 @@ async function decodeVinNHTSA(vin) {
       trim: v.Trim || v.Series || '',
       drivetrain,
       source: 'nhtsa',
+      v: DECODE_VERSION,
     }
   } catch { return null }
 }
@@ -883,7 +886,11 @@ async function decodeVinRich(vin) {
   if (pool) {
     try {
       const r = await pool.query('SELECT decoded FROM vin_decode_cache WHERE vin=$1', [V])
-      if (r.rows[0] && r.rows[0].decoded && r.rows[0].decoded.trim !== undefined) return r.rows[0].decoded
+      const hit = r.rows[0] && r.rows[0].decoded
+      // Decodes captured while NeoVIN's generic fallback was being misparsed are
+      // wrong and would be served forever, so anything without the current
+      // version stamp is re-decoded.
+      if (hit && hit.v === DECODE_VERSION && hit.trim !== undefined) return hit
     } catch {}
   }
   try {
@@ -909,6 +916,7 @@ async function decodeVinRich(vin) {
       powertrain: v.powertrain_type || '',
       fuelType: v.fuel_type || '',
       source: 'neovin',
+      v: DECODE_VERSION,
     }
     if (pool) {
       try {
@@ -965,6 +973,7 @@ async function decodeVinNeoVIN(vin) {
       drivetrain: dt || '',
       powertrain: v.powertrain_type || '',
       source: 'neovin',
+      v: DECODE_VERSION,
     }
   } catch { return null }
 }
@@ -976,7 +985,8 @@ async function decodeVinCached(vin) {
   if (pool) {
     try {
       const r = await pool.query('SELECT decoded FROM vin_decode_cache WHERE vin=$1', [V])
-      if (r.rows[0]) return r.rows[0].decoded
+      const hit = r.rows[0] && r.rows[0].decoded
+      if (hit && hit.v === DECODE_VERSION) return hit
     } catch (e) { console.error('vin cache read:', e.message) }
   }
   // 2. NeoVIN (best) if enabled, else 3. NHTSA (free floor).
