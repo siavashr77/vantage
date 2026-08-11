@@ -1215,7 +1215,10 @@ function buildComps(listings, limit = null) {
       seen.add(k); return true
     })
     .map(mapComp)
-    .filter(c => c.price && c.price >= 1000)
+    // A listing with no odometer can't be compared on the thing that drives
+    // used value most. It would still pull the price band around while telling
+    // us nothing about why it's priced where it is, so it's dropped outright.
+    .filter(c => c.price && c.price >= 1000 && Number.isFinite(c.mileage) && c.mileage > 0)
     .sort((a, b) => a.price - b.price)
   return limit ? out.slice(0, limit) : out
 }
