@@ -1489,6 +1489,7 @@ async function buildMarketResponse(active, dropped, ctx, res) {
         radius,
         historyDays,              // archived window actually used (60 unless widened)
         historyWidened,           // true if we reached past 60 days for more comps
+        shapeVersion: MARKET_SHAPE_VERSION,  // lets clients spot data from an older comp shape
         subjectListing,           // the appraised VIN found among active or sold listings
         staleDropped,             // listings excluded for sitting past STALE_DAYS
         staleFallback,            // true = too few fresh comps, stale ones kept
