@@ -4291,6 +4291,14 @@ export default function Vantage() {
       border-top: 1px solid rgba(0,0,0,0.08);
       z-index: 150;
       padding: 8px 0 env(safe-area-inset-bottom);
+      /* iOS repaints fixed elements out of step with momentum scrolling, so the
+         bar visibly drifts and settles as you scroll. Giving it its own
+         compositing layer means it's painted independently of the page. */
+      transform: translateZ(0);
+      -webkit-transform: translateZ(0);
+      will-change: transform;
+      -webkit-backface-visibility: hidden;
+      backface-visibility: hidden;
     }
     @media (max-width: 768px) {
       .mobile-bottom-nav { display: flex !important; }
