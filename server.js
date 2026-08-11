@@ -1931,6 +1931,10 @@ app.post('/api/leads', strictLimiter, async (req, res) => {
         confidence,
         thinMarket,
         submittedAt: new Date().toLocaleString('en-CA', { timeZone: 'America/Toronto' }),
+        // A few photos, not all of them: the customer may send twelve, and
+        // Gmail caps attachments at 25MB. Four is enough to judge condition
+        // from a phone, and the rest are waiting in the lead itself.
+        photos: photos.slice(0, 4),
       }
       fetch(LEAD_WEBHOOK_URL, {
         method: 'POST',
