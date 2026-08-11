@@ -77,14 +77,10 @@ function Header() {
       background: '#fff', borderBottom: `1px solid ${C.border}`,
     }}>
       <div style={{
-        maxWidth: 1120, margin: '0 auto', padding: '18px 28px',
-        display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 20,
+        maxWidth: 1120, margin: '0 auto', padding: '20px 28px',
+        display: 'flex', alignItems: 'center',
       }}>
-        <Logo height={44} />
-        <a href="tel:4165550100" style={{
-          fontSize: 14.5, fontWeight: 600, color: C.navy, textDecoration: 'none',
-          whiteSpace: 'nowrap',
-        }}>416-555-0100</a>
+        <Logo height={62} />
       </div>
     </header>
   )
@@ -144,7 +140,7 @@ function Hero() {
             fontSize: 13.5, color: 'rgba(255,255,255,0.55)',
             borderTop: '1px solid rgba(255,255,255,0.14)', paddingTop: 18,
           }}>
-            Takes about a minute · Free · OMVIC-registered dealer
+            Takes about a minute · Free · No obligation
           </div>
         </div>
 
