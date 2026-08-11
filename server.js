@@ -794,6 +794,9 @@ function marketDaySupply(activeCount, soldInWindow, windowDays = 45) {
 // logic (dedup, filtering, stats, MDS) work unchanged regardless of provider.
 const MARKET_PROVIDER = (process.env.MARKET_PROVIDER || 'marketcheck').toLowerCase()
 const MARKETCHECK_API_KEY = process.env.MARKETCHECK_API_KEY || ''
+// Google Apps Script web-app URL that emails the team when a lead arrives.
+// Unset = no notifications, everything else unaffected.
+const LEAD_WEBHOOK_URL = process.env.LEAD_WEBHOOK_URL || ''
 const MC_HOST = 'https://api.marketcheck.com/v2'
 
 // Minimal FSA→lat/long resolver. MarketCheck searches by lat/long + radius; the
@@ -1911,6 +1914,29 @@ app.post('/api/leads', strictLimiter, async (req, res) => {
         )
         leadId = ins.rows[0]?.id || null
       } catch (e) { console.error('lead insert error:', e.message) }
+    }
+
+    // Notify the team. A trade-in lead is only worth what it's worth if someone
+    // calls quickly, and nobody watches a dashboard all day. Fire-and-forget:
+    // the customer's offer must never wait on, or fail because of, an email.
+    if (LEAD_WEBHOOK_URL) {
+      const summary = {
+        leadId,
+        vehicle: [year, make, model, trim].filter(Boolean).join(' '),
+        vin,
+        odometer: mileage ? Number(mileage).toLocaleString('en-CA') + ' km' : '',
+        customerName, customerEmail, customerPhone,
+        postal,
+        offer: market && market.mid ? market.mid : null,
+        confidence,
+        thinMarket,
+        submittedAt: new Date().toLocaleString('en-CA', { timeZone: 'America/Toronto' }),
+      }
+      fetch(LEAD_WEBHOOK_URL, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(summary),
+      }).catch(e => console.error('lead notify failed:', e.message))
     }
 
     // Withhold the number when EITHER gate trips; give the customer the reason.
