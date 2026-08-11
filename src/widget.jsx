@@ -15,7 +15,7 @@ const API_BASE = (import.meta.env.VITE_API_URL || 'http://localhost:3001').repla
 const DEALER = new URLSearchParams(location.search).get('dealer') || 'default'
 
 // Palette — mirrors Vantage so the widget feels on-brand.
-const C = {
+const BASE_C = {
   navy:'#1C2D5E', navyLight:'#2B3F80', navyMuted:'rgba(28,45,94,0.06)',
   teal:'#00B4A6', tealLight:'#00C8B8', tealMuted:'rgba(0,180,166,0.10)',
   card:'#FFFFFF', textDark:'#1C2D5E', textMid:'#4A5568', textLight:'#8C95A0',
@@ -102,7 +102,11 @@ const DEFAULT_BRANDING = {
   footer: 'Powered by Vantage',
 }
 
-function Widget({ branding } = {}) {
+function Widget({ branding, theme } = {}) {
+  // TradeLane supplies its own brand colours; Vantage and the standalone embed
+  // use the defaults. Merging rather than replacing means a host only has to
+  // name the colours it actually wants to change.
+  const C = theme ? { ...BASE_C, ...theme } : BASE_C
   const B = { ...DEFAULT_BRANDING, ...(branding || {}) }
   const [step, setStep] = useState('vehicle')     // vehicle → details → contact → result
   // ── Mobile focus mode ──────────────────────────────────────────────
@@ -325,7 +329,14 @@ function Widget({ branding } = {}) {
   const card = { background: C.card, borderRadius: 16, padding: 24, boxShadow: '0 4px 24px rgba(28,45,94,0.10)', border: `1px solid ${C.border}` }
   const label = { display: 'block', fontSize: 13, fontWeight: 600, color: C.textMid, marginBottom: 6 }
   const input = { width: '100%', padding: '12px 14px', fontSize: 15, border: `1px solid ${C.borderStr}`, borderRadius: 10, outline: 'none', fontFamily: 'inherit', color: C.textDark }
-  const btn = { width: '100%', padding: '14px 16px', fontSize: 16, fontWeight: 700, background: C.teal, color: '#fff', border: 'none', borderRadius: 10, cursor: 'pointer' }
+  const onAccent = (() => {
+    const hex = String(C.teal || '').replace('#', '')
+    if (hex.length !== 6) return '#fff'
+    const [r, g, b] = [0, 2, 4].map(i => parseInt(hex.slice(i, i + 2), 16))
+    // Relative luminance — a light accent needs dark text, not white.
+    return (0.299 * r + 0.587 * g + 0.114 * b) > 150 ? (C.navyDeep || C.navy || '#111') : '#fff'
+  })()
+  const btn = { width: '100%', padding: '14px 16px', fontSize: 16, fontWeight: 700, background: C.teal, color: onAccent, border: 'none', borderRadius: 10, cursor: 'pointer' }
   const btnGhost = { ...btn, background: '#fff', color: C.navy, border: `1.5px solid ${C.borderStr}` }
   const errBox = error ? <div style={{ background: C.redBg || 'rgba(197,48,48,0.08)', color: C.red, padding: '10px 12px', borderRadius: 8, fontSize: 13, marginTop: 12 }}>{error}</div> : null
 

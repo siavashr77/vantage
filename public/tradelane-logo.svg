@@ -1,0 +1,10 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 543 176" role="img" aria-label="tradelane">
+  <title>tradelane</title>
+  <!-- Rules above and below the wordmark, as in the original. -->
+  <rect x="60" y="18" width="423" height="13" rx="2" fill="#F6BD0D"/>
+  <rect x="60" y="146" width="423" height="13" rx="2" fill="#F6BD0D"/>
+  <text x="271.5" y="112"
+        font-family="Poppins, 'Segoe UI', Helvetica, Arial, sans-serif"
+        font-size="86" font-weight="700" letter-spacing="-1.5"
+        fill="#044A7E" text-anchor="middle">tradelane</text>
+</svg>

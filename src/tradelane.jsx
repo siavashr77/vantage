@@ -8,14 +8,18 @@ import { Widget } from './widget.jsx'
 // Leads inbox via the shared backend. Reuses the existing <Widget /> quote
 // engine (VIN decode, condition, photos, instant offer) wrapped in a marketing
 // page. Trust-first, "let's figure it out together" positioning — not an
-// instant-offer gimmick. Brand palette mirrors Vantage (navy/teal).
+// TradeLane brand palette, sampled from the logo: a deep marine blue with a
+// warm yellow. The key names are kept as navy/teal so the shared quote widget
+// picks the brand up without a rewrite — only the values changed.
 
 const C = {
-  navy: '#1C2D5E', navyLight: '#2B3F80', navyDeep: '#16244C',
-  navyMuted: 'rgba(28,45,94,0.06)',
-  teal: '#00B4A6', tealLight: '#00C8B8', tealMuted: 'rgba(0,180,166,0.10)',
-  card: '#FFFFFF', textDark: '#1C2D5E', textMid: '#4A5568', textLight: '#8C95A0',
-  bg: '#F7F9FC', border: 'rgba(0,0,0,0.10)',
+  navy: '#044A7E', navyLight: '#0A5F9E', navyDeep: '#023656',
+  navyMuted: 'rgba(4,74,126,0.06)',
+  // The yellow is the accent — used sparingly on calls to action and rules,
+  // where it does the same job as the bars above and below the wordmark.
+  teal: '#F6BD0D', tealLight: '#FFD34D', tealMuted: 'rgba(246,189,13,0.12)',
+  card: '#FFFFFF', textDark: '#04304F', textMid: '#4A5568', textLight: '#8C95A0',
+  bg: '#F6F9FC', border: 'rgba(0,0,0,0.10)',
 }
 
 const FONT = "'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif"
@@ -46,15 +50,21 @@ function LogoMark({ size = 32, light }) {
   )
 }
 
-function Logo({ light }) {
-  const main = light ? '#fff' : C.navy
+function Logo({ light, height = 34 }) {
+  // The real wordmark: lowercase "tradelane" between two yellow rules. Drawn as
+  // SVG rather than an image file so it stays crisp at any size and can invert
+  // on a dark background without a second asset.
+  const word = light ? '#FFFFFF' : C.navy
+  const rule = light ? '#FFD34D' : C.teal
   return (
-    <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
-      <LogoMark size={32} light={light} />
-      <span style={{ fontWeight: 800, fontSize: 20, color: main, letterSpacing: -0.5 }}>
-        Trade<span style={{ color: C.teal }}>Lane</span>
-      </span>
-    </div>
+    <svg height={height} viewBox="0 0 543 176" role="img" aria-label="tradelane"
+         style={{ display: 'block' }} xmlns="http://www.w3.org/2000/svg">
+      <title>tradelane</title>
+      <rect x="60" y="18" width="423" height="13" rx="2" fill={rule} />
+      <rect x="60" y="146" width="423" height="13" rx="2" fill={rule} />
+      <text x="271.5" y="112" fontFamily={FONT} fontSize="86" fontWeight="700"
+            letterSpacing="-1.5" fill={word} textAnchor="middle">tradelane</text>
+    </svg>
   )
 }
 
@@ -70,7 +80,7 @@ function Header() {
       }}>
         <Logo />
         <button onClick={scrollToQuote} style={{
-          background: C.teal, color: '#fff', border: 'none', borderRadius: 8,
+          background: C.teal, color: C.navyDeep, border: 'none', borderRadius: 8,
           padding: '9px 18px', fontSize: 14, fontWeight: 700, cursor: 'pointer', fontFamily: FONT,
         }}>Get my estimate</button>
       </div>
@@ -96,7 +106,7 @@ function Hero() {
         {/* Pitch — deliberately short. One promise, three reassurances. */}
         <div style={{ flex: '1 1 380px', maxWidth: 520, textAlign: 'left' }}>
           <div style={{
-            display: 'inline-block', background: 'rgba(0,180,166,0.18)', color: C.tealLight,
+            display: 'inline-block', background: 'rgba(246,189,13,0.22)', color: C.tealLight,
             borderRadius: 20, padding: '6px 14px', fontSize: 13, fontWeight: 600, marginBottom: 18,
           }}>Sell your car the easy way</div>
           <h1 style={{
@@ -129,7 +139,9 @@ function Hero() {
             background: C.bg, borderRadius: 16, boxShadow: '0 18px 50px rgba(0,0,0,0.28)',
             padding: '4px 4px 0',
           }}>
-            <Widget branding={{
+            <Widget theme={{ navy: C.navy, navyLight: C.navyLight, navyDeep: C.navyDeep,
+                             navyMuted: C.navyMuted, teal: C.teal, tealLight: C.tealLight,
+                             tealMuted: C.tealMuted, textDark: C.textDark }} branding={{
               title: 'Get your estimate',
               subtitle: 'Start with your VIN — or pick your car.',
               footer: '',
@@ -193,9 +205,9 @@ function QuoteSection() {
           A few quick questions. Only your name and a way to reach you are required.
         </p>
         <button onClick={scrollToQuote} style={{
-          background: C.teal, color: '#fff', border: 'none', borderRadius: 10,
+          background: C.teal, color: C.navyDeep, border: 'none', borderRadius: 10,
           padding: '15px 34px', fontSize: 17, fontWeight: 700, cursor: 'pointer',
-          fontFamily: FONT, boxShadow: '0 8px 24px rgba(0,180,166,0.28)',
+          fontFamily: FONT, boxShadow: '0 8px 24px rgba(246,189,13,0.35)',
         }}>Get my estimate →</button>
       </div>
     </section>
@@ -255,7 +267,7 @@ function FinalCta() {
         Get your free estimate in about a minute. No obligation.
       </p>
       <button onClick={scrollToQuote} style={{
-        background: C.teal, color: '#fff', border: 'none', borderRadius: 10,
+        background: C.teal, color: C.navyDeep, border: 'none', borderRadius: 10,
         padding: '15px 34px', fontSize: 17, fontWeight: 700, cursor: 'pointer', fontFamily: FONT,
       }}>Get my estimate →</button>
     </section>
