@@ -216,7 +216,7 @@ const DEFAULT_DEALER = {name:'Your Dealership',logo:null,address:'123 Main Stree
 // Backend base URL. In production set VITE_API_URL (e.g. your Railway URL,
 // no trailing slash) in Netlify env vars. Falls back to local dev server.
 // Bump alongside MARKET_SHAPE_VERSION in server.js when the comp object changes.
-const MARKET_SHAPE = 'v6-require-km';
+const MARKET_SHAPE = 'v7-powertrain';
 const API_BASE = (import.meta.env.VITE_API_URL || 'http://localhost:3001').replace(/\/$/, '');
 // Shared secret for private (team) API endpoints — set VITE_TEAM_KEY in Netlify
 // to match the backend's TEAM_API_KEY. Sent as x-vantage-key on team calls.
@@ -263,6 +263,11 @@ function parseTrimOptions(rawTrim, rawSeries) {
     base = base.split(/\s+-\s+/)[0]
     base = base.trim()
     if (!base) continue
+    // NHTSA sometimes puts a body description in the Trim field ("Wagon Body
+    // Style", "Sport Utility Vehicle"). Offering that as a trim is worse than
+    // offering nothing: it gets sent to the comp search, matches no listing,
+    // and the whole set silently widens to every version of the model.
+    if (/\b(body style|body type|sport utility|utility vehicle|passenger car|wagon body|pickup body)\b/i.test(base)) continue
     const key = base.toLowerCase()
     if (!seen.has(key) && base.length <= 16) { seen.add(key); opts.push(base) }
   }
@@ -415,7 +420,11 @@ async function decodeVIN(vin) {
     }
     if (neo) {
       // NeoVIN's confirmed trim wins when we don't already have a clean one.
-      if (neo.series && !out.series) out.series = neo.series
+      // NeoVIN's trim is authoritative — it's a real trim level, where NHTSA
+      // may have supplied a body description. Overwrite unless the user has
+      // already chosen something themselves.
+      const bodyish = /\b(body style|body type|sport utility|utility vehicle|passenger car|wagon)\b/i;
+      if (neo.series && (!out.series || bodyish.test(out.series))) out.series = neo.series
       // Fill any gaps NHTSA left.
       if (neo.engine && !out.engine) out.engine = neo.engine
       if (neo.transmission && !out.transmission) out.transmission = neo.transmission

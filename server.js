@@ -855,6 +855,26 @@ async function decodeVinNHTSA(vin) {
   } catch { return null }
 }
 
+// NeoVIN returns its answer at the top level when it has history for the VIN,
+// and under data.generic[].<COUNTRY>[] when it doesn't ("NO HISTORY FOUND").
+// Reading only the top level meant those VINs looked like decode failures and
+// silently fell back to NHTSA — which supplies a body class where the trim
+// should be, so a Tucson Plug-In Hybrid Ultimate came through as "Wagon Body
+// Style" and matched nothing.
+function neovinCore(payload) {
+  const d = payload && (payload.data || payload)
+  if (!d) return null
+  if (d.trim || d.model) return d
+  const generic = Array.isArray(d.generic) ? d.generic : []
+  for (const entry of generic) {
+    for (const country of ['CA', 'US']) {
+      const arr = entry && entry[country]
+      if (Array.isArray(arr) && arr.length && (arr[0].trim || arr[0].model)) return arr[0]
+    }
+  }
+  return null
+}
+
 // Full NeoVIN field set for the appraisal form (cached alongside the search
 // decode — same Postgres row, so still one paid decode per VIN ever).
 async function decodeVinRich(vin) {
@@ -871,7 +891,7 @@ async function decodeVinRich(vin) {
     const r = await fetch(url)
     if (!r.ok) return null
     const d = await r.json()
-    const v = d && (d.data || d)
+    const v = neovinCore(d)
     if (!v || !v.make) return null
     const out = {
       year: v.year || '', make: v.make || '', model: v.model || '',
@@ -884,6 +904,10 @@ async function decodeVinRich(vin) {
       extColour: (v.exterior_color && v.exterior_color.name) || '',
       intColour: (v.interior_color && v.interior_color.name) || '',
       msrp: v.msrp || null,
+      // A PHEV and a gas car of the same trim are different markets entirely,
+      // so this has to reach the comp search.
+      powertrain: v.powertrain_type || '',
+      fuelType: v.fuel_type || '',
       source: 'neovin',
     }
     if (pool) {
@@ -925,8 +949,7 @@ async function decodeVinNeoVIN(vin) {
     const r = await fetch(url)
     if (!r.ok) return null
     const d = await r.json()
-    // NeoVIN returns either a flat object or { data: {...} } depending on host.
-    const v = d && (d.data || d)
+    const v = neovinCore(d)
     if (!v || !v.make || !v.model) return null
     // Normalize drivetrain (NeoVIN gives e.g. "4WD","AWD","FWD","RWD").
     let dt = (v.drivetrain || '').toUpperCase()
@@ -940,6 +963,7 @@ async function decodeVinNeoVIN(vin) {
       model: v.model || '',
       trim: v.trim || '',
       drivetrain: dt || '',
+      powertrain: v.powertrain_type || '',
       source: 'neovin',
     }
   } catch { return null }
@@ -1020,6 +1044,14 @@ async function fetchListingsMarketCheck({ vin, specId, match, status, postal, ra
         // Trim: prefer caller-supplied (frontend decode) else NeoVIN's.
         const trim = (callerTrim || dec.trim || '').trim()
         if (trim) params.set('trim', trim)
+        // Powertrain is not a trim level but it separates markets just as hard:
+        // a Tucson Plug-In Hybrid Ultimate and a gas Ultimate are different cars
+        // at different money. Without this the comp set mixes them and the mid
+        // lands between two markets, describing neither.
+        const pt = (dec.powertrain || '').toUpperCase()
+        if (pt === 'PHEV') params.set('fuel_type', 'PHEV')
+        else if (pt === 'HEV') params.set('fuel_type', 'Hybrid')
+        else if (pt === 'BEV' || pt === 'EV') params.set('fuel_type', 'Electric')
         // NOTE: we deliberately do NOT send drivetrain to MarketCheck. Decoder
         // and marketplace labels disagree (NeoVIN says "4WD" for a Subaru
         // Crosstrek the market lists as "AWD"), which silently returns ZERO
