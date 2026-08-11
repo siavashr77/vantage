@@ -107,6 +107,11 @@ function Widget({ branding, theme } = {}) {
   // use the defaults. Merging rather than replacing means a host only has to
   // name the colours it actually wants to change.
   const C = theme ? { ...BASE_C, ...theme } : BASE_C
+  // Selected states (toggles, chips, hint panels) read better in the primary
+  // colour when the accent is a bright yellow — reserving the accent for the
+  // single primary action is what keeps it feeling deliberate.
+  const SEL = C.select || C.teal
+  const SELBG = C.selectMuted || C.tealMuted
   const B = { ...DEFAULT_BRANDING, ...(branding || {}) }
   const [step, setStep] = useState('vehicle')     // vehicle → details → contact → result
   // ── Mobile focus mode ──────────────────────────────────────────────
@@ -386,7 +391,7 @@ function Widget({ branding, theme } = {}) {
               {step !== 'result' && (
                 <div style={{ display: 'flex', gap: 5, marginTop: 10 }}>
                   {STEPS.map((sName, i) => (
-                    <div key={sName} style={{ flex: 1, height: 3, borderRadius: 2, background: i <= stepIdx ? C.teal : C.border }} />
+                    <div key={sName} style={{ flex: 1, height: 3, borderRadius: 2, background: i <= stepIdx ? SEL : C.border }} />
                   ))}
                 </div>
               )}
@@ -408,8 +413,8 @@ function Widget({ branding, theme } = {}) {
             <div>
               {/* Mode toggle */}
               <div style={{ display: 'flex', gap: 8, marginBottom: 16 }}>
-                <button onClick={() => setVinMode(true)} style={{ flex: 1, padding: '8px', fontSize: 13, fontWeight: 600, borderRadius: 8, cursor: 'pointer', border: `1px solid ${vinMode ? C.teal : C.border}`, background: vinMode ? C.tealMuted : '#fff', color: vinMode ? C.navy : C.textMid }}>Enter VIN</button>
-                <button onClick={() => setVinMode(false)} style={{ flex: 1, padding: '8px', fontSize: 13, fontWeight: 600, borderRadius: 8, cursor: 'pointer', border: `1px solid ${!vinMode ? C.teal : C.border}`, background: !vinMode ? C.tealMuted : '#fff', color: !vinMode ? C.navy : C.textMid }}>No VIN? Pick your car</button>
+                <button onClick={() => setVinMode(true)} style={{ flex: 1, padding: '8px', fontSize: 13, fontWeight: 600, borderRadius: 8, cursor: 'pointer', border: `1px solid ${vinMode ? SEL : C.border}`, background: vinMode ? SELBG : '#fff', color: vinMode ? C.navy : C.textMid }}>Enter VIN</button>
+                <button onClick={() => setVinMode(false)} style={{ flex: 1, padding: '8px', fontSize: 13, fontWeight: 600, borderRadius: 8, cursor: 'pointer', border: `1px solid ${!vinMode ? SEL : C.border}`, background: !vinMode ? SELBG : '#fff', color: !vinMode ? C.navy : C.textMid }}>No VIN? Pick your car</button>
               </div>
 
               {vinMode ? (
@@ -421,10 +426,10 @@ function Widget({ branding, theme } = {}) {
                           the single most error-prone step in this form. */}
                       <button
                         onClick={() => { setError(''); setScanning(true) }}
-                        style={{ ...btn, background: '#fff', color: C.navy, border: `1.5px solid ${C.teal}`, display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 10, marginBottom: 10 }}>
+                        style={{ ...btn, background: '#fff', color: C.navy, border: `1.5px solid ${SEL}`, display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 10, marginBottom: 10 }}>
                         <span style={{ fontSize: 18 }}>📷</span> Scan my VIN with the camera
                       </button>
-                      <div style={{ fontSize: 12, color: C.textMid, background: C.tealMuted, border: `1px solid ${C.teal}33`, borderRadius: 8, padding: '10px 12px', marginBottom: 14, lineHeight: 1.5 }}>
+                      <div style={{ fontSize: 12, color: C.textMid, background: SELBG, border: `1px solid ${SEL}33`, borderRadius: 8, padding: '10px 12px', marginBottom: 14, lineHeight: 1.5 }}>
                         Point your camera at the VIN — it reads the <strong>printed number</strong>,
                         so there's no barcode to find. Look on the driver's-side dashboard through
                         the windshield, the sticker in the driver's door jamb, or your insurance slip.
@@ -492,7 +497,7 @@ function Widget({ branding, theme } = {}) {
                   {fsaConfirmed ? (
                     <div style={{ fontSize: 13, color: C.textMid, display: 'flex', alignItems: 'center', gap: 6, justifyContent: 'center' }}>
                       <span>📍</span> Based on your area ({fsa})
-                      <button onClick={() => { setFsaConfirmed(false); setAskFsa(true) }} style={{ background: 'none', border: 'none', color: C.teal, fontSize: 12, cursor: 'pointer', textDecoration: 'underline' }}>change</button>
+                      <button onClick={() => { setFsaConfirmed(false); setAskFsa(true) }} style={{ background: 'none', border: 'none', color: SEL, fontSize: 12, cursor: 'pointer', textDecoration: 'underline' }}>change</button>
                     </div>
                   ) : locating ? (
                     <div style={{ fontSize: 13, color: C.textLight, textAlign: 'center' }}>Finding your local market…</div>
@@ -526,7 +531,7 @@ function Widget({ branding, theme } = {}) {
               <div style={{ marginTop: 16 }}>
                 <label style={label}>Has this vehicle been in an accident?</label>
                 <div style={{ display: 'flex', gap: 8 }}>
-                  <button onClick={() => setAccident(false)} style={{ flex: 1, padding: 12, borderRadius: 10, cursor: 'pointer', fontWeight: 600, border: `1.5px solid ${accident === false ? C.teal : C.border}`, background: accident === false ? C.tealMuted : '#fff', color: C.navy }}>No</button>
+                  <button onClick={() => setAccident(false)} style={{ flex: 1, padding: 12, borderRadius: 10, cursor: 'pointer', fontWeight: 600, border: `1.5px solid ${accident === false ? SEL : C.border}`, background: accident === false ? SELBG : '#fff', color: C.navy }}>No</button>
                   <button onClick={() => setAccident(true)} style={{ flex: 1, padding: 12, borderRadius: 10, cursor: 'pointer', fontWeight: 600, border: `1.5px solid ${accident === true ? C.orange : C.border}`, background: accident === true ? C.orangeBg : '#fff', color: C.navy }}>Yes</button>
                 </div>
               </div>
@@ -543,7 +548,7 @@ function Widget({ branding, theme } = {}) {
                 <label style={label}>How would you rate the overall condition?</label>
                 <div style={{ display: 'flex', gap: 6 }}>
                   {['Excellent', 'Good', 'Fair', 'Poor'].map(o => (
-                    <button key={o} onClick={() => setConditionOpinion(o)} style={{ flex: 1, padding: '10px 4px', borderRadius: 9, cursor: 'pointer', fontWeight: 600, fontSize: 13, border: `1.5px solid ${conditionOpinion === o ? C.teal : C.border}`, background: conditionOpinion === o ? C.tealMuted : '#fff', color: C.navy }}>{o}</button>
+                    <button key={o} onClick={() => setConditionOpinion(o)} style={{ flex: 1, padding: '10px 4px', borderRadius: 9, cursor: 'pointer', fontWeight: 600, fontSize: 13, border: `1.5px solid ${conditionOpinion === o ? SEL : C.border}`, background: conditionOpinion === o ? SELBG : '#fff', color: C.navy }}>{o}</button>
                   ))}
                 </div>
               </div>
@@ -577,7 +582,7 @@ function Widget({ branding, theme } = {}) {
                 <label style={label}>Do you own it, or is there a loan or lease?</label>
                 <div style={{ display: 'flex', gap: 6 }}>
                   {[['owned', 'Owned'], ['financed', 'Financed'], ['leased', 'Leased']].map(([v, l]) => (
-                    <button key={v} onClick={() => setOwnership(v)} style={{ flex: 1, padding: '10px 4px', borderRadius: 9, cursor: 'pointer', fontWeight: 600, fontSize: 13, border: `1.5px solid ${ownership === v ? C.teal : C.border}`, background: ownership === v ? C.tealMuted : '#fff', color: C.navy }}>{l}</button>
+                    <button key={v} onClick={() => setOwnership(v)} style={{ flex: 1, padding: '10px 4px', borderRadius: 9, cursor: 'pointer', fontWeight: 600, fontSize: 13, border: `1.5px solid ${ownership === v ? SEL : C.border}`, background: ownership === v ? SELBG : '#fff', color: C.navy }}>{l}</button>
                   ))}
                 </div>
               </div>

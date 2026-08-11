@@ -69,81 +69,96 @@ function Logo({ light, height = 34 }) {
 }
 
 function Header() {
+  // The header carries the brand and a phone number, not a call to action —
+  // the form is already on screen, so a "Get my estimate" button here just
+  // competes with it. The logo is given room to be read.
   return (
     <header style={{
-      position: 'sticky', top: 0, zIndex: 50, background: 'rgba(255,255,255,0.92)',
-      backdropFilter: 'blur(8px)', borderBottom: `1px solid ${C.border}`,
+      background: '#fff', borderBottom: `1px solid ${C.border}`,
     }}>
       <div style={{
-        maxWidth: 1080, margin: '0 auto', padding: '12px 20px',
-        display: 'flex', alignItems: 'center', justifyContent: 'space-between',
+        maxWidth: 1120, margin: '0 auto', padding: '18px 28px',
+        display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 20,
       }}>
-        <Logo />
-        <button onClick={scrollToQuote} style={{
-          background: C.teal, color: C.navyDeep, border: 'none', borderRadius: 8,
-          padding: '9px 18px', fontSize: 14, fontWeight: 700, cursor: 'pointer', fontFamily: FONT,
-        }}>Get my estimate</button>
+        <Logo height={44} />
+        <a href="tel:4165550100" style={{
+          fontSize: 14.5, fontWeight: 600, color: C.navy, textDecoration: 'none',
+          whiteSpace: 'nowrap',
+        }}>416-555-0100</a>
       </div>
     </header>
   )
 }
 
 function Hero() {
-  // Form-first. Visitors arriving here already want a number — making them
-  // scroll past marketing to reach the form adds friction exactly where it
-  // costs the most. The estimate form IS the hero; the persuasion content
-  // lives below for anyone who wants to read it before committing.
+  // Form-first, but the left column has to hold its own weight — a headline
+  // floating in a large empty field is what made this look unfinished. The
+  // pitch now carries three concrete points and the two columns align at the
+  // top, so they read as one composition rather than two stacked boxes.
   return (
     <section style={{
-      background: `linear-gradient(160deg, ${C.navy} 0%, ${C.navyDeep} 100%)`,
-      color: '#fff', padding: '40px 20px 48px',
+      background: `linear-gradient(157deg, ${C.navy} 0%, ${C.navyDeep} 100%)`,
+      color: '#fff', padding: '64px 28px 72px',
     }}>
       <div style={{
-        maxWidth: 1080, margin: '0 auto',
-        display: 'flex', flexWrap: 'wrap', gap: 40,
-        alignItems: 'center', justifyContent: 'center',
+        maxWidth: 1120, margin: '0 auto',
+        display: 'flex', flexWrap: 'wrap', gap: 56, alignItems: 'flex-start',
       }}>
-        {/* Pitch — deliberately short. One promise, three reassurances. */}
-        <div style={{ flex: '1 1 380px', maxWidth: 520, textAlign: 'left' }}>
-          <div style={{
-            display: 'inline-block', background: 'rgba(246,189,13,0.22)', color: C.tealLight,
-            borderRadius: 20, padding: '6px 14px', fontSize: 13, fontWeight: 600, marginBottom: 18,
-          }}>Sell your car the easy way</div>
+        <div style={{ flex: '1 1 420px', maxWidth: 520, paddingTop: 4 }}>
           <h1 style={{
-            fontSize: 'clamp(28px, 4.4vw, 42px)', fontWeight: 800, lineHeight: 1.12,
-            letterSpacing: -1, margin: '0 0 16px',
+            fontSize: 'clamp(34px, 4.6vw, 50px)', fontWeight: 800, lineHeight: 1.08,
+            letterSpacing: -1.4, margin: '0 0 20px',
           }}>
-            What's your car<br />
-            <span style={{ color: C.tealLight }}>actually worth?</span>
+            What's your car<br />actually worth?
           </h1>
           <p style={{
-            fontSize: 'clamp(15px, 2.2vw, 18px)', color: 'rgba(255,255,255,0.82)',
-            margin: '0 0 22px', lineHeight: 1.55, maxWidth: 460,
+            fontSize: 'clamp(16px, 2vw, 19px)', color: 'rgba(255,255,255,0.80)',
+            margin: '0 0 32px', lineHeight: 1.6, maxWidth: 460,
           }}>
-            A real estimate built from live market listings — not a lowball anchor.
-            Takes about a minute.
+            A real number built from cars actually listed near you — not a lowball
+            anchor designed to get you through the door.
           </p>
+
+          {/* Three concrete points. This is what fills the column honestly,
+              rather than padding it with whitespace. */}
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 18, marginBottom: 34 }}>
+            {[
+              ['Priced off live listings', 'We read what comparable cars are asking today, and what they actually sold for.'],
+              ['No obligation, no pressure', 'Take the number to another dealer if you like. We would rather be the honest quote.'],
+              ['A local team, not a call centre', 'You deal with the people who will buy the car.'],
+            ].map(([title, body]) => (
+              <div key={title} style={{ display: 'flex', gap: 14, alignItems: 'flex-start' }}>
+                <div style={{
+                  flexShrink: 0, width: 7, height: 7, borderRadius: 4,
+                  background: C.teal, marginTop: 8,
+                }} />
+                <div>
+                  <div style={{ fontSize: 15.5, fontWeight: 700, marginBottom: 3 }}>{title}</div>
+                  <div style={{ fontSize: 14.5, color: 'rgba(255,255,255,0.68)', lineHeight: 1.55 }}>{body}</div>
+                </div>
+              </div>
+            ))}
+          </div>
+
           <div style={{
-            fontSize: 13.5, color: 'rgba(255,255,255,0.6)',
-            display: 'flex', gap: 18, flexWrap: 'wrap',
+            fontSize: 13.5, color: 'rgba(255,255,255,0.55)',
+            borderTop: '1px solid rgba(255,255,255,0.14)', paddingTop: 18,
           }}>
-            <span>✓ Free estimate</span>
-            <span>✓ No obligation</span>
-            <span>✓ Local &amp; friendly</span>
+            Takes about a minute · Free · OMVIC-registered dealer
           </div>
         </div>
 
-        {/* The form, immediately usable — no scrolling required. */}
-        <div style={{ flex: '1 1 380px', maxWidth: 460, width: '100%' }}>
+        <div style={{ flex: '1 1 400px', maxWidth: 452, width: '100%' }}>
           <div id="tradelane-quote" style={{
-            background: C.bg, borderRadius: 16, boxShadow: '0 18px 50px rgba(0,0,0,0.28)',
-            padding: '4px 4px 0',
+            background: C.card, borderRadius: 14,
+            boxShadow: '0 20px 60px rgba(0,0,0,0.30)',
           }}>
             <Widget theme={{ navy: C.navy, navyLight: C.navyLight, navyDeep: C.navyDeep,
                              navyMuted: C.navyMuted, teal: C.teal, tealLight: C.tealLight,
-                             tealMuted: C.tealMuted, textDark: C.textDark }} branding={{
-              title: 'Get your estimate',
-              subtitle: 'Start with your VIN — or pick your car.',
+                             tealMuted: C.tealMuted, textDark: C.textDark,
+                             select: C.navy, selectMuted: 'rgba(4,74,126,0.07)' }} branding={{
+              title: 'What is it worth?',
+              subtitle: 'Start with your VIN, or pick your car.',
               footer: '',
             }} />
           </div>
