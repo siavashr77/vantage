@@ -4302,6 +4302,13 @@ export default function Vantage() {
     }
     @media (max-width: 768px) {
       .mobile-bottom-nav { display: flex !important; }
+      /* iOS zooms in whenever a focused field's text is under 16px, and never
+         zooms back out — so entering an odometer left the page magnified and
+         the appraiser pinching to recover on every field. 16px is the threshold
+         that stops it; it also reads better at arm's length beside a car. */
+      input, select, textarea {
+        font-size: 16px !important;
+      }
     }
   `}</style>
     </div>
