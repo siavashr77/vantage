@@ -95,13 +95,14 @@ function Hero() {
   return (
     <section style={{
       background: `linear-gradient(157deg, ${C.navy} 0%, ${C.navyDeep} 100%)`,
-      color: '#fff', padding: '64px 28px 72px',
+      color: '#fff', padding: 'clamp(28px, 5vw, 64px) clamp(18px, 4vw, 28px) clamp(40px, 6vw, 72px)',
     }}>
       <div style={{
         maxWidth: 1120, margin: '0 auto',
-        display: 'flex', flexWrap: 'wrap', gap: 56, alignItems: 'flex-start',
+        display: 'flex', flexWrap: 'wrap', gap: 'clamp(32px, 5vw, 56px)', alignItems: 'flex-start',
+        // see .hero-pitch / .hero-form below for the mobile ordering
       }}>
-        <div style={{ flex: '1 1 420px', maxWidth: 520, paddingTop: 4 }}>
+        <div className="hero-pitch" style={{ flex: '1 1 420px', maxWidth: 520, paddingTop: 4 }}>
           <h1 style={{
             fontSize: 'clamp(34px, 4.6vw, 50px)', fontWeight: 800, lineHeight: 1.08,
             letterSpacing: -1.4, margin: '0 0 20px',
@@ -145,7 +146,7 @@ function Hero() {
           </div>
         </div>
 
-        <div style={{ flex: '1 1 400px', maxWidth: 452, width: '100%' }}>
+        <div className="hero-form" style={{ flex: '1 1 400px', maxWidth: 452, width: '100%' }}>
           <div id="tradelane-quote" style={{
             background: C.card, borderRadius: 14,
             boxShadow: '0 20px 60px rgba(0,0,0,0.30)',
@@ -315,6 +316,22 @@ function TradeLane() {
       <Why />
       <QuoteSection />
       <Footer />
+
+      <style>{`
+        @media (max-width: 860px) {
+          /* Columns stack on a phone, and the form has to come first —
+             otherwise the supporting points push it a full screen down, which
+             defeats the point of leading with the form. */
+          .hero-form  { order: 1; }
+          .hero-pitch { order: 2; }
+        }
+        @media (max-width: 768px) {
+          /* iOS zooms in on any focused field whose text is under 16px and
+             never zooms back out, leaving the visitor pinching to recover on
+             every question. 16px is the threshold that prevents it. */
+          input, select, textarea { font-size: 16px !important; }
+        }
+      `}</style>
     </div>
   )
 }
