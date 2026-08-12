@@ -102,7 +102,34 @@ const DEFAULT_BRANDING = {
   footer: 'Powered by Vantage',
 }
 
+// Where this visit came from. Read once at load: ?src= or a utm_source wins,
+// otherwise infer from the referrer, so an untagged Instagram link is still
+// attributed rather than lumped in with direct traffic.
+function detectSource() {
+  try {
+    const p = new URLSearchParams(window.location.search)
+    const tagged = p.get('src') || p.get('utm_source')
+    if (tagged) {
+      sessionStorage.setItem('tl_src', tagged)
+      return tagged
+    }
+    const kept = sessionStorage.getItem('tl_src')
+    if (kept) return kept
+    const ref = (document.referrer || '').toLowerCase()
+    let guess = 'direct'
+    if (/instagram/.test(ref)) guess = 'instagram'
+    else if (/facebook|fb\./.test(ref)) guess = 'facebook'
+    else if (/google/.test(ref)) guess = 'google'
+    else if (/kijiji/.test(ref)) guess = 'kijiji'
+    else if (ref) guess = 'referral'
+    sessionStorage.setItem('tl_src', guess)
+    return guess
+  } catch { return 'widget' }
+}
+
 function Widget({ branding, theme } = {}) {
+  const sourceRef = useRef(null)
+  if (sourceRef.current === null) sourceRef.current = detectSource()
   // TradeLane supplies its own brand colours; Vantage and the standalone embed
   // use the defaults. Merging rather than replacing means a host only has to
   // name the colours it actually wants to change.
@@ -301,6 +328,7 @@ function Widget({ branding, theme } = {}) {
       lienBalance: (ownership === 'financed' || ownership === 'leased') && lienBalance ? Number(lienBalance) : null,
       photos,
       dealer: DEALER,
+      source: sourceRef.current,
     }
     try {
       const r = await fetch(`${API_BASE}/api/leads`, {

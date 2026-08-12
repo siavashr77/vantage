@@ -1672,7 +1672,9 @@ function Dashboard({vehicles,appraisals,dealer,onNav,onOpenVehicle,onOpenApprais
                     {[l.year,l.make,l.model].filter(Boolean).join(' ')||l.vin||'Vehicle'}
                   </div>
                   <div style={{fontSize:12,color:C.textLight,marginTop:2}}>
-                    {[l.customer_name||l.customerName,l.mileage?`${fmtN(l.mileage)} km`:null,fmtDate(l.created_at||l.createdAt)].filter(Boolean).join(' · ')}
+                    {[l.customer_name||l.customerName,l.mileage?`${fmtN(l.mileage)} km`:null,
+                      l.source&&l.source!=='widget'?l.source:null,
+                      fmtDate(l.created_at||l.createdAt)].filter(Boolean).join(' · ')}
                   </div>
                 </div>
                 {l.market_mid&&<span style={{fontSize:13,fontWeight:700,color:C.navy,flexShrink:0}}>{fmt(l.market_mid)}</span>}

@@ -1846,6 +1846,11 @@ app.post('/api/leads', strictLimiter, async (req, res) => {
     const vin = (b.vin || '').toString().toUpperCase().trim()
     if (vin && !isVin(vin)) return res.status(400).json({ error: 'Invalid VIN' })
     const postal = (b.postal || '').toString().trim().slice(0, 10)
+    // Where the customer came from, so we can tell which channel actually
+    // produces leads. Restricted to a short slug — it's shown in the inbox and
+    // written to the database, so it shouldn't carry arbitrary text.
+    const source = ((b.source || 'widget').toString().trim().toLowerCase()
+      .replace(/[^a-z0-9_-]/g, '').slice(0, 32)) || 'widget'
     if (!postal || !isPostal(postal)) return res.status(400).json({ error: 'Valid postal code is required' })
 
     let year = (b.year || '').toString().trim().slice(0, 4)
@@ -1946,13 +1951,13 @@ app.post('/api/leads', strictLimiter, async (req, res) => {
              condition_opinion,known_issues,tire_condition,brake_condition,ownership,lien_holder,lien_balance,photos,
              status,source)
            VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,
-             $21,$22,$23,$24,$25,$26,$27,$28,'pending','widget')
+             $21,$22,$23,$24,$25,$26,$27,$28,'pending',$29)
            RETURNING id`,
           [(b.dealer || '').toString().trim(), vin, year, make, model, trim, odometer, postal,
            accident, accidentAmount, name, email, phone, offer, sb ? sb.suggested : null, deduction,
            JSON.stringify(breakdown), market ? market.mid : null, confidence, thinMarket,
            conditionOpinion, knownIssues, tireCondition, brakeCondition, ownership, lienHolder, lienBalance,
-           photos.length ? JSON.stringify(photos) : null]
+           photos.length ? JSON.stringify(photos) : null, source]
         )
         leadId = ins.rows[0]?.id || null
       } catch (e) { console.error('lead insert error:', e.message) }
@@ -1969,6 +1974,7 @@ app.post('/api/leads', strictLimiter, async (req, res) => {
         odometer: odometer ? Number(odometer).toLocaleString('en-CA') + ' km' : '',
         customerName: name, customerEmail: email, customerPhone: phone,
         postal,
+        source,
         offer: market && market.mid ? market.mid : null,
         confidence,
         thinMarket,
