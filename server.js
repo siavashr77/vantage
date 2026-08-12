@@ -82,12 +82,44 @@ const isPostal = v => typeof v === 'string' && /^[A-Za-z]\d[A-Za-z]/.test(v.trim
 // replacement. If TEAM_API_KEY is unset, the gate is OPEN (logs a warning) so
 // local dev and the current setup don't break — SET IT IN PRODUCTION.
 const TEAM_API_KEY = process.env.TEAM_API_KEY || ''
-function requireTeamKey(req, res, next) {
-  if (!TEAM_API_KEY) return next() // unset → open (dev/legacy); warn at boot below
-  // Trim both sides: a trailing newline or space picked up when copying the key
-  // between dashboards is invisible in the UI but breaks an exact comparison.
-  const key = (req.get('x-vantage-key') || '').trim()
-  if (key && key === TEAM_API_KEY.trim()) return next()
+// Clerk verifies who is signed in. Unset → falls back to the team key.
+const CLERK_SECRET_KEY = process.env.CLERK_SECRET_KEY || ''
+// Verify a Clerk session token. The token is short-lived and signed by Clerk,
+// so unlike the team key it can't simply be lifted out of the frontend bundle
+// and reused — and it identifies WHO is acting, which the shared key never did.
+async function verifyClerkSession(req) {
+  if (!CLERK_SECRET_KEY) return null
+  const auth = req.get('authorization') || ''
+  const token = auth.startsWith('Bearer ') ? auth.slice(7).trim() : ''
+  if (!token) return null
+  try {
+    const { verifyToken } = await import('@clerk/backend')
+    const claims = await verifyToken(token, { secretKey: CLERK_SECRET_KEY })
+    return claims && claims.sub ? claims : null
+  } catch (e) {
+    return null   // expired, tampered with, or issued by a different instance
+  }
+}
+
+async function requireTeamKey(req, res, next) {
+  // Prefer a signed-in user when Clerk is configured.
+  if (CLERK_SECRET_KEY) {
+    const claims = await verifyClerkSession(req)
+    if (claims) {
+      req.clerkUserId = claims.sub
+      req.clerkEmail = claims.email || ''
+      return next()
+    }
+  }
+  // The team key remains accepted so the two can run side by side during the
+  // switchover — a phone holding an older bundle keeps working rather than
+  // locking someone out mid-appraisal. Retire it once everyone has signed in.
+  if (TEAM_API_KEY) {
+    const key = (req.get('x-vantage-key') || '').trim()
+    if (key && key === TEAM_API_KEY.trim()) return next()
+  }
+  // Neither configured → open (dev/legacy); the boot log warns about it.
+  if (!CLERK_SECRET_KEY && !TEAM_API_KEY) return next()
   return res.status(401).json({ error: 'Unauthorized' })
 }
 

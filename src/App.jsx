@@ -1,4 +1,5 @@
 import React, { useState, useEffect, useRef, useCallback } from "react";
+import { useAuth, useUser, UserButton } from "@clerk/clerk-react";
 import {
   Car, BarChart2, Camera, FileText, User, DollarSign,
   CheckCircle, Clock, XCircle, AlertTriangle, Upload,
@@ -221,7 +222,20 @@ const API_BASE = (import.meta.env.VITE_API_URL || 'http://localhost:3001').repla
 // Shared secret for private (team) API endpoints — set VITE_TEAM_KEY in Netlify
 // to match the backend's TEAM_API_KEY. Sent as x-vantage-key on team calls.
 const TEAM_KEY = import.meta.env.VITE_TEAM_KEY || '';
-const teamHeaders = (extra={}) => TEAM_KEY ? {...extra,'x-vantage-key':TEAM_KEY} : extra;
+
+// Clerk's token comes from a React hook, but teamHeaders() is a plain function
+// called from dozens of non-component places. A module-level holder bridges the
+// two: a component refreshes it, everything else reads it synchronously.
+// Sending the team key alongside keeps older clients working during the
+// switchover, and lets the backend accept whichever it can verify.
+let CLERK_TOKEN = '';
+export function setClerkToken(t){ CLERK_TOKEN = t || ''; }
+const teamHeaders = (extra={}) => {
+  const h = {...extra};
+  if (CLERK_TOKEN) h['Authorization'] = `Bearer ${CLERK_TOKEN}`;
+  if (TEAM_KEY) h['x-vantage-key'] = TEAM_KEY;
+  return h;
+};
 
 // Safely parse a fetch Response as JSON. The backend (Railway) can return an
 // HTML page instead of JSON — e.g. a 502/503 gateway page during a cold start,
@@ -3794,7 +3808,28 @@ function ReportsPage({vehicles,appraisals,dealer,showToast}){
 }
 
 // ─── MAIN APP ─────────────────────────────────────────────────────────
+// Clerk issues short-lived tokens, so this refreshes ahead of expiry and on
+// mount. Without it a session would quietly start failing after about a minute.
+function useClerkAuthBridge(){
+  const { getToken, isSignedIn } = useAuth();
+  useEffect(()=>{
+    if(!isSignedIn) { setClerkToken(''); return; }
+    let alive = true;
+    const refresh = async()=>{
+      try{ const t = await getToken(); if(alive) setClerkToken(t||''); }catch{}
+    };
+    refresh();
+    const iv = setInterval(refresh, 30000);
+    return()=>{ alive=false; clearInterval(iv); };
+  },[getToken,isSignedIn]);
+}
+
 export default function Vantage() {
+  useClerkAuthBridge();
+  // Attribution now comes from the signed-in account rather than a picker
+  // anyone could change, so "who appraised this" is a fact rather than an
+  // honour-system selection.
+  const { user: clerkUser } = useUser();
   const [page,setPage]=useState('dashboard');
   const navigate=useNavigate();
   const location=useLocation();
@@ -3926,6 +3961,17 @@ export default function Vantage() {
   const openLeadRef=useRef(null);
 
   // Staff list comes from dealer settings; falls back to a sensible default.
+  // The signed-in person is the acting user. Their name is what gets stamped on
+  // records, so it has to be recognisable — a full name if they set one, else
+  // the local part of their email rather than a raw address.
+  useEffect(()=>{
+    if(!clerkUser) return;
+    const nm = clerkUser.fullName
+      || [clerkUser.firstName,clerkUser.lastName].filter(Boolean).join(' ')
+      || (clerkUser.primaryEmailAddress?.emailAddress||'').split('@')[0];
+    if(nm){ setCurrentUser(nm); try{localStorage.setItem('vantage_user',nm);}catch{} }
+  },[clerkUser]);
+
   const staff=(dealer.staff&&dealer.staff.length>0)?dealer.staff:['Manager','Sales','Appraiser'];
   const actingUser=currentUser||staff[0]||'Staff';
   // Permission check for the current acting user (UI-level gating).
@@ -4313,27 +4359,12 @@ export default function Vantage() {
           </div>
           <div style={{display:'flex',alignItems:'center',gap:8,flexShrink:0}}>
             <button onClick={()=>nav('new_appraisal')} style={{padding:'6px 14px',background:C.navy,color:'#fff',border:'none',borderRadius:6,fontSize:12,fontWeight:700,cursor:'pointer',display:'flex',alignItems:'center',gap:5,fontFamily:'inherit'}}><Plus size={13}/>New Appraisal</button>
-            <div style={{position:'relative'}}>
-              <button onClick={()=>setShowUserMenu(s=>!s)} title="Acting as" style={{display:'flex',alignItems:'center',gap:7,background:C.navyMuted,border:`1px solid ${C.navyBorder}`,borderRadius:8,padding:'4px 8px 4px 6px',cursor:'pointer'}}>
-                <div style={{width:26,height:26,background:C.navy,borderRadius:6,display:'flex',alignItems:'center',justifyContent:'center'}}><span style={{fontSize:10,fontWeight:800,color:'#fff'}}>{actingUser.split(' ').map(w=>w[0]).join('').slice(0,2).toUpperCase()}</span></div>
-                <span className="hide-mobile" style={{fontSize:12,fontWeight:600,color:C.navy,maxWidth:90,overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'}}>{actingUser}</span>
-                <ChevronDown size={12} color={C.textLight}/>
-              </button>
-              {showUserMenu&&(
-                <>
-                  <div onClick={()=>setShowUserMenu(false)} style={{position:'fixed',inset:0,zIndex:300}}/>
-                  <div style={{position:'absolute',right:0,top:'calc(100% + 6px)',background:'#fff',border:`1px solid ${C.borderStr}`,borderRadius:8,boxShadow:'0 8px 28px rgba(0,0,0,0.16)',minWidth:170,zIndex:301,overflow:'hidden'}}>
-                    <div style={{padding:'8px 12px',fontSize:10,fontWeight:700,color:C.textLight,textTransform:'uppercase',letterSpacing:0.5,borderBottom:`1px solid ${C.border}`}}>Acting as</div>
-                    {staff.map(u=>(
-                      <button key={u} onClick={()=>pickUser(u)} style={{display:'flex',alignItems:'center',gap:8,width:'100%',padding:'9px 12px',background:u===actingUser?C.navyMuted:'none',border:'none',cursor:'pointer',textAlign:'left',fontSize:13,color:C.textDark,fontFamily:'inherit'}}>
-                        <div style={{width:22,height:22,background:u===actingUser?C.navy:C.bgDark,borderRadius:5,display:'flex',alignItems:'center',justifyContent:'center'}}><span style={{fontSize:9,fontWeight:800,color:u===actingUser?'#fff':C.textMid}}>{u.split(' ').map(w=>w[0]).join('').slice(0,2).toUpperCase()}</span></div>
-                        {u}{u===actingUser&&<CheckCircle size={13} color={C.green} style={{marginLeft:'auto'}}/>}
-                      </button>
-                    ))}
-                    {(can('sysAdmin')||can('userAdmin'))&&<button onClick={()=>{setShowUserMenu(false);nav('settings');}} style={{width:'100%',padding:'9px 12px',background:'none',border:'none',borderTop:`1px solid ${C.border}`,cursor:'pointer',textAlign:'left',fontSize:12,color:C.teal,fontWeight:600,fontFamily:'inherit',display:'flex',alignItems:'center',gap:6}}><Settings size={12}/>Manage staff</button>}
-                  </div>
-                </>
-              )}
+            {/* Identity comes from the signed-in account now, so this is a
+                profile and sign-out control rather than a picker anyone could
+                use to act as someone else. */}
+            <div style={{display:'flex',alignItems:'center',gap:8}}>
+              <span className="hide-mobile" style={{fontSize:12,fontWeight:600,color:C.navy,maxWidth:120,overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'}}>{actingUser}</span>
+              <UserButton afterSignOutUrl="/" appearance={{elements:{avatarBox:{width:30,height:30}}}}/>
             </div>
           </div>
         </div>
