@@ -1017,7 +1017,12 @@ async function fetchListingsMarketCheck({ vin, specId, match, status, postal, ra
   // They power Market Day Supply and, more importantly, let us tell whether the
   // car we're appraising has recently been through the market.
   const [lat, lon] = fsaToPoint(postal)
-  const radMiles = Math.min(100, Math.max(10, Math.round(Number(radius) || 100))) // free tier caps at 100mi
+  // The app works in kilometres; MarketCheck's radius is in miles. Passing the
+  // km figure straight through searched a far wider area than intended — a
+  // 250km setting became 250mi before clamping — which is how Winnipeg dealers
+  // turned up in a Toronto comp set. Free tier caps at 100mi (~160km).
+  const radKm = Number(radius) || 160
+  const radMiles = Math.min(100, Math.max(10, Math.round(radKm / 1.609344)))
   const base = isSold ? `${MC_HOST}/search/car/recents` : `${MC_HOST}/search/car/active`
   const params = isSold
     ? new URLSearchParams({
@@ -1071,6 +1076,31 @@ async function fetchListingsMarketCheck({ vin, specId, match, status, postal, ra
     } else {
       params.set('vin', vin)   // decode failed → exact VIN beats nothing
     }
+  } else if (specId) {
+    // Spec search (no VIN): "2014_hyundai_santa fe sport" → year/make/model,
+    // with the trim as a fourth part when we have one. Without this branch the
+    // request carried no vehicle filter at all and MarketCheck returned any
+    // used car in the country — which is why two different Hyundais came back
+    // with identical comps, including dealers far outside the search radius.
+    const parts = String(specId).split('_')
+    const [yr, mk, ...rest] = parts
+    const cap = w => w.replace(/\b[a-z]/g, c => c.toUpperCase())
+    if (/^\d{4}$/.test(yr)) params.set('year', yr)
+    if (mk) params.set('make', cap(mk))
+    if (rest.length) {
+      // Everything after the make is the model, except a trailing trim segment
+      // when the caller supplied one separately.
+      const trimPart = (callerTrim || '').trim()
+      const modelParts = trimPart && rest.length > 1 ? rest.slice(0, -1) : rest
+      params.set('model', cap(modelParts.join(' ')))
+      if (trimPart && match === 'trim') params.set('trim', trimPart)
+    }
+    const drive = (callerDrive || '').trim()
+    if (drive && match === 'trim') params.set('drivetrain', drive)
+  } else {
+    // Neither a VIN nor a spec: refuse rather than return every used car in
+    // Canada, which is what an unfiltered search does.
+    throw new Error('No vehicle specified for market search')
   }
   const url = `${base}?${params.toString()}`
   const r = await fetch(url)

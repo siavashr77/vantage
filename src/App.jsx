@@ -216,7 +216,7 @@ const DEFAULT_DEALER = {name:'Your Dealership',logo:null,address:'123 Main Stree
 // Backend base URL. In production set VITE_API_URL (e.g. your Railway URL,
 // no trailing slash) in Netlify env vars. Falls back to local dev server.
 // Bump alongside MARKET_SHAPE_VERSION in server.js when the comp object changes.
-const MARKET_SHAPE = 'v7-powertrain';
+const MARKET_SHAPE = 'v8-specfix';
 const API_BASE = (import.meta.env.VITE_API_URL || 'http://localhost:3001').replace(/\/$/, '');
 // Shared secret for private (team) API endpoints — set VITE_TEAM_KEY in Netlify
 // to match the backend's TEAM_API_KEY. Sent as x-vantage-key on team calls.
