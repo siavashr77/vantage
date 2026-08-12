@@ -1827,7 +1827,10 @@ async function marketForLead(args) {
 }
 
 async function marketForLeadRaw({ vin, specId, postal }) {
-  const radius = 6000  // national — widest net for an instant consumer offer
+  // The free tier caps the search at 100mi regardless, so asking for 6000km was
+  // misleading — it silently became ~160km. Stating the real figure keeps the
+  // customer's quote and the appraiser's comps drawn from the same market.
+  const radius = 160
   let match = 'trim', active = [], dropped = []
   try {
     ;[active, dropped] = await Promise.all([
