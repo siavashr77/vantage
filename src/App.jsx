@@ -1513,13 +1513,27 @@ function leadUrgency(lead){
   return {level:'new',label:'New',color:C.green,bg:C.greenBg};
 }
 function LeadsInbox({leads,loading,onRefresh,onOpen,onDismiss,error,filter,onFilter}){
-  // Sort: specialist/high urgency first, then oldest first within a tier.
-  const sorted=[...leads].sort((a,b)=>{
-    const ua=leadUrgency(a), ub=leadUrgency(b);
-    const rank={high:0,med:1,new:2};
-    if(rank[ua.level]!==rank[ub.level]) return rank[ua.level]-rank[ub.level];
-    return new Date(a.created_at)-new Date(b.created_at); // oldest unworked first
-  });
+  const [q,setQ]=useState('');
+  const [sort,setSort]=useState('urgency');
+  const sorted=[...leads]
+    .filter(l=>{
+      if(!q) return true;
+      const t=q.toLowerCase();
+      return [l.customer_name,l.customer_phone,l.customer_email,l.vin,
+              l.year,l.make,l.model,l.trim,l.postal,l.source]
+        .some(v=>(v||'').toString().toLowerCase().includes(t));
+    })
+    .sort((a,b)=>{
+      if(sort==='newest') return new Date(b.created_at)-new Date(a.created_at);
+      if(sort==='oldest') return new Date(a.created_at)-new Date(b.created_at);
+      if(sort==='value') return Number(b.offer_amount||b.market_mid||0)-Number(a.offer_amount||a.market_mid||0);
+      // Default: whoever most needs calling. Urgency first, then oldest within
+      // a tier, since a lead going cold matters more than one that just landed.
+      const ua=leadUrgency(a), ub=leadUrgency(b);
+      const rank={high:0,med:1,new:2};
+      if(rank[ua.level]!==rank[ub.level]) return rank[ua.level]-rank[ub.level];
+      return new Date(a.created_at)-new Date(b.created_at);
+    });
   const specialistCount=leads.filter(l=>l.thin_market||l.offer_amount==null).length;
 
   return (
@@ -1548,6 +1562,21 @@ function LeadsInbox({leads,loading,onRefresh,onOpen,onDismiss,error,filter,onFil
         ))}
       </div>
 
+      <div style={{display:'flex',gap:10,marginBottom:14,flexWrap:'wrap'}}>
+        <div style={{flex:1,minWidth:180,position:'relative'}}>
+          <Search size={13} color={C.textLight} style={{position:'absolute',left:10,top:'50%',transform:'translateY(-50%)'}}/>
+          <input value={q} onChange={e=>setQ(e.target.value)} placeholder="Search name, phone, vehicle, VIN..."
+            style={{width:'100%',padding:'8px 12px 8px 30px',background:'#fff',border:`1px solid ${C.borderStr}`,borderRadius:6,fontSize:13,fontFamily:'inherit',outline:'none',boxSizing:'border-box'}}/>
+        </div>
+        <select value={sort} onChange={e=>setSort(e.target.value)}
+          style={{padding:'8px 12px',background:'#fff',border:`1px solid ${C.borderStr}`,borderRadius:6,fontSize:13,fontFamily:'inherit',outline:'none'}}>
+          <option value="urgency">Needs calling first</option>
+          <option value="newest">Newest first</option>
+          <option value="oldest">Oldest first</option>
+          <option value="value">Highest value</option>
+        </select>
+      </div>
+
       {error?(
         <Card style={{padding:'32px',textAlign:'center',border:`1px solid ${C.red}`,background:'#FEF2F2'}}>
           <AlertTriangle size={30} color={C.red} style={{marginBottom:10}}/>
@@ -1564,7 +1593,7 @@ function LeadsInbox({leads,loading,onRefresh,onOpen,onDismiss,error,filter,onFil
       ):leads.length===0?(
         <Card style={{padding:'48px',textAlign:'center'}}>
           <Zap size={32} color={C.navyBorder} style={{marginBottom:10}}/>
-          <div style={{fontSize:14,fontWeight:700,color:C.textMid}}>{filter==='pending'?'No new leads':filter==='converted'?'No worked leads yet':filter==='dismissed'?'No dismissed leads':'No leads yet'}</div>
+          <div style={{fontSize:14,fontWeight:700,color:C.textMid}}>{q?'No leads match that search':filter==='pending'?'No new leads':filter==='converted'?'No worked leads yet':filter==='dismissed'?'No dismissed leads':'No leads yet'}</div>
           <div style={{fontSize:12,color:C.textLight,marginTop:4}}>New customer submissions from your widget will appear here.</div>
         </Card>
       ):(
@@ -2904,8 +2933,18 @@ function AppraisalForm({initial,onSave,onBack,showToast,onConvert,onFinalize,onU
 }
 // ─── APPRAISAL LIST ───────────────────────────────────────────────────
 function AppraisalList({appraisals,onNew,onEdit}) {
-  const [q,setQ]=useState('');const [fs,setFs]=useState('');
-  const filtered=appraisals.filter(a=>(!q||[a.vin,a.make,a.model,a.year,a.firstName,a.lastName].some(v=>(v||'').toLowerCase().includes(q.toLowerCase())))&&(!fs||a.status===fs));
+  const [q,setQ]=useState('');const [fs,setFs]=useState('');const [sort,setSort]=useState('newest');
+  const filtered=appraisals
+    .filter(a=>(!q||[a.vin,a.make,a.model,a.year,a.series,a.firstName,a.lastName,a.phone]
+      .some(v=>(v||'').toString().toLowerCase().includes(q.toLowerCase())))&&(!fs||a.status===fs))
+    // Most recently touched first by default — an appraisal you were just
+    // working on is the one you're most likely coming back to.
+    .sort((a,b)=>{
+      if(sort==='oldest') return new Date(a.updatedAt||a.createdAt||0)-new Date(b.updatedAt||b.createdAt||0);
+      if(sort==='created') return new Date(b.createdAt||0)-new Date(a.createdAt||0);
+      if(sort==='value') return Number(b.appraisedValue||0)-Number(a.appraisedValue||0);
+      return new Date(b.updatedAt||b.createdAt||0)-new Date(a.updatedAt||a.createdAt||0);
+    });
   return (
     <div>
       <div style={{display:'flex',alignItems:'center',justifyContent:'space-between',marginBottom:20,flexWrap:'wrap',gap:10}}>
@@ -2916,6 +2955,12 @@ function AppraisalList({appraisals,onNew,onEdit}) {
         <div style={{flex:1,minWidth:200,position:'relative'}}><Search size={13} color={C.textLight} style={{position:'absolute',left:10,top:'50%',transform:'translateY(-50%)'}}/><input value={q} onChange={e=>setQ(e.target.value)} placeholder="Search VIN, make, customer..." style={{width:'100%',padding:'8px 12px 8px 30px',background:'#fff',border:`1px solid ${C.borderStr}`,borderRadius:6,fontSize:13,fontFamily:'inherit',outline:'none',boxSizing:'border-box'}}/></div>
         <select value={fs} onChange={e=>setFs(e.target.value)} style={{padding:'8px 12px',background:'#fff',border:`1px solid ${C.borderStr}`,borderRadius:6,fontSize:13,fontFamily:'inherit',outline:'none'}}>
           <option value="">All</option>{Object.entries(AS).map(([k,v])=><option key={k} value={k}>{v.label}</option>)}
+        </select>
+        <select value={sort} onChange={e=>setSort(e.target.value)} style={{padding:'8px 12px',background:'#fff',border:`1px solid ${C.borderStr}`,borderRadius:6,fontSize:13,fontFamily:'inherit',outline:'none'}}>
+          <option value="newest">Recently updated</option>
+          <option value="created">Newest first</option>
+          <option value="oldest">Oldest first</option>
+          <option value="value">Highest value</option>
         </select>
       </div>
       <div style={{display:'grid',gridTemplateColumns:'repeat(4,1fr)',gap:10,marginBottom:14}} className='stat-grid-4'>
