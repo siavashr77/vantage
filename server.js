@@ -1084,7 +1084,10 @@ async function fetchListingsMarketCheck({ vin, specId, match, status, postal, ra
     // with identical comps, including dealers far outside the search radius.
     const parts = String(specId).split('_')
     const [yr, mk, ...rest] = parts
-    const cap = w => w.replace(/\b[a-z]/g, c => c.toUpperCase())
+    // buildSpecId slugs each part, so "Santa Fe Sport" arrives as
+    // "santa-fe-sport". Hyphens have to come back out as spaces or the search
+    // looks for a model literally named "Santa-fe-sport" and matches nothing.
+    const cap = w => w.replace(/-+/g, ' ').replace(/\b[a-z]/g, c => c.toUpperCase())
     if (/^\d{4}$/.test(yr)) params.set('year', yr)
     if (mk) params.set('make', cap(mk))
     if (rest.length) {
