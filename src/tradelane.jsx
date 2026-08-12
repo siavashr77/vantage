@@ -26,8 +26,10 @@ const FONT = "'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sa
 
 function scrollToQuote(e) {
   e?.preventDefault?.()
-  const el = document.getElementById('quote')
-  if (el) el.scrollIntoView({ behavior: 'smooth', block: 'start' })
+  // The form's container is #tradelane-quote — targeting #quote matched
+  // nothing, so the button appeared to be broken.
+  const el = document.getElementById('tradelane-quote')
+  if (el) el.scrollIntoView({ behavior: 'smooth', block: 'center' })
 }
 
 function LogoMark({ size = 32, light }) {
@@ -70,19 +72,50 @@ function Logo({ light, height = 34 }) {
 }
 
 function Header() {
-  // The header carries the brand and a phone number, not a call to action —
-  // the form is already on screen, so a "Get my estimate" button here just
-  // competes with it. The logo is given room to be read.
+  const [open, setOpen] = React.useState(false)
+  const jump = (id) => {
+    setOpen(false)
+    const el = document.getElementById(id)
+    if (el) el.scrollIntoView({ behavior: 'smooth', block: 'start' })
+  }
   return (
-    <header style={{
-      background: '#fff', borderBottom: `1px solid ${C.border}`,
-    }}>
+    <header style={{ background: '#fff', borderBottom: `1px solid ${C.border}`, position: 'relative' }}>
       <div style={{
-        maxWidth: 1120, margin: '0 auto', padding: '20px 28px',
-        display: 'flex', alignItems: 'center',
+        maxWidth: 1120, margin: '0 auto', padding: '18px 20px',
+        display: 'flex', alignItems: 'center', justifyContent: 'center',
       }}>
-        <Logo height={62} />
+        <Logo height={54} />
+        <button onClick={() => setOpen(o => !o)} aria-label="Menu" aria-expanded={open}
+          style={{
+            position: 'absolute', right: 20, top: '50%', transform: 'translateY(-50%)',
+            background: 'none', border: 'none', padding: 8, cursor: 'pointer',
+            display: 'flex', flexDirection: 'column', gap: 5,
+          }}>
+          {[0, 1, 2].map(i => (
+            <span key={i} style={{ display: 'block', width: 22, height: 2.5, borderRadius: 2, background: C.navy }} />
+          ))}
+        </button>
       </div>
+
+      {open && (
+        <div style={{
+          position: 'absolute', right: 16, top: '100%', zIndex: 60,
+          background: '#fff', border: `1px solid ${C.border}`, borderRadius: 10,
+          boxShadow: '0 10px 34px rgba(0,0,0,0.14)', minWidth: 210, overflow: 'hidden',
+        }}>
+          {[
+            ['Get an estimate', 'tradelane-quote'],
+            ['How it works', 'how'],
+            ['Common questions', 'faq'],
+          ].map(([label, id], i, arr) => (
+            <button key={id} onClick={() => jump(id)} style={{
+              width: '100%', textAlign: 'left', padding: '13px 16px', background: 'none',
+              border: 'none', borderBottom: i < arr.length - 1 ? `1px solid ${C.border}` : 'none',
+              fontSize: 14.5, fontWeight: 600, color: C.navy, cursor: 'pointer', fontFamily: FONT,
+            }}>{label}</button>
+          ))}
+        </div>
+      )}
     </header>
   )
 }
@@ -173,7 +206,7 @@ function HowItWorks() {
     { n: '3', t: "We make selling simple", d: "Like the estimate? We'll handle the details and make buying your car painless." },
   ]
   return (
-    <section style={{ padding: '60px 20px', background: C.bg }}>
+    <section style={{ padding: '60px 20px', background: C.bg }} id="how">
       <div style={{ maxWidth: 1080, margin: '0 auto' }}>
         <h2 style={{
           textAlign: 'center', fontSize: 'clamp(24px, 4vw, 32px)', fontWeight: 800,
@@ -199,6 +232,80 @@ function HowItWorks() {
               <div style={{ color: C.textMid, fontSize: 15, lineHeight: 1.55 }}>{s.d}</div>
             </div>
           ))}
+        </div>
+      </div>
+    </section>
+  )
+}
+
+function FAQ() {
+  const items = [
+    {
+      q: 'How does the Ontario tax saving on a trade-in work?',
+      a: `In Ontario you pay HST on a used vehicle you buy. When you trade a car in, you're only taxed on the difference between the price of the car you're buying and the value of the one you're trading. So on a $40,000 car with a $15,000 trade-in, you pay 13% on $25,000 rather than on the full $40,000 — a saving of about $1,950. Sell privately for $15,000 and you don't get that credit, so a private sale has to be roughly $1,950 higher just to break even.`,
+    },
+    {
+      q: "I'm buying from another dealer. Can I still use my TradeLane offer?",
+      a: `Yes, and this is where most of the value is. Tell the dealer you're buying from that TradeLane is purchasing your car, and ask them to structure it as a trade-in — they take your vehicle on the deal at our price, and we buy it from them. You get the tax credit on your purchase and our number for your car. It's a routine arrangement between dealers; just mention it before you agree on paperwork, because it's harder to restructure afterwards.`,
+    },
+    {
+      q: 'Is the estimate what you actually pay?',
+      a: `It's an honest starting point, not a binding offer. It's built from what comparable cars are listed and sold for right now, based on what you tell us. We confirm it after seeing the car, because condition, tires, service history and accident repairs all move the number — in both directions.`,
+    },
+    {
+      q: 'What if I still owe money on the car?',
+      a: `That's normal and not a problem. We deal directly with your lender to pay out the balance. If the car is worth more than you owe, you get the difference; if you owe more than it's worth, the shortfall can often be settled or rolled into your next vehicle. Tell us your lender and payout amount and we'll show you exactly where you stand.`,
+    },
+    {
+      q: 'Do I have to buy a car from you?',
+      a: `No. We'll buy your car outright whether or not you're buying anything. Some people sell and walk away, some are buying elsewhere, some end up buying from us. The estimate is the same either way.`,
+    },
+    {
+      q: 'What do I need to bring?',
+      a: `Your ownership (vehicle permit), a valid driver's licence, and both sets of keys if you have them. If there's a loan, bring your lender details. If the car is owned by more than one person, everyone on the ownership needs to sign.`,
+    },
+    {
+      q: 'How long does the whole thing take?',
+      a: `The estimate takes about a minute. If you decide to go ahead, an inspection is usually 30 to 45 minutes, and payment is typically same or next business day once the paperwork is signed and any lien is cleared.`,
+    },
+  ]
+  const [open, setOpen] = React.useState(0)
+  return (
+    <section id="faq" style={{ background: '#fff', padding: '64px 20px' }}>
+      <div style={{ maxWidth: 760, margin: '0 auto' }}>
+        <h2 style={{
+          fontSize: 'clamp(24px, 3.6vw, 32px)', fontWeight: 800, color: C.navy,
+          margin: '0 0 28px', letterSpacing: -0.6,
+        }}>Common questions</h2>
+        <div style={{ border: `1px solid ${C.border}`, borderRadius: 12, overflow: 'hidden' }}>
+          {items.map((it, i) => (
+            <div key={i} style={{ borderBottom: i < items.length - 1 ? `1px solid ${C.border}` : 'none' }}>
+              <button onClick={() => setOpen(open === i ? -1 : i)}
+                aria-expanded={open === i}
+                style={{
+                  width: '100%', textAlign: 'left', padding: '18px 20px', background: 'none',
+                  border: 'none', cursor: 'pointer', fontFamily: FONT,
+                  display: 'flex', alignItems: 'flex-start', gap: 14,
+                }}>
+                <span style={{
+                  flex: 1, fontSize: 16, fontWeight: 700, color: C.navy, lineHeight: 1.4,
+                }}>{it.q}</span>
+                <span style={{
+                  flexShrink: 0, fontSize: 20, color: C.textLight, lineHeight: 1,
+                  transform: open === i ? 'rotate(45deg)' : 'none', transition: 'transform 0.15s',
+                }}>+</span>
+              </button>
+              {open === i && (
+                <div style={{
+                  padding: '0 20px 20px', fontSize: 15, lineHeight: 1.65, color: C.textMid,
+                }}>{it.a}</div>
+              )}
+            </div>
+          ))}
+        </div>
+        <div style={{ fontSize: 13.5, color: C.textLight, marginTop: 16, lineHeight: 1.6 }}>
+          Tax figures are general guidance for Ontario private buyers, not tax advice.
+          Your own situation may differ.
         </div>
       </div>
     </section>
@@ -314,6 +421,7 @@ function TradeLane() {
       <Hero />
       <HowItWorks />
       <Why />
+      <FAQ />
       <QuoteSection />
       <Footer />
 
