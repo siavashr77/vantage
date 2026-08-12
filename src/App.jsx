@@ -3810,7 +3810,14 @@ export default function Vantage() {
   // Held in a ref so the save callbacks can stamp who made a change without
   // being recreated — and therefore re-firing — every time the user switches.
   const currentUserRef=useRef('');
+  const appraisalsRef=useRef([]);
+  const vehiclesRef=useRef([]);
+  const pushRecordsRef=useRef(null);
   useEffect(()=>{ currentUserRef.current=currentUser; },[currentUser]);
+  // Mirrored into refs so the one-time load effect can read current state
+  // without listing them as dependencies and re-running on every edit.
+  useEffect(()=>{ appraisalsRef.current=appraisals; },[appraisals]);
+  useEffect(()=>{ vehiclesRef.current=vehicles; },[vehicles]);
   const [showUserMenu,setShowUserMenu]=useState(false);
   // Customer leads from the widget (pending appraisals). Fetched from the backend.
   const [leads,setLeads]=useState([]);
@@ -4038,8 +4045,27 @@ export default function Vantage() {
           fetch(`${API_BASE}/api/vehicles`,{headers:teamHeaders()}).then(r=>r.ok?r.json():null),
           fetch(`${API_BASE}/api/dealer`,{headers:teamHeaders()}).then(r=>r.ok?r.json():null),
         ]);
-        if(av&&Array.isArray(av.items)){ setAppraisals(av.items); try{localStorage.setItem('vantage_appraisals',JSON.stringify(av.items));}catch{} }
-        if(vv&&Array.isArray(vv.items)){ setVehicles(vv.items); try{localStorage.setItem('vantage_vehicles',JSON.stringify(vv.items));}catch{} }
+        // Adopt the server's copy — but never let an empty response destroy
+        // local records that have not been uploaded yet. On the first run after
+        // this change the database is empty while the device still holds
+        // everything, and overwriting would silently discard it. An empty
+        // server with a populated cache means "not migrated", not "no data".
+        const adopt=(items,current,setter,key)=>{
+          if(!Array.isArray(items)) return;
+          if(items.length===0&&current.length>0) return;   // keep local, push it up
+          setter(items);
+          try{localStorage.setItem(key,JSON.stringify(items));}catch{}
+        };
+        adopt(av&&av.items, appraisalsRef.current||[], setAppraisals, 'vantage_appraisals');
+        adopt(vv&&vv.items, vehiclesRef.current||[], setVehicles, 'vantage_vehicles');
+        // Anything the device holds that the server doesn't gets uploaded, so a
+        // first run migrates itself rather than needing a separate step.
+        if(av&&Array.isArray(av.items)&&av.items.length===0&&(appraisalsRef.current||[]).length){
+          pushRecordsRef.current&&pushRecordsRef.current('appraisals',appraisalsRef.current,currentUserRef.current);
+        }
+        if(vv&&Array.isArray(vv.items)&&vv.items.length===0&&(vehiclesRef.current||[]).length){
+          pushRecordsRef.current&&pushRecordsRef.current('vehicles',vehiclesRef.current,currentUserRef.current);
+        }
         if(dv&&dv.settings){ setDealer(dv.settings); try{localStorage.setItem('vantage_dealer',JSON.stringify(dv.settings));}catch{} }
         setDataError(null);
       }catch{
@@ -4076,6 +4102,8 @@ export default function Vantage() {
       }catch{ /* cache still holds it; next save retries */ }
     }
   },[]);
+
+  useEffect(()=>{ pushRecordsRef.current=pushRecords; },[pushRecords]);
 
   const saveV=useCallback(l=>{
     try{localStorage.setItem('vantage_vehicles',JSON.stringify(l));}catch{}
