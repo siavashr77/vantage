@@ -3807,6 +3807,10 @@ export default function Vantage() {
   const [toast,setToast]=useState(null);
   const [showScanner,setShowScanner]=useState(false);
   const [currentUser,setCurrentUser]=useState('');
+  // Held in a ref so the save callbacks can stamp who made a change without
+  // being recreated — and therefore re-firing — every time the user switches.
+  const currentUserRef=useRef('');
+  useEffect(()=>{ currentUserRef.current=currentUser; },[currentUser]);
   const [showUserMenu,setShowUserMenu]=useState(false);
   // Customer leads from the widget (pending appraisals). Fetched from the backend.
   const [leads,setLeads]=useState([]);
@@ -4014,19 +4018,80 @@ export default function Vantage() {
   // Let the URL effect call openLead for /lead/:id deep-links.
   openLeadRef.current=openLead;
 
+  // Appraisals, inventory and settings load from the server so every device
+  // sees the same work. localStorage is kept only as an offline read-through
+  // cache: if the network is down the app still opens with what it last saw,
+  // rather than showing an empty store.
+  const [dataError,setDataError]=useState(null);
   useEffect(()=>{
+    // Paint from cache first so the app is usable immediately, then replace
+    // with the server's copy when it arrives.
     try{const d=JSON.parse(localStorage.getItem('vantage_vehicles'));if(d&&d.length>0)setVehicles(d);}catch{}
     try{const d=JSON.parse(localStorage.getItem('vantage_appraisals'));if(d)setAppraisals(d);}catch{}
     try{const d=JSON.parse(localStorage.getItem('vantage_dealer'));if(d)setDealer(d);}catch{}
     try{const u=localStorage.getItem('vantage_user');if(u)setCurrentUser(u);}catch{}
+
+    (async()=>{
+      try{
+        const [av,vv,dv]=await Promise.all([
+          fetch(`${API_BASE}/api/appraisals`,{headers:teamHeaders()}).then(r=>r.ok?r.json():null),
+          fetch(`${API_BASE}/api/vehicles`,{headers:teamHeaders()}).then(r=>r.ok?r.json():null),
+          fetch(`${API_BASE}/api/dealer`,{headers:teamHeaders()}).then(r=>r.ok?r.json():null),
+        ]);
+        if(av&&Array.isArray(av.items)){ setAppraisals(av.items); try{localStorage.setItem('vantage_appraisals',JSON.stringify(av.items));}catch{} }
+        if(vv&&Array.isArray(vv.items)){ setVehicles(vv.items); try{localStorage.setItem('vantage_vehicles',JSON.stringify(vv.items));}catch{} }
+        if(dv&&dv.settings){ setDealer(dv.settings); try{localStorage.setItem('vantage_dealer',JSON.stringify(dv.settings));}catch{} }
+        setDataError(null);
+      }catch{
+        // Working from cache. Say so, because silently showing stale data is
+        // how someone acts on a number that has since changed.
+        setDataError('offline');
+      }
+    })();
+
     loadLeads();
     const t=setInterval(loadLeads,60000); // poll for new customer leads
     return ()=>clearInterval(t);
   },[loadLeads]);
 
-  const saveV=useCallback(l=>{try{localStorage.setItem('vantage_vehicles',JSON.stringify(l));}catch{}},[]);
-  const saveA=useCallback(l=>{try{localStorage.setItem('vantage_appraisals',JSON.stringify(l));}catch{}},[]);
-  const saveD=useCallback(d=>{try{localStorage.setItem('vantage_dealer',JSON.stringify(d));}catch{}},[]);
+  // Saves go record-by-record to the server. The callers hand over whole
+  // arrays, so we send only what actually changed — writing all 20 appraisals
+  // on every keystroke would be wasteful and would clobber a colleague's edit
+  // to a record this device merely has open.
+  const lastSaved=useRef({appraisals:new Map(),vehicles:new Map()});
+  const pushRecords=useCallback(async(path,list,user)=>{
+    const seen=lastSaved.current[path];
+    const changed=list.filter(r=>{
+      const json=JSON.stringify(r);
+      if(seen.get(r.id)===json) return false;
+      seen.set(r.id,json);
+      return true;
+    });
+    for(const rec of changed){
+      try{
+        await fetch(`${API_BASE}/api/${path}/${encodeURIComponent(rec.id)}`,{
+          method:'PUT',headers:teamHeaders({'Content-Type':'application/json'}),
+          body:JSON.stringify({record:rec,user:user||''}),
+        });
+      }catch{ /* cache still holds it; next save retries */ }
+    }
+  },[]);
+
+  const saveV=useCallback(l=>{
+    try{localStorage.setItem('vantage_vehicles',JSON.stringify(l));}catch{}
+    pushRecords('vehicles',l,currentUserRef.current);
+  },[pushRecords]);
+  const saveA=useCallback(l=>{
+    try{localStorage.setItem('vantage_appraisals',JSON.stringify(l));}catch{}
+    pushRecords('appraisals',l,currentUserRef.current);
+  },[pushRecords]);
+  const saveD=useCallback(d=>{
+    try{localStorage.setItem('vantage_dealer',JSON.stringify(d));}catch{}
+    fetch(`${API_BASE}/api/dealer`,{
+      method:'PUT',headers:teamHeaders({'Content-Type':'application/json'}),
+      body:JSON.stringify({settings:d,user:currentUserRef.current||''}),
+    }).catch(()=>{});
+  },[]);
 
   // ── Daily market-data refresh for active inventory ──
   // Refetches market data once on app load, ONLY for cars currently being
@@ -4279,6 +4344,15 @@ export default function Vantage() {
 
       {/* CONTENT */}
       <div className='content-pad' style={{maxWidth:1200,margin:'0 auto',padding:'24px 24px 60px'}}>
+        {/* Working from the local cache. Said out loud because silently showing
+            stale data is how someone acts on a number that has since changed —
+            or worse, on a colleague's appraisal they can't actually see. */}
+        {dataError==='offline'&&(
+          <div style={{marginBottom:14,padding:'10px 14px',borderRadius:8,background:C.orangeBg,
+            border:`1px solid ${C.orange}`,fontSize:12.5,color:C.textMid,lineHeight:1.5}}>
+            Can't reach the server — showing the last data this device saw. Changes are saved locally and will sync when the connection returns.
+          </div>
+        )}
         {page==='dashboard'&&<Dashboard vehicles={vehicles} appraisals={appraisals} dealer={dealer} leads={leads} onOpenLead={openLead} onNav={nav} onOpenVehicle={v=>{setActiveV({...v});goto('vehicle_detail',v);}} onOpenAppraisal={a=>{setActiveA({...a});goto('appraisal_form',a);}}/>}
         {page==='leads'&&<LeadsInbox leads={leads} loading={leadsLoading} error={leadsError} filter={leadFilter} onFilter={setLeadFilter} onRefresh={loadLeads} onOpen={openLead} onDismiss={id=>updateLeadStatus(id,'dismissed')}/>}
         {page==='appraisals'&&<AppraisalList appraisals={appraisals} onNew={()=>nav('new_appraisal')} onEdit={a=>{setActiveA({...a});goto('appraisal_form',a);}}/>}
