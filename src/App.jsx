@@ -1545,10 +1545,6 @@ function LeadsInbox({leads,loading,onRefresh,onOpen,onDismiss,error,filter,onFil
         </div>
         <Btn variant="ghost" size="sm" onClick={onRefresh}><RefreshCw size={12} style={{animation:loading?'spin 1s linear infinite':undefined}}/> Refresh</Btn>
       </div>
-      <div style={{fontSize:12,color:C.textMid,background:C.orangeBg,border:`1px solid ${C.orange}33`,borderRadius:8,padding:'8px 12px',marginBottom:16,display:'flex',alignItems:'center',gap:8}}>
-        <Sparkles size={14} color={C.orange}/> These are warm leads — customers who requested an instant offer. Contact them fast.
-      </div>
-
       {/* Working a lead marks it converted, which used to remove it from view
           with no way back. These tabs keep every lead reachable. */}
       <div style={{display:'flex',gap:6,marginBottom:14,flexWrap:'wrap'}}>
