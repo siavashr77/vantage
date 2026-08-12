@@ -1,6 +1,24 @@
 [build]
   command = "npm run build"
   publish = "dist"
+  # Skip the build when nothing this site depends on has changed. Both sites
+  # deploy from one repo, so a server.js-only change was rebuilding and
+  # republishing both — identical output, at credit cost each time. Exit 0 tells
+  # Netlify to cancel; exit 1 tells it to build.
+  #
+  # SITE_TARGET is set per-site: 'tradelane' on the consumer site, unset on
+  # Vantage. Each only rebuilds for the files it actually ships.
+  ignore = """
+    if [ "$SITE_TARGET" = "tradelane" ]; then
+      git diff --quiet $CACHED_COMMIT_REF $COMMIT_REF -- \
+        src/tradelane.jsx src/widget.jsx tradelane.html public/ \
+        package.json package-lock.json vite.config.js netlify.toml scripts/
+    else
+      git diff --quiet $CACHED_COMMIT_REF $COMMIT_REF -- \
+        src/ index.html widget.html public/ \
+        package.json package-lock.json vite.config.js netlify.toml scripts/
+    fi
+  """
 
 # SPA fallback — also covered by public/_redirects, kept here as a backstop.
 # Per-site root selection is handled at build time by scripts/site-target.mjs
