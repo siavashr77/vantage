@@ -157,7 +157,7 @@ function Widget({ branding, theme } = {}) {
     mq.addEventListener ? mq.addEventListener('change', on) : mq.addListener(on)
     return () => { mq.removeEventListener ? mq.removeEventListener('change', on) : mq.removeListener(on) }
   }, [])
-  const immersive = isPhone && focusMode
+  const immersive = isPhone && (focusMode || step !== 'vehicle')
   // Lock the page behind the sheet so only the step scrolls.
   useEffect(() => {
     if (typeof document === 'undefined') return
@@ -169,6 +169,10 @@ function Widget({ branding, theme } = {}) {
   // New step starts at the top — never mid-question.
   useEffect(() => {
     if (bodyRef.current) bodyRef.current.scrollTop = 0
+    // Also reset the page beneath: on the step where the sheet isn't yet
+    // covering the viewport, a stale offset leaves the customer looking at the
+    // middle of the form.
+    try { window.scrollTo(0, 0) } catch {}
   }, [step])
   const [vinMode, setVinMode] = useState(true)     // VIN entry vs YMMT dropdowns
 
@@ -380,7 +384,15 @@ function Widget({ branding, theme } = {}) {
 
   // In focus mode the sheet owns the viewport: fixed header, scrollable body.
   const shellStyle = immersive
-    ? { position: 'fixed', inset: 0, zIndex: 9999, background: C.card, display: 'flex', flexDirection: 'column' }
+    ? {
+        position: 'fixed', top: 0, left: 0, right: 0, bottom: 0,
+        // iOS reports 100% against a viewport that changes as Safari's toolbars
+        // hide, so the sheet could come up short and let the page show through.
+        // Dynamic viewport units track the real visible area; the vh value is a
+        // fallback for browsers that don't support them.
+        height: '100vh', maxHeight: '100dvh',
+        zIndex: 9999, background: C.card, display: 'flex', flexDirection: 'column',
+      }
     : wrap
   const cardStyle = immersive
     ? { display: 'flex', flexDirection: 'column', flex: 1, minHeight: 0, background: C.card }
