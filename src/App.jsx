@@ -2161,13 +2161,21 @@ function AppraisalForm({initial,onSave,onBack,showToast,onConvert,onFinalize,onU
   },[a.vin,locked]);
 
   async function fetchMkt(){
-    if(a.vin.length!==17){showToast('Decode VIN first','error');return;}
     const dealer=onGetDealer?onGetDealer():null;
     const postal=dealer?.postal;
     if(!postal){showToast('Set your dealer postal code in Settings first','error');return;}
+    // A VIN gives the tightest match, but it isn't required — plenty of cars
+    // arrive as a lead with year/make/model and no VIN, and the market can
+    // still be searched on the spec. Refusing to price those was needlessly
+    // strict, since the same endpoint already backs the customer widget.
+    const hasVin=a.vin.length===17;
+    const specId=hasVin?null:buildSpecId(a.year,a.make,a.model,a.series);
+    if(!hasVin&&!specId){showToast('Enter a VIN, or a year, make and model','error');return;}
     setMl(true);
     try{
-      const m=await fetchMarketData(a.vin,postal,a.searchDistance||250,a.drivetrain||"",a.series||"");
+      const m=hasVin
+        ? await fetchMarketData(a.vin,postal,a.searchDistance||250,a.drivetrain||"",a.series||"")
+        : await fetchMarketBySpec(specId,postal,a.searchDistance||250,a.drivetrain||"",a.series||"");
       if(!m.found){showToast(m.message||'No Canadian comps found for this vehicle','warning');setMl(false);return;}
       const note=`${m.meta.comps} comps · ${m.meta.matchMode==='trim'?'trim match':'model match'}${m.meta.widened?' (widened)':''}`;
       setA(p=>{const next=withLog({...p,marketLow:m.marketLow,marketMid:m.marketMid,marketHigh:m.marketHigh,marketAvgPrice:m.marketAvgPrice,activeComps:m.activeComps,marketDaysSupply:m.marketDaysSupply,marketDaySupply:m.marketDaySupply,medianDaysListed:m.medianDaysListed,_soldStats:m.soldStats,marketDataFetched:m.marketDataFetched,_marketMeta:m.meta,_medianCompMileage:m.medianCompMileage,_comps:m.comps,_marketTrim:(a.series||''),_marketDrive:(a.drivetrain||''),updatedAt:new Date().toISOString()},[logEvent('Market Data',`mid ${fmt(m.marketMid)} · ${note}`,user)]);aRef.current=next;return next;});
@@ -2202,7 +2210,8 @@ function AppraisalForm({initial,onSave,onBack,showToast,onConvert,onFinalize,onU
   const autoFetchedRef=useRef(false);
   useEffect(()=>{
     if(locked) return;
-    if(a.vin?.length!==17){ autoFetchedRef.current=false; return; }
+    // Either a VIN or a decoded year/make/model is enough to search on.
+    if(!(a.vin?.length===17 || (a.year&&a.make&&a.model))){ autoFetchedRef.current=false; return; }
     // Stored comps outlive changes to how comps are built — the miles-to-km
     // correction being the costly example, where saved numbers stayed wrong
     // until someone happened to refresh. The backend stamps each payload with
@@ -2534,7 +2543,9 @@ function AppraisalForm({initial,onSave,onBack,showToast,onConvert,onFinalize,onU
               {(()=>{
                 const n=(a._comps||[]).length||a.activeComps||0;
                 if(ml) return 'Loading…';
-                if(!n) return a.vin?.length===17?'Not loaded yet':'Add a VIN to price this car';
+                if(!n) return (a.year&&a.make&&a.model)||a.vin?.length===17
+                  ? 'Not loaded yet'
+                  : 'Add a VIN, or year make and model';
                 return `${n} listings · ${fmt(a.marketMid)} mid`;
               })()}
             </div>
