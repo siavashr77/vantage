@@ -166,6 +166,72 @@ if (DATABASE_URL) {
 
   // 24h market cache — keyed by VIN-or-spec + FSA. Lets the widget return an
   // instant offer (and the prefetch warm it) without re-paginating VinAudit.
+  // ── Appraisals and inventory ───────────────────────────────────────
+  // Previously these lived in the browser's localStorage, which meant one
+  // device could see them, they vanished if the browser was cleared, and two
+  // appraisers couldn't share a store.
+  //
+  // dealer_key scopes every row to a dealership. There's only one today, but
+  // adding it later — once Vantage is sold to a second dealer and real customer
+  // data is in the system — means revisiting every query with live rows in
+  // place. It costs nothing now.
+  //
+  // The JSON columns hold structures the app already nests (market results,
+  // photos, the action log). Normalising them properly is a separate job; doing
+  // it in the same change as the move to a database would be two problems at
+  // once.
+  pool.query(`CREATE TABLE IF NOT EXISTS appraisals (
+    id TEXT PRIMARY KEY,
+    dealer_key TEXT NOT NULL DEFAULT 'default',
+    vin TEXT,
+    year TEXT, make TEXT, model TEXT, series TEXT,
+    odometer INTEGER,
+    status TEXT DEFAULT 'in_progress',
+    appraised_value INTEGER,
+    suggested_buy INTEGER,
+    first_name TEXT, last_name TEXT, email TEXT, phone TEXT,
+    -- The full record. Columns above are promoted copies for querying.
+    data JSONB NOT NULL DEFAULT '{}'::jsonb,
+    finalized_at TIMESTAMPTZ,
+    finalized_by TEXT,
+    deleted_at TIMESTAMPTZ,
+    created_by TEXT, updated_by TEXT,
+    created_at TIMESTAMPTZ DEFAULT now(),
+    updated_at TIMESTAMPTZ DEFAULT now()
+  )`).then(() => pool.query(
+      `CREATE INDEX IF NOT EXISTS appraisals_dealer_idx ON appraisals (dealer_key, updated_at DESC)`))
+    .then(() => console.log('   Appraisals: Postgres ready ✅'))
+    .catch(e => console.error('Appraisals table init error:', e.message))
+
+  pool.query(`CREATE TABLE IF NOT EXISTS vehicles (
+    id TEXT PRIMARY KEY,
+    dealer_key TEXT NOT NULL DEFAULT 'default',
+    vin TEXT,
+    stock_number TEXT,
+    year TEXT, make TEXT, model TEXT, series TEXT,
+    odometer INTEGER,
+    status TEXT DEFAULT 'available',
+    cost INTEGER, price INTEGER,
+    data JSONB NOT NULL DEFAULT '{}'::jsonb,
+    deleted_at TIMESTAMPTZ,
+    created_by TEXT, updated_by TEXT,
+    created_at TIMESTAMPTZ DEFAULT now(),
+    updated_at TIMESTAMPTZ DEFAULT now()
+  )`).then(() => pool.query(
+      `CREATE INDEX IF NOT EXISTS vehicles_dealer_idx ON vehicles (dealer_key, updated_at DESC)`))
+    .then(() => console.log('   Inventory: Postgres ready ✅'))
+    .catch(e => console.error('Vehicles table init error:', e.message))
+
+  // One settings row per dealership, holding the store details, staff list and
+  // the pricing strategy that drives every suggested-buy number.
+  pool.query(`CREATE TABLE IF NOT EXISTS dealer_settings (
+    dealer_key TEXT PRIMARY KEY,
+    settings JSONB NOT NULL,
+    updated_by TEXT,
+    updated_at TIMESTAMPTZ DEFAULT now()
+  )`).then(() => console.log('   Dealer settings: Postgres ready ✅'))
+    .catch(e => console.error('Dealer settings init error:', e.message))
+
   pool.query(`CREATE TABLE IF NOT EXISTS market_cache (
     cache_key TEXT PRIMARY KEY,
     market JSONB NOT NULL,
@@ -415,6 +481,118 @@ app.post('/api/claude', strictLimiter, async (req, res) => {
   } catch (err) {
     res.status(500).json({ error: err.message })
   }
+})
+
+// ── APPRAISALS & INVENTORY ───────────────────────────────────────────
+// Records are stored as the whole object in a `data` column, with the fields we
+// actually query promoted to real columns. The appraisal object has ~50 fields
+// and grows as features are added; mapping each one by hand would mean a schema
+// change every time, and any field I forgot would be silently dropped on save —
+// exactly the quiet failure that's hardest to notice.
+
+const DEALER_KEY = process.env.DEALER_KEY || 'default'
+
+function rowToRecord(r) {
+  // The stored object is the source of truth; the columns are for querying.
+  const d = r.data || {}
+  return { ...d, id: r.id, updatedAt: r.updated_at, createdAt: r.created_at,
+           _updatedBy: r.updated_by || '', _createdBy: r.created_by || '' }
+}
+
+function makeCrud(table, promote) {
+  return {
+    async list() {
+      const r = await pool.query(
+        `SELECT * FROM ${table} WHERE dealer_key=$1 AND deleted_at IS NULL
+         ORDER BY updated_at DESC LIMIT 2000`, [DEALER_KEY])
+      return r.rows.map(rowToRecord)
+    },
+    async upsert(rec, user) {
+      const cols = promote(rec)
+      const names = Object.keys(cols)
+      const setList = names.map(n => `${n}=EXCLUDED.${n}`).join(', ')
+      const placeholders = names.map((_, i) => `$${i + 5}`).join(', ')
+      await pool.query(
+        `INSERT INTO ${table} (id, dealer_key, data, updated_by, ${names.join(', ')})
+         VALUES ($1,$2,$3,$4,${placeholders})
+         ON CONFLICT (id) DO UPDATE SET
+           data=EXCLUDED.data, updated_by=EXCLUDED.updated_by,
+           updated_at=now(), ${setList}`,
+        [rec.id, DEALER_KEY, JSON.stringify(rec), user || '', ...names.map(n => cols[n])])
+    },
+    async remove(id) {
+      // Soft delete: on a shared dataset one person shouldn't be able to
+      // destroy another's work with a mis-tap.
+      await pool.query(
+        `UPDATE ${table} SET deleted_at=now() WHERE id=$1 AND dealer_key=$2`, [id, DEALER_KEY])
+    },
+  }
+}
+
+const num = v => { const n = Number(v); return Number.isFinite(n) ? Math.round(n) : null }
+
+const appraisalsRepo = makeCrud('appraisals', a => ({
+  vin: a.vin || '', year: a.year || '', make: a.make || '', model: a.model || '',
+  series: a.series || '', odometer: num(a.odometer), status: a.status || 'in_progress',
+  appraised_value: num(a.appraisedValue), suggested_buy: num(a.suggestedBuy),
+  first_name: a.firstName || '', last_name: a.lastName || '',
+  phone: a.phone || '', email: a.email || '',
+  finalized_at: a.finalizedAt || null, finalized_by: a.finalizedBy || null,
+}))
+
+const vehiclesRepo = makeCrud('vehicles', v => ({
+  vin: v.vin || '', year: v.year || '', make: v.make || '', model: v.model || '',
+  series: v.series || '', odometer: num(v.odometer), status: v.status || 'available',
+  stock_number: v.stockNumber || '', cost: num(v.cost), price: num(v.price),
+}))
+
+function mountCrud(path, repo) {
+  app.get(`/api/${path}`, requireTeamKey, async (req, res) => {
+    if (!pool) return res.json({ success: true, items: [], dbConnected: false })
+    try { res.json({ success: true, dbConnected: true, items: await repo.list() }) }
+    catch (e) { console.error(`GET ${path}:`, e.message); res.status(500).json({ error: 'Could not load' }) }
+  })
+  app.put(`/api/${path}/:id`, requireTeamKey, async (req, res) => {
+    if (!pool) return res.status(503).json({ error: 'No database' })
+    const rec = req.body && req.body.record
+    if (!rec || !rec.id) return res.status(400).json({ error: 'record with id required' })
+    if (rec.id !== req.params.id) return res.status(400).json({ error: 'id mismatch' })
+    try {
+      await repo.upsert(rec, (req.body.user || '').toString().slice(0, 80))
+      res.json({ success: true })
+    } catch (e) { console.error(`PUT ${path}:`, e.message); res.status(500).json({ error: 'Could not save' }) }
+  })
+  app.delete(`/api/${path}/:id`, requireTeamKey, async (req, res) => {
+    if (!pool) return res.status(503).json({ error: 'No database' })
+    try { await repo.remove(req.params.id); res.json({ success: true }) }
+    catch (e) { console.error(`DELETE ${path}:`, e.message); res.status(500).json({ error: 'Could not delete' }) }
+  })
+}
+
+mountCrud('appraisals', appraisalsRepo)
+mountCrud('vehicles', vehiclesRepo)
+
+// Dealer settings — one row per dealership.
+app.get('/api/dealer', requireTeamKey, async (req, res) => {
+  if (!pool) return res.json({ success: true, settings: null })
+  try {
+    const r = await pool.query('SELECT settings FROM dealer_settings WHERE dealer_key=$1', [DEALER_KEY])
+    res.json({ success: true, settings: r.rows[0]?.settings || null })
+  } catch (e) { console.error('GET dealer:', e.message); res.status(500).json({ error: 'Could not load settings' }) }
+})
+
+app.put('/api/dealer', requireTeamKey, async (req, res) => {
+  if (!pool) return res.status(503).json({ error: 'No database' })
+  const settings = req.body && req.body.settings
+  if (!settings || typeof settings !== 'object') return res.status(400).json({ error: 'settings required' })
+  try {
+    await pool.query(
+      `INSERT INTO dealer_settings (dealer_key, settings, updated_by)
+       VALUES ($1,$2,$3)
+       ON CONFLICT (dealer_key) DO UPDATE SET settings=$2, updated_by=$3, updated_at=now()`,
+      [DEALER_KEY, JSON.stringify(settings), (req.body.user || '').toString().slice(0, 80)])
+    res.json({ success: true })
+  } catch (e) { console.error('PUT dealer:', e.message); res.status(500).json({ error: 'Could not save settings' }) }
 })
 
 // ── CALIBRATION ──────────────────────────────────────────────────────
