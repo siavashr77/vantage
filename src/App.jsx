@@ -2531,7 +2531,12 @@ function AppraisalForm({initial,onSave,onBack,showToast,onConvert,onFinalize,onU
           <div style={{flex:1,minWidth:0}}>
             <div style={{fontSize:16,fontWeight:800,color:'#fff',letterSpacing:-0.2}}>Comparables</div>
             <div style={{fontSize:13,color:'rgba(255,255,255,0.85)',marginTop:2,whiteSpace:'nowrap',overflow:'hidden',textOverflow:'ellipsis'}}>
-              {a.marketMid?`${(a._comps||[]).length||a.activeComps||0} listings · ${fmt(a.marketMid)} mid`:(ml?'Loading…':'Not loaded yet')}
+              {(()=>{
+                const n=(a._comps||[]).length||a.activeComps||0;
+                if(ml) return 'Loading…';
+                if(!n) return a.vin?.length===17?'Not loaded yet':'Add a VIN to price this car';
+                return `${n} listings · ${fmt(a.marketMid)} mid`;
+              })()}
             </div>
           </div>
           <ChevronRight size={20} color="#fff" style={{flexShrink:0,opacity:0.9}}/>
@@ -3904,7 +3909,12 @@ export default function Vantage() {
     a.lastName=(lead.customer_name||'').split(' ').slice(1).join(' ')||'';
     a.email=lead.customer_email||''; a.phone=lead.customer_phone||'';
     a.postal=lead.postal||'';
-    a.marketMid=lead.market_mid||null;
+    // The lead's market mid was calculated at submission time from whatever the
+    // customer told us, and carrying it over made an unsupported figure look
+    // like a valuation — it displayed alongside "0 listings" and fed the
+    // suggested buy. The appraisal fetches its own market data; until it does,
+    // there is no number, which is the honest state.
+    a._leadMarketMid=lead.market_mid||null;   // kept for reference only
     a.postal=lead.postal||a.postal;
     a.accidentVisible=!!lead.accident;
     a._leadId=lead.id;
