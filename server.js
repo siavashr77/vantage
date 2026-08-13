@@ -62,6 +62,15 @@ const strictLimiter = rateLimit({
   standardHeaders: true, legacyHeaders: false,
   message: { error: 'Too many requests — please try again in a minute.' },
 })
+// Lead submission is public by necessity and can't sit behind auth. Someone
+// scripting it could bury real customers in noise and drain the MarketCheck
+// quota, since every submission triggers a market lookup. A person completes
+// this form once; five an hour is generous for a household behind one IP.
+const leadSubmitLimiter = rateLimit({
+  windowMs: 60 * 60 * 1000, max: 5,
+  standardHeaders: true, legacyHeaders: false,
+  message: { error: 'Too many estimate requests from this connection. Please try again later, or call us.' },
+})
 app.use('/api/', generalLimiter)
 
 // ── Input validation helpers ─────────────────────────────────────────
@@ -2077,7 +2086,7 @@ async function marketForLeadRaw({ vin, specId, postal }) {
 // POST /api/leads — widget submission. Computes the offer and (if DB present)
 // stores it as a pending lead. Returns the offer even with no DB so the widget
 // works during setup.
-app.post('/api/leads', strictLimiter, async (req, res) => {
+app.post('/api/leads', leadSubmitLimiter, async (req, res) => {
   try {
     const b = req.body || {}
     const name = (b.customerName || '').toString().trim().slice(0, 120)
@@ -2187,7 +2196,27 @@ app.post('/api/leads', strictLimiter, async (req, res) => {
 
     // Persist if DB available; otherwise still return the offer.
     let leadId = null
+    let duplicate = false
     if (pool) {
+      // Don't record the same enquiry twice. Catches a customer double-tapping
+      // Submit, and blunts the cheapest form of abuse — replaying one payload —
+      // which would otherwise bury real leads in the inbox. The customer still
+      // gets their offer; only the duplicate row is suppressed.
+      try {
+        const dupe = await pool.query(
+          `SELECT id FROM pending_leads
+           WHERE created_at > now() - interval '30 minutes'
+             AND coalesce(customer_email,'') = $1
+             AND coalesce(customer_phone,'') = $2
+             AND coalesce(vin,'') = $3
+             AND coalesce(year,'') = $4 AND coalesce(make,'') = $5 AND coalesce(model,'') = $6
+           LIMIT 1`,
+          [email, phone, vin, year, make, model]
+        )
+        if (dupe.rows[0]) { leadId = dupe.rows[0].id; duplicate = true }
+      } catch (e) { console.error('lead dupe check:', e.message) }
+    }
+    if (pool && !duplicate) {
       try {
         const ins = await pool.query(
           `INSERT INTO pending_leads
@@ -2212,7 +2241,7 @@ app.post('/api/leads', strictLimiter, async (req, res) => {
     // Notify the team. A trade-in lead is only worth what it's worth if someone
     // calls quickly, and nobody watches a dashboard all day. Fire-and-forget:
     // the customer's offer must never wait on, or fail because of, an email.
-    if (LEAD_WEBHOOK_URL) {
+    if (LEAD_WEBHOOK_URL && !duplicate) {
       const summary = {
         leadId,
         vehicle: [year, make, model, trim].filter(Boolean).join(' '),
