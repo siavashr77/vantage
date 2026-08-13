@@ -110,13 +110,36 @@ async function verifyClerkSession(req) {
   }
 }
 
+const clerkEmailCache = new Map()
+async function clerkEmailFor(userId) {
+  if (!userId) return ''
+  if (clerkEmailCache.has(userId)) return clerkEmailCache.get(userId)
+  try {
+    const { createClerkClient } = await import('@clerk/backend')
+    const clerk = createClerkClient({ secretKey: CLERK_SECRET_KEY })
+    const u = await clerk.users.getUser(userId)
+    const email = u?.primaryEmailAddress?.emailAddress
+      || u?.emailAddresses?.[0]?.emailAddress
+      || [u?.firstName, u?.lastName].filter(Boolean).join(' ')
+      || userId
+    clerkEmailCache.set(userId, email)
+    return email
+  } catch {
+    return userId   // an unresolvable id still beats no record at all
+  }
+}
+
 async function requireTeamKey(req, res, next) {
   // Prefer a signed-in user when Clerk is configured.
   if (CLERK_SECRET_KEY) {
     const claims = await verifyClerkSession(req)
     if (claims) {
       req.clerkUserId = claims.sub
-      req.clerkEmail = claims.email || ''
+      // Session tokens don't carry an email by default, and a raw user id in an
+      // audit log is unreadable exactly when you need to read it. Resolve it
+      // once per user and keep it in memory — a lookup on every request would
+      // be a Clerk API call per page load.
+      req.clerkEmail = claims.email || await clerkEmailFor(claims.sub)
       return next()
     }
   }
