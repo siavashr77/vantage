@@ -613,6 +613,41 @@ function mountCrud(path, repo) {
 mountCrud('appraisals', appraisalsRepo)
 mountCrud('vehicles', vehiclesRepo)
 
+// ── Backup export ────────────────────────────────────────────────────
+// Railway's managed backups need their Pro plan, so until that's on there is
+// exactly one copy of this data. This produces a single file holding everything
+// — appraisals, inventory, leads, settings, calibration history — that can be
+// downloaded and kept somewhere else. Restoring is a manual job, but having the
+// records at all is the part that matters.
+app.get('/api/export', requireTeamKey, async (req, res) => {
+  if (!pool) return res.status(503).json({ error: 'No database' })
+  try {
+    const tables = ['appraisals', 'vehicles', 'pending_leads', 'dealer_settings', 'appraisal_calibration', 'dealer_fees']
+    const out = {
+      exportedAt: new Date().toISOString(),
+      dealerKey: DEALER_KEY,
+      note: 'Vantage backup. Keep somewhere other than the server this came from.',
+      tables: {},
+    }
+    for (const t of tables) {
+      try {
+        const r = await pool.query(`SELECT * FROM ${t}`)
+        out.tables[t] = r.rows
+      } catch (e) {
+        // A missing table shouldn't cost you the rest of the backup.
+        out.tables[t] = { error: e.message }
+      }
+    }
+    const stamp = new Date().toISOString().slice(0, 10)
+    res.setHeader('Content-Type', 'application/json')
+    res.setHeader('Content-Disposition', `attachment; filename="vantage-backup-${stamp}.json"`)
+    res.send(JSON.stringify(out, null, 2))
+  } catch (e) {
+    console.error('export error:', e.message)
+    res.status(500).json({ error: 'Could not build the export' })
+  }
+})
+
 // Dealer settings — one row per dealership.
 app.get('/api/dealer', requireTeamKey, async (req, res) => {
   if (!pool) return res.json({ success: true, settings: null })

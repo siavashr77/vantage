@@ -2,7 +2,7 @@ import React, { useState, useEffect, useRef, useCallback } from "react";
 import { useAuth, useUser, UserButton } from "@clerk/clerk-react";
 import {
   Car, BarChart2, Camera, FileText, User, DollarSign,
-  CheckCircle, Clock, XCircle, AlertTriangle, Upload,
+  CheckCircle, Clock, XCircle, AlertTriangle, Upload, Download,
   ChevronDown, ChevronUp, RefreshCw, Save, X, TrendingUp,
   Tag, ArrowRight, Radio, Search, Plus, ChevronLeft,
   Activity, Sparkles, Globe, AlertCircle, LayoutDashboard,
@@ -1331,6 +1331,35 @@ function DealerSettings({dealer,onSave,showToast}) {
           <div style={{marginTop:12,padding:'10px 12px',background:C.tealMuted,borderRadius:6,border:`1px solid ${C.teal}`}}>
             <div style={{fontSize:11,color:C.teal,fontWeight:600,marginBottom:2}}>Logo is used on:</div>
             <div style={{fontSize:11,color:C.textMid}}>• Window stickers<br/>• Appraisal reports<br/>• Consumer offer documents<br/>• Dashboard header</div>
+          </div>
+        </Card>
+
+        {/* Backup — the server has no automated copy, so this is the only one
+            unless the hosting plan is upgraded. Put in Settings where someone
+            will actually find it. */}
+        <Card style={{padding:20}}>
+          <div style={{fontWeight:700,fontSize:14,color:C.navy,marginBottom:6,display:'flex',alignItems:'center',gap:8}}>
+            <Download size={15} color={C.navy}/>Backup
+          </div>
+          <div style={{fontSize:12.5,color:C.textMid,lineHeight:1.6,marginBottom:12}}>
+            Downloads every appraisal, vehicle, lead and setting as a single file.
+            Keep it somewhere other than this app — OneDrive, iCloud, an email to
+            yourself. There is no automatic backup, so this is the only copy.
+          </div>
+          <Btn onClick={async()=>{
+            try{
+              const r=await fetch(`${API_BASE}/api/export`,{headers:teamHeaders()});
+              if(!r.ok) throw new Error('failed');
+              const blob=await r.blob();
+              const url=URL.createObjectURL(blob);
+              const a=document.createElement('a');
+              a.href=url; a.download=`vantage-backup-${new Date().toISOString().slice(0,10)}.json`;
+              document.body.appendChild(a); a.click(); a.remove();
+              URL.revokeObjectURL(url);
+            }catch{ alert('Could not download the backup. Check your connection and try again.'); }
+          }}><Download size={13}/>Download backup</Btn>
+          <div style={{fontSize:11.5,color:C.textLight,marginTop:10,lineHeight:1.5}}>
+            Worth doing weekly, and before anything that changes a lot of records.
           </div>
         </Card>
 
