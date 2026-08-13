@@ -304,6 +304,31 @@ if (DATABASE_URL) {
   )`).then(() => console.log('   Calibration log: Postgres ready ✅'))
     .catch(e => console.error('Calibration init error:', e.message))
 
+  // Marks leads whose personal fields have been cleared by the retention sweep,
+  // so the sweep doesn't reconsider them and we can tell "never had contact
+  // details" apart from "had them, and they were removed on schedule".
+  pool.query(`ALTER TABLE pending_leads ADD COLUMN IF NOT EXISTS anonymised_at TIMESTAMPTZ`)
+    .catch(e => console.error('retention column:', e.message))
+
+  // Who looked at whose personal details, and when. Needed if there's ever a
+  // privacy complaint or a dispute about who saw what — and it can't be added
+  // after the fact, because you can't reconstruct history you never recorded.
+  pool.query(`CREATE TABLE IF NOT EXISTS access_log (
+    id BIGSERIAL PRIMARY KEY,
+    dealer_key TEXT NOT NULL DEFAULT 'default',
+    actor TEXT,
+    actor_id TEXT,
+    action TEXT NOT NULL,
+    subject TEXT,
+    subject_id TEXT,
+    detail JSONB,
+    ip TEXT,
+    created_at TIMESTAMPTZ DEFAULT now()
+  )`).then(() => pool.query(
+      `CREATE INDEX IF NOT EXISTS access_log_time_idx ON access_log (dealer_key, created_at DESC)`))
+    .then(() => console.log('   Access log: Postgres ready ✅'))
+    .catch(e => console.error('Access log init error:', e.message))
+
   pool.query(`CREATE TABLE IF NOT EXISTS vin_decode_cache (
     vin TEXT PRIMARY KEY,
     decoded JSONB NOT NULL,
@@ -613,6 +638,46 @@ function mountCrud(path, repo) {
 mountCrud('appraisals', appraisalsRepo)
 mountCrud('vehicles', vehiclesRepo)
 
+// Record an access to personal data. Fire-and-forget: an audit write must
+// never fail the request it's describing, or the log becomes a reason for the
+// app to break.
+function logAccess(req, action, { subject, subjectId, detail } = {}) {
+  if (!pool) return
+  const actor = req.clerkEmail || req.clerkUserId || 'team-key'
+  pool.query(
+    `INSERT INTO access_log(dealer_key, actor, actor_id, action, subject, subject_id, detail, ip)
+     VALUES($1,$2,$3,$4,$5,$6,$7,$8)`,
+    [DEALER_KEY, actor, req.clerkUserId || '', action, subject || '', String(subjectId || ''),
+     detail ? JSON.stringify(detail) : null, (req.ip || '').slice(0, 45)]
+  ).catch(e => console.error('access log:', e.message))
+}
+
+// ── Data retention ───────────────────────────────────────────────────
+// An unconverted lead from two years ago is liability, not asset: it's personal
+// data being held for no purpose, which PIPEDA asks us not to do. Rather than
+// deleting the row and losing the ability to say how many enquiries we handled,
+// the identifying fields are cleared and the rest kept. Runs daily; the window
+// is configurable so it can be shortened without a deploy.
+const RETENTION_DAYS = Number(process.env.LEAD_RETENTION_DAYS || 730)
+
+async function anonymiseOldLeads() {
+  if (!pool || !RETENTION_DAYS) return
+  try {
+    const r = await pool.query(
+      `UPDATE pending_leads
+          SET customer_name = NULL, customer_email = NULL, customer_phone = NULL,
+              photos = NULL, anonymised_at = now()
+        WHERE created_at < now() - ($1 || ' days')::interval
+          AND anonymised_at IS NULL
+          AND (customer_name IS NOT NULL OR customer_email IS NOT NULL OR customer_phone IS NOT NULL)`,
+      [String(RETENTION_DAYS)]
+    )
+    if (r.rowCount) console.log(`   Retention: anonymised ${r.rowCount} lead(s) older than ${RETENTION_DAYS} days`)
+  } catch (e) {
+    console.error('retention sweep:', e.message)
+  }
+}
+
 // ── Backup export ────────────────────────────────────────────────────
 // Railway's managed backups need their Pro plan, so until that's on there is
 // exactly one copy of this data. This produces a single file holding everything
@@ -621,6 +686,9 @@ mountCrud('vehicles', vehiclesRepo)
 // records at all is the part that matters.
 app.get('/api/export', requireTeamKey, async (req, res) => {
   if (!pool) return res.status(503).json({ error: 'No database' })
+  // Every customer record leaving the system in one file — the most significant
+  // disclosure available, so it's always recorded.
+  logAccess(req, 'data.export', { subject: 'all' })
   try {
     const tables = ['appraisals', 'vehicles', 'pending_leads', 'dealer_settings', 'appraisal_calibration', 'dealer_fees']
     const out = {
@@ -2379,6 +2447,7 @@ app.post('/api/offer/prefetch', strictLimiter, async (req, res) => {
 
 // GET /api/leads — Vantage reads pending leads (newest first). Optional ?status=
 app.get('/api/leads', requireTeamKey, async (req, res) => {
+  logAccess(req, 'leads.list', { subject: 'leads', detail: { status: req.query.status || 'all' } })
   if (!pool) return res.json({ success: true, leads: [], dbConnected: false })
   try {
     const status = (req.query.status || '').toString().trim()
@@ -2397,6 +2466,7 @@ app.get('/api/leads', requireTeamKey, async (req, res) => {
 
 // PATCH /api/leads/:id — update status (e.g. converted/dismissed).
 app.patch('/api/leads/:id', requireTeamKey, async (req, res) => {
+  logAccess(req, 'leads.update', { subject: 'lead', subjectId: req.params.id, detail: { status: req.body?.status } })
   if (!pool) return res.status(503).json({ error: 'No database connected' })
   const id = Number(req.params.id)
   const status = (req.body?.status || '').toString().trim()
@@ -2477,8 +2547,15 @@ app.get('/api/carfax/:vin', strictLimiter, async (req, res) => {
   })
 })
 
+// Sweep on boot, then daily. A deploy happens often enough that boot alone
+// would mostly work, but not reliably — a server left running for weeks would
+// never clear anything.
+setTimeout(anonymiseOldLeads, 30 * 1000)
+setInterval(anonymiseOldLeads, 24 * 60 * 60 * 1000)
+
 app.listen(PORT, () => {
   console.log(`\n✅ Vantage server running on http://localhost:${PORT}`)
+  console.log(`   Lead retention: personal fields cleared after ${RETENTION_DAYS} days`)
   console.log(`   VIN decode: NHTSA (free, no key needed)`)
   console.log(`   Market provider: ${MARKET_PROVIDER}${MARKET_PROVIDER === 'marketcheck' ? (MARKETCHECK_API_KEY ? ' ✅' : ' ⚠ set MARKETCHECK_API_KEY') : (VINAUDIT_KEY ? ' ✅' : ' ⚠ set VINAUDIT_KEY')}`)
   if (MARKET_PROVIDER === 'marketcheck') console.log(`   VIN decode: ${USE_NEOVIN ? 'NeoVIN (cached, best trim/drivetrain)' : 'NHTSA only (USE_NEOVIN=false)'}`)
