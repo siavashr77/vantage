@@ -672,7 +672,18 @@ function CompHistoryModal({ vin, onClose }){
   );
 }
 
-function CompSet({ comps, myPrice, myKm, myDays }) {
+function CompSet({ comps, myPrice, myKm, myDays, subjectTrim }) {
+  // When too few same-trim comps exist the search widens to the whole model,
+  // and the resulting average spans cars that don't sell for the same money.
+  // Marking which comps aren't the subject's trim lets the appraiser weigh that
+  // himself instead of taking the average on trust.
+  const norm = t => (t||'').toString().toLowerCase().replace(/[^a-z0-9]+/g,' ').trim();
+  const subj = norm(subjectTrim);
+  const trimDiffers = c => {
+    const ct = norm(c.trim);
+    if (!subj || !ct) return false;
+    return ct !== subj && !ct.includes(subj) && !subj.includes(ct);
+  };
   const [historyVin, setHistoryVin] = useState(null);
   const [openRow, setOpenRow] = useState(null);
   const onHistory = (vin) => setHistoryVin(vin);
@@ -724,6 +735,7 @@ function CompSet({ comps, myPrice, myKm, myDays }) {
         <table style={{width:'100%',borderCollapse:'collapse',fontSize:12}}>
           <thead><tr style={{background:C.navyMuted}}>{[
             {label:'Price',key:'price'},
+            {label:'Trim',key:'trim'},
             {label:'KM',key:'mileage'},
             {label:mode==='sold'?'Sold (days ago)':'Days',key:'days'},
             {label:'Location',key:'location'},
@@ -755,6 +767,12 @@ function CompSet({ comps, myPrice, myKm, myDays }) {
             <React.Fragment key={c.id||i}>
               <tr style={{borderTop:`1px solid ${C.border}`}}>
                 <td style={{...cell,fontFamily:'monospace',fontWeight:600,color:C.textDark,whiteSpace:'nowrap'}}>{fmt(c.price)}{c.certified&&<span style={{marginLeft:6,fontSize:9,fontWeight:700,color:C.green,background:C.greenBg,padding:'1px 5px',borderRadius:8}}>CPO</span>}</td>
+                {/* Amber where the trim isn't the subject's — a widened search
+                    averages cars that don't sell for the same money, and this
+                    is what makes that visible rather than buried in the mean. */}
+                <td style={{...cell,color:trimDiffers(c)?C.orange:C.textMid,maxWidth:150,overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'}} title={c.trim||''}>
+                  {c.trim||'—'}
+                </td>
                 <td style={{...cell,fontFamily:'monospace',color:C.textMid,whiteSpace:'nowrap'}}>{c.mileage?fmtN(c.mileage):'—'}</td>
                 {mode==='sold'
                   ? <td style={{...cell,whiteSpace:'nowrap',fontWeight:600,color:ago!=null&&ago<=14?C.green:C.textMid}}>{ago!=null?ago:'—'}</td>
@@ -777,7 +795,7 @@ function CompSet({ comps, myPrice, myKm, myDays }) {
               </tr>
               {openRow===(c.id||i)&&(
                 <tr key={(c.id||i)+'-x'}>
-                  <td colSpan={6} style={{padding:'0 12px 12px',borderBottom:`1px solid ${C.border}`}}>
+                  <td colSpan={7} style={{padding:'0 12px 12px',borderBottom:`1px solid ${C.border}`}}>
                     <div style={{fontSize:12,color:C.textMid,lineHeight:1.7}}>
                       {c.vin&&<div style={{fontFamily:'monospace',fontSize:11.5,letterSpacing:0.3}}>{c.vin}</div>}
                       {/* Asking-price history — what the seller has done with this
@@ -844,6 +862,14 @@ function CompSet({ comps, myPrice, myKm, myDays }) {
                     {openRow===(c.id||i)?'Less':'More'}
                   </button>
                 </div>
+                {/* Trim first: when the search has widened past the subject's
+                    trim, an average across unlike cars is only trustworthy if
+                    you can see what went into it. Differing trims are marked. */}
+                {c.trim&&(
+                  <div style={{marginTop:2,fontSize:12.5,fontWeight:600,color:trimDiffers(c)?C.orange:C.textDark}}>
+                    {c.trim}{trimDiffers(c)&&<span style={{fontWeight:400}}> · different trim</span>}
+                  </div>
+                )}
                 <div style={{marginTop:3,fontSize:12.5,color:C.textMid,lineHeight:1.5}}>
                   {[c.mileage?fmtN(c.mileage)+' km':null,
                     mode==='sold'?(ago!=null?`sold ${ago}d ago`:null):(c.days?`${c.days} days listed`:null),
@@ -2834,6 +2860,40 @@ function AppraisalForm({initial,onSave,onBack,showToast,onConvert,onFinalize,onU
                   <div style={{fontSize:12.5,color:C.textLight,marginTop:6,lineHeight:1.5}}>
                     {bits.join(' · ')}
                   </div>
+                  {/* When the search has widened past the subject's trim, a
+                      single average spans cars that don't sell for the same
+                      money. Showing the median per trim answers the question
+                      that average hides: which trims sit above and below. */}
+                  {(()=>{
+                    const cs=(a._comps||[]).filter(c=>c.trim&&Number.isFinite(c.price));
+                    if(cs.length<4) return null;
+                    const by={};
+                    cs.forEach(c=>{ (by[c.trim]=by[c.trim]||[]).push(c.price); });
+                    const rows=Object.entries(by)
+                      .filter(([,ps])=>ps.length>=2)
+                      .map(([t,ps])=>{
+                        const sorted=[...ps].sort((x,y)=>x-y);
+                        return {trim:t,n:ps.length,mid:sorted[Math.floor(sorted.length/2)]};
+                      })
+                      .sort((x,y)=>y.mid-x.mid);
+                    if(rows.length<2) return null;
+                    const subj=(a.series||'').toLowerCase();
+                    return (
+                      <div style={{marginTop:12,paddingTop:10,borderTop:`1px solid ${C.border}`}}>
+                        <div style={{fontSize:10.5,fontWeight:700,color:C.textLight,letterSpacing:0.4,marginBottom:6}}>BY TRIM</div>
+                        {rows.map(r=>{
+                          const isSubj=subj&&r.trim.toLowerCase().includes(subj);
+                          return (
+                            <div key={r.trim} style={{display:'flex',alignItems:'baseline',gap:8,fontSize:12.5,padding:'3px 0',color:isSubj?C.navy:C.textMid,fontWeight:isSubj?700:400}}>
+                              <span style={{flex:1,minWidth:0,overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'}}>{r.trim}</span>
+                              <span style={{color:C.textLight,fontSize:11.5}}>{r.n}</span>
+                              <span style={{fontVariantNumeric:'tabular-nums'}}>{fmt(r.mid)}</span>
+                            </div>
+                          );
+                        })}
+                      </div>
+                    );
+                  })()}
                   {a._marketMeta?.staleFallback&&(
                     <div style={{fontSize:12.5,color:C.orange,marginTop:8,lineHeight:1.5}}>
                       Most of these have been listed over {a._marketMeta.staleDays||200} days. Long-sitting cars are often already sold or mispriced, so this range is weak evidence.
@@ -2872,7 +2932,7 @@ function AppraisalForm({initial,onSave,onBack,showToast,onConvert,onFinalize,onU
               );
             })()}
             {/* Live Competitive Set — real VinAudit listings with links */}
-            {a._comps&&a._comps.length>0&&<div style={{marginBottom:10}}><CompSet comps={a._comps} myPrice={a.appraisedValue} myKm={a.odometer}/></div>}
+            {a._comps&&a._comps.length>0&&<div style={{marginBottom:10}}><CompSet comps={a._comps} myPrice={a.appraisedValue} myKm={a.odometer} subjectTrim={a.series}/></div>}
             {/* Odometer Adjustment */}
             {a.odometer&&a.marketAvgOdometer&&(()=>{
               const adj=odometerAdj(a.odometer,a.marketAvgOdometer);
@@ -3645,7 +3705,7 @@ function VehicleDetail({vehicle:iv,onSave,onBack,showToast,onShowSticker=()=>{},
               </div>
             )}
             {comps.length>0
-              ? <div style={{marginTop:12}}><CompSet comps={comps} myPrice={v.listPrice} myKm={v.odometer} myDays={days}/></div>
+              ? <div style={{marginTop:12}}><CompSet comps={comps} myPrice={v.listPrice} myKm={v.odometer} myDays={days} subjectTrim={v.series}/></div>
               : v.marketMid&&<div style={{marginTop:12,background:C.navyMuted,border:`1px solid ${C.border}`,borderRadius:10,padding:'14px 16px',textAlign:'center',fontSize:12,color:C.textMid}}>Hit <strong>Refresh</strong> above to load live competitive listings.</div>}
           </Sec>
 
