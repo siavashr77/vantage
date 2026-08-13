@@ -690,7 +690,8 @@ app.get('/api/export', requireTeamKey, async (req, res) => {
   // disclosure available, so it's always recorded.
   logAccess(req, 'data.export', { subject: 'all' })
   try {
-    const tables = ['appraisals', 'vehicles', 'pending_leads', 'dealer_settings', 'appraisal_calibration', 'dealer_fees']
+    const tables = ['appraisals', 'vehicles', 'pending_leads', 'dealer_settings',
+                    'appraisal_calibration', 'dealer_fees', 'access_log']
     const out = {
       exportedAt: new Date().toISOString(),
       dealerKey: DEALER_KEY,
