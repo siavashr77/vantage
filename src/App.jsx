@@ -2313,7 +2313,12 @@ function AppraisalForm({initial,onSave,onBack,showToast,onConvert,onFinalize,onU
     // shape is refetched once. Checking a version rather than the presence of
     // one field means future changes heal themselves too.
     const staleShape = !!(a.marketMid && a._marketMeta && a._marketMeta.shapeVersion!==MARKET_SHAPE);
-    if((a._comps || a.marketMid) && !staleShape) return;
+    // A mid with no comps behind it isn't data — it's a leftover figure, most
+    // often from a lead that carried a submission-time number across. Treating
+    // it as "already fetched" meant the listings never loaded and the appraisal
+    // showed a price nothing supported. Only a real comp set counts as loaded.
+    const hasComps = (a._comps||[]).length > 0;
+    if(hasComps && !staleShape) return;
     if(autoFetchedRef.current) return;
     if(!a.make) return;                 // wait until decode has populated the vehicle
     // Odometer is not optional: pricing a car without knowing its kilometres
