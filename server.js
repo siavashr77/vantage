@@ -1356,7 +1356,8 @@ async function decodeVinCached(vin) {
 // Back-compat shim: the MarketCheck fetch used decodeVinYMMT for YMMT only.
 async function decodeVinYMMT(vin) { return decodeVinCached(vin) }
 
-async function fetchListingsMarketCheck({ vin, specId, match, status, postal, radius, callerTrim, callerDrive }) {
+async function fetchListingsMarketCheck({ vin, specId, match, status, postal, radius, callerTrim, callerDrive, callerModel }) {
+  let specModelFallback = ''
   if (!MARKETCHECK_API_KEY) throw new Error('MARKETCHECK_API_KEY not set')
   const isSold = status === 'dropped'
   // Sold/expired listings come from a separate endpoint (note the plural path).
@@ -1430,18 +1431,26 @@ async function fetchListingsMarketCheck({ vin, specId, match, status, postal, ra
     // with identical comps, including dealers far outside the search radius.
     const parts = String(specId).split('_')
     const [yr, mk, ...rest] = parts
-    // buildSpecId slugs each part, so "Santa Fe Sport" arrives as
-    // "santa-fe-sport". Hyphens have to come back out as spaces or the search
-    // looks for a model literally named "Santa-fe-sport" and matches nothing.
-    const cap = w => w.replace(/-+/g, ' ').replace(/\b[a-z]/g, c => c.toUpperCase())
+    // The spec id slugs spaces to hyphens, which is lossy: "Santa Fe Sport" and
+    // "CR-V" both arrive hyphenated, and no rule can tell a real hyphen from a
+    // former space. Searching one form finds nothing for the other — a CR-V
+    // looked up as "Cr V" returned zero comps despite 110 being listed.
+    // MarketCheck is forgiving about case and spacing but not about a wrong
+    // character, so both forms are tried and whichever returns listings wins.
+    const cap = w => w.replace(/\b[a-z]/g, c => c.toUpperCase())
+    const deSlug = w => cap(w.replace(/-+/g, ' '))
     if (/^\d{4}$/.test(yr)) params.set('year', yr)
-    if (mk) params.set('make', cap(mk))
+    if (mk) params.set('make', deSlug(mk))
     if (rest.length) {
       // Everything after the make is the model, except a trailing trim segment
       // when the caller supplied one separately.
       const trimPart = (callerTrim || '').trim()
       const modelParts = trimPart && rest.length > 1 ? rest.slice(0, -1) : rest
-      params.set('model', cap(modelParts.join(' ')))
+      // Prefer the caller's raw model when supplied — the widget has the real
+      // string and doesn't need it reconstructed from a slug at all.
+      const rawModel = (callerModel || '').trim()
+      params.set('model', rawModel || deSlug(modelParts.join(' ')))
+      specModelFallback = rawModel ? '' : cap(modelParts.join(' '))
       if (trimPart && match === 'trim') params.set('trim', trimPart)
     }
     const drive = (callerDrive || '').trim()
@@ -1463,8 +1472,21 @@ async function fetchListingsMarketCheck({ vin, specId, match, status, postal, ra
     }
     throw new Error(`MarketCheck HTTP ${r.status}`)
   }
-  const data = await r.json()
-  const listings = Array.isArray(data.listings) ? data.listings : []
+  let data = await r.json()
+  let listings = Array.isArray(data.listings) ? data.listings : []
+
+  // Hyphenated model names are ambiguous once slugged (see deSlug above), so a
+  // zero-result spec search retries with the other reading before giving up.
+  if (!listings.length && specModelFallback) {
+    try {
+      params.set('model', specModelFallback)
+      const r2 = await fetch(`${base}?${params.toString()}`)
+      if (r2.ok) {
+        const d2 = await r2.json()
+        if (Array.isArray(d2.listings) && d2.listings.length) { data = d2; listings = d2.listings }
+      }
+    } catch { /* keep the empty result */ }
+  }
   return listings.map(l => {
     const b = l.build || {}
     return {
@@ -2018,8 +2040,8 @@ app.get('/api/market-by-spec', strictLimiter, async (req, res) => {
   try {
     let active = [], dropped = []
     ;[active, dropped] = await Promise.all([
-      fetchListings({ specId, status: 'active', postal, radius }),
-      fetchListings({ specId, status: 'dropped', postal, radius, historyDays }),
+      fetchListings({ specId, status: 'active', postal, radius, callerModel: (req.query.model || '').toString().trim() }),
+      fetchListings({ specId, status: 'dropped', postal, radius, historyDays, callerModel: (req.query.model || '').toString().trim() }),
     ])
     // History widening if sparse.
     let historyWidened = false
@@ -2172,7 +2194,7 @@ async function marketForLead(args) {
   return fresh ? { ...fresh, _cached: false } : null
 }
 
-async function marketForLeadRaw({ vin, specId, postal }) {
+async function marketForLeadRaw({ vin, specId, postal, callerModel }) {
   // The free tier caps the search at 100mi regardless, so asking for 6000km was
   // misleading — it silently became ~160km. Stating the real figure keeps the
   // customer's quote and the appraiser's comps drawn from the same market.
@@ -2180,8 +2202,8 @@ async function marketForLeadRaw({ vin, specId, postal }) {
   let match = 'trim', active = [], dropped = []
   try {
     ;[active, dropped] = await Promise.all([
-      fetchListings({ vin, specId, match, status: 'active', postal, radius }),
-      fetchListings({ vin, specId, match, status: 'dropped', postal, radius, historyDays: 60 }),
+      fetchListings({ vin, specId, match, status: 'active', postal, radius, callerModel }),
+      fetchListings({ vin, specId, match, status: 'dropped', postal, radius, historyDays: 60, callerModel }),
     ])
   } catch { active = []; dropped = [] }
   if (!specId && active.length + dropped.length < MIN_COMPS) {
@@ -2265,7 +2287,7 @@ app.post('/api/leads', leadSubmitLimiter, async (req, res) => {
       ? [year, make, model, trim].filter(Boolean).map(s => s.toLowerCase().replace(/\s+/g, '-')).join('_')
       : null
     try {
-      market = await marketForLead({ vin: vin.length === 17 ? vin : undefined, specId, postal })
+      market = await marketForLead({ vin: vin.length === 17 ? vin : undefined, specId, postal, callerModel: model })
     } catch (e) { console.error('lead market error:', e.message) }
 
     // If the market lookup comes back empty, we DON'T lose the lead — persist it
