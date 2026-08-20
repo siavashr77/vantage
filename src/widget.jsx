@@ -109,7 +109,11 @@ const DEFAULT_BRANDING = {
 // conversion label comes from an env var because it's issued by Google Ads per
 // conversion action rather than being knowable from here.
 const GADS_ID = 'AW-18401659980'
-const GADS_LABEL = import.meta.env.VITE_GADS_CONVERSION_LABEL || ''
+// Label for the "Submit lead form" website conversion action. It's a public
+// identifier that ships in the page either way, so an env var would add a
+// deployment step without adding any protection. Overridable if the conversion
+// action is ever recreated, which issues a new label.
+const GADS_LABEL = import.meta.env.VITE_GADS_CONVERSION_LABEL || 'QAQECJT6kOUcEMyYzMZE'
 
 function reportConversion(result) {
   try {
@@ -119,8 +123,12 @@ function reportConversion(result) {
     if (!result || result.duplicate) return
 
     if (typeof window.gtag === 'function' && GADS_LABEL) {
+      // Value and currency match how the conversion action is configured in
+      // Google Ads, so reported figures line up with what the account expects.
       window.gtag('event', 'conversion', {
         send_to: `${GADS_ID}/${GADS_LABEL}`,
+        value: 1.0,
+        currency: 'CAD',
       })
     }
     // Meta's equivalent, when a pixel is configured. Harmless when it isn't.
