@@ -8,6 +8,37 @@
     <meta name="theme-color" content="#044A7E" />
     <link rel="icon" type="image/svg+xml" href="/tradelane-logo.svg" />
 
+    <!-- ── Advertising tags ────────────────────────────────────────────
+         This file is the TradeLane build entry: scripts/site-target.mjs only
+         promotes it to dist/index.html when SITE_TARGET=tradelane, so these
+         tags ship on tradelane.ca and never on the Vantage dealer app.
+
+         The Google Ads ID is a public identifier and is safe in source. The
+         Meta pixel is read from VITE_META_PIXEL_ID at build time so it can be
+         switched on later by setting one Netlify variable — no code change.
+         Vite leaves the %VITE_...% token untouched when the variable is unset,
+         which is what the '%' check below detects. -->
+    <script async src="https://www.googletagmanager.com/gtag/js?id=AW-18401659980"></script>
+    <script>
+      window.dataLayer = window.dataLayer || [];
+      function gtag(){ dataLayer.push(arguments); }
+      gtag('js', new Date());
+      gtag('config', 'AW-18401659980');
+
+      (function () {
+        var metaId = '%VITE_META_PIXEL_ID%';
+        // Unset builds leave the literal token in place; treat that as "off".
+        if (!metaId || metaId.indexOf('%') !== -1) return;
+        !function(f,b,e,v,n,t,s){if(f.fbq)return;n=f.fbq=function(){n.callMethod?
+        n.callMethod.apply(n,arguments):n.queue.push(arguments)};if(!f._fbq)f._fbq=n;
+        n.push=n;n.loaded=!0;n.version='2.0';n.queue=[];t=b.createElement(e);t.async=!0;
+        t.src=v;s=b.getElementsByTagName(e)[0];s.parentNode.insertBefore(t,s)}
+        (window,document,'script','https://connect.facebook.net/en_US/fbevents.js');
+        fbq('init', metaId);
+        fbq('track', 'PageView');
+      })();
+    </script>
+
     <!-- Open Graph (link previews when shared) -->
     <meta property="og:title" content="What's your car actually worth?" />
     <meta property="og:description" content="A free estimate built from cars actually listed near you — not a lowball anchor. Takes about a minute." />

@@ -102,6 +102,36 @@ const DEFAULT_BRANDING = {
   footer: 'Powered by Vantage',
 }
 
+// ── Ad conversion reporting ─────────────────────────────────────────
+// Fired only once the backend has confirmed a lead was created — not on the
+// submit click — so abandoned or rejected submissions never count. gtag only
+// exists on the TradeLane build, so this is a no-op inside Vantage, and the
+// conversion label comes from an env var because it's issued by Google Ads per
+// conversion action rather than being knowable from here.
+const GADS_ID = 'AW-18401659980'
+const GADS_LABEL = import.meta.env.VITE_GADS_CONVERSION_LABEL || ''
+
+function reportConversion(result) {
+  try {
+    // The backend returns duplicate:true when it recognises the same enquiry
+    // inside 30 minutes. Counting that would inflate the conversion figure the
+    // ad spend is judged against, so it's skipped.
+    if (!result || result.duplicate) return
+
+    if (typeof window.gtag === 'function' && GADS_LABEL) {
+      window.gtag('event', 'conversion', {
+        send_to: `${GADS_ID}/${GADS_LABEL}`,
+      })
+    }
+    // Meta's equivalent, when a pixel is configured. Harmless when it isn't.
+    if (typeof window.fbq === 'function') {
+      window.fbq('track', 'Lead')
+    }
+  } catch {
+    // Analytics must never break the customer's offer.
+  }
+}
+
 // Where this visit came from. Read once at load: ?src= or a utm_source wins,
 // otherwise infer from the referrer, so an untagged Instagram link is still
 // attributed rather than lumped in with direct traffic.
@@ -340,6 +370,7 @@ function Widget({ branding, theme } = {}) {
       })
       const d = await r.json()
       if (!r.ok) { setError(d.error || 'Something went wrong. Please try again.'); setSubmitting(false); return }
+      reportConversion(d)
       setResult(d); setStep('result')
     } catch {
       setError('Something went wrong submitting your details. Please try again.')
