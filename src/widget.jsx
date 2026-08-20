@@ -166,6 +166,18 @@ function detectSource() {
 }
 
 function Widget({ branding, theme } = {}) {
+  useEffect(() => {
+    if (!year || !make || !model) { setTrims([]); return }
+    let alive = true
+    setLoadingTrims(true)
+    fetch(`${API_BASE}/api/trims?year=${encodeURIComponent(year)}&make=${encodeURIComponent(make)}&model=${encodeURIComponent(model)}`)
+      .then(r => r.ok ? r.json() : null)
+      .then(d => { if (alive) setTrims(Array.isArray(d?.trims) ? d.trims : []) })
+      .catch(() => { if (alive) setTrims([]) })
+      .finally(() => { if (alive) setLoadingTrims(false) })
+    return () => { alive = false }
+  }, [year, make, model])
+
   const sourceRef = useRef(null)
   if (sourceRef.current === null) sourceRef.current = detectSource()
   // TradeLane supplies its own brand colours; Vantage and the standalone embed
@@ -223,6 +235,12 @@ function Widget({ branding, theme } = {}) {
   const [make, setMake] = useState('')
   const [model, setModel] = useState('')
   const [trim, setTrim] = useState('')
+  // Real trims for this year/make/model, from what's actually listed in the
+  // market. A free-text box produced values like "sport" or "" that matched no
+  // listing, which then widened the comp search to the whole model and priced
+  // a loaded trim against a base one.
+  const [trims, setTrims] = useState([])
+  const [loadingTrims, setLoadingTrims] = useState(false)
   const [models, setModels] = useState([])           // NHTSA models for year+make
   const [loadingModels, setLoadingModels] = useState(false)
 
@@ -335,7 +353,9 @@ function Widget({ branding, theme } = {}) {
   // YMMT path → build vehicle, prefetch.
   function confirmYmmt() {
     if (!(year && make && model)) { setError('Please choose year, make, and model.'); return }
-    const veh = { vin: '', year, make, model, trim }
+    // "Not listed / not sure" is a UI choice, not a trim — send it as blank so
+    // the comp search widens honestly rather than hunting for a literal match.
+    const veh = { vin: '', year, make, model, trim: trim === '__other' ? '' : trim }
     setVehicle(veh)
     if (fsa) tryPrefetch(veh, fsa)
   }
@@ -564,7 +584,18 @@ function Widget({ branding, theme } = {}) {
                   </div>
                   <div>
                     <label style={label}>Trim <span style={{ color: C.textLight, fontWeight: 400 }}>(optional)</span></label>
-                    <input style={input} value={trim} onChange={e => setTrim(e.target.value)} placeholder="e.g. XLE" />
+                    {trims.length > 0 ? (
+                      <select style={input} value={trim} onChange={e => setTrim(e.target.value)}>
+                        <option value="">{loadingTrims ? 'Loading…' : 'Select trim'}</option>
+                        {trims.map(t => <option key={t} value={t}>{t}</option>)}
+                        <option value="__other">Not listed / not sure</option>
+                      </select>
+                    ) : (
+                      // No market trims for this vehicle — never block the
+                      // customer, just take whatever they tell us.
+                      <input style={input} value={trim} onChange={e => setTrim(e.target.value)}
+                        placeholder={loadingTrims ? 'Loading trims…' : 'e.g. XLE'} />
+                    )}
                   </div>
                   {!vehicle && <button style={btn} onClick={confirmYmmt}>Continue</button>}
                 </div>
