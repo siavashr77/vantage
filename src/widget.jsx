@@ -166,18 +166,6 @@ function detectSource() {
 }
 
 function Widget({ branding, theme } = {}) {
-  useEffect(() => {
-    if (!year || !make || !model) { setTrims([]); return }
-    let alive = true
-    setLoadingTrims(true)
-    fetch(`${API_BASE}/api/trims?year=${encodeURIComponent(year)}&make=${encodeURIComponent(make)}&model=${encodeURIComponent(model)}`)
-      .then(r => r.ok ? r.json() : null)
-      .then(d => { if (alive) setTrims(Array.isArray(d?.trims) ? d.trims : []) })
-      .catch(() => { if (alive) setTrims([]) })
-      .finally(() => { if (alive) setLoadingTrims(false) })
-    return () => { alive = false }
-  }, [year, make, model])
-
   const sourceRef = useRef(null)
   if (sourceRef.current === null) sourceRef.current = detectSource()
   // TradeLane supplies its own brand colours; Vantage and the standalone embed
@@ -241,6 +229,21 @@ function Widget({ branding, theme } = {}) {
   // a loaded trim against a base one.
   const [trims, setTrims] = useState([])
   const [loadingTrims, setLoadingTrims] = useState(false)
+
+  // Placed after the state it reads: a dependency array is evaluated during
+  // render, so referencing year/make/model from above their declarations threw
+  // a temporal-dead-zone error and took the whole page down.
+  useEffect(() => {
+    if (!year || !make || !model) { setTrims([]); return }
+    let alive = true
+    setLoadingTrims(true)
+    fetch(`${API_BASE}/api/trims?year=${encodeURIComponent(year)}&make=${encodeURIComponent(make)}&model=${encodeURIComponent(model)}`)
+      .then(r => r.ok ? r.json() : null)
+      .then(d => { if (alive) setTrims(Array.isArray(d?.trims) ? d.trims : []) })
+      .catch(() => { if (alive) setTrims([]) })
+      .finally(() => { if (alive) setLoadingTrims(false) })
+    return () => { alive = false }
+  }, [year, make, model])
   const [models, setModels] = useState([])           // NHTSA models for year+make
   const [loadingModels, setLoadingModels] = useState(false)
 
