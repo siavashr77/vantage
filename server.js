@@ -1442,15 +1442,28 @@ async function fetchListingsMarketCheck({ vin, specId, match, status, postal, ra
     if (/^\d{4}$/.test(yr)) params.set('year', yr)
     if (mk) params.set('make', deSlug(mk))
     if (rest.length) {
-      // Everything after the make is the model, except a trailing trim segment
-      // when the caller supplied one separately.
       const trimPart = (callerTrim || '').trim()
-      const modelParts = trimPart && rest.length > 1 ? rest.slice(0, -1) : rest
-      // Prefer the caller's raw model when supplied — the widget has the real
-      // string and doesn't need it reconstructed from a slug at all.
       const rawModel = (callerModel || '').trim()
-      params.set('model', rawModel || deSlug(modelParts.join(' ')))
-      specModelFallback = rawModel ? '' : cap(modelParts.join(' '))
+
+      if (rawModel) {
+        // Caller gave us the real model string — no reconstruction needed.
+        params.set('model', rawModel)
+        specModelFallback = ''
+      } else {
+        // buildSpecId appends the trim as a further segment, so a Range Rover
+        // HSE Westminster arrives as four parts and treating them all as the
+        // model searched for "Range Rover Hse Westminster" — a model that
+        // doesn't exist, hence zero comps. The model is the FIRST segment after
+        // the make; anything beyond it is trim. That's right for multi-word
+        // models too, because the fallback below tries the longer reading when
+        // the short one finds nothing.
+        params.set('model', deSlug(rest[0]))
+        specModelFallback = rest.length > 1 ? deSlug(rest.join(' ')) : ''
+        // A trim encoded in the spec still narrows the search when we want it.
+        if (!trimPart && rest.length > 1 && match === 'trim') {
+          params.set('trim', deSlug(rest.slice(1).join(' ')))
+        }
+      }
       if (trimPart && match === 'trim') params.set('trim', trimPart)
     }
     const drive = (callerDrive || '').trim()
@@ -1477,15 +1490,29 @@ async function fetchListingsMarketCheck({ vin, specId, match, status, postal, ra
 
   // Hyphenated model names are ambiguous once slugged (see deSlug above), so a
   // zero-result spec search retries with the other reading before giving up.
-  if (!listings.length && specModelFallback) {
-    try {
-      params.set('model', specModelFallback)
-      const r2 = await fetch(`${base}?${params.toString()}`)
-      if (r2.ok) {
+  if (!listings.length && specId) {
+    // Retry in order of decreasing specificity. A spec id can't tell us where
+    // the model ends and the trim begins, so rather than guess once and return
+    // nothing, try each reading and take the first that finds real listings.
+    const attempts = []
+    if (specModelFallback) attempts.push({ model: specModelFallback, dropTrim: false })
+    if (params.get('trim')) attempts.push({ model: params.get('model'), dropTrim: true })
+    if (specModelFallback && params.get('trim')) attempts.push({ model: specModelFallback, dropTrim: true })
+
+    for (const attempt of attempts) {
+      try {
+        const p2 = new URLSearchParams(params)
+        p2.set('model', attempt.model)
+        if (attempt.dropTrim) p2.delete('trim')
+        const r2 = await fetch(`${base}?${p2.toString()}`)
+        if (!r2.ok) continue
         const d2 = await r2.json()
-        if (Array.isArray(d2.listings) && d2.listings.length) { data = d2; listings = d2.listings }
-      }
-    } catch { /* keep the empty result */ }
+        if (Array.isArray(d2.listings) && d2.listings.length) {
+          data = d2; listings = d2.listings
+          break
+        }
+      } catch { /* try the next reading */ }
+    }
   }
   return listings.map(l => {
     const b = l.build || {}
