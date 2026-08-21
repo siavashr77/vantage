@@ -2185,7 +2185,10 @@ const MARKET_SHAPE_VERSION = 'v4-subjectvin'
 function marketCacheKey({ vin, specId, postal }) {
   const fsa = (postal || '').toString().toUpperCase().replace(/\s+/g, '').slice(0, 3)
   const subject = vin && vin.length === 17 ? `vin:${vin}` : `spec:${specId || ''}`
-  return `${subject}|${fsa}`
+  // Shape version in the KEY: bumping MARKET_SHAPE_VERSION now actually
+  // invalidates old entries. Previously the version existed only as a comment
+  // of intent — old-shape payloads kept serving for up to 24h after a bump.
+  return `${MARKET_SHAPE_VERSION}|${subject}|${fsa}`
 }
 async function getCachedMarket(key) {
   if (!pool) return null
@@ -2233,11 +2236,16 @@ async function marketForLeadRaw({ vin, specId, postal, callerModel }) {
       fetchListings({ vin, specId, match, status: 'dropped', postal, radius, historyDays: 60, callerModel }),
     ])
   } catch { active = []; dropped = [] }
-  if (!specId && active.length + dropped.length < MIN_COMPS) {
+  if (active.length + dropped.length < MIN_COMPS) {
+    // Widen trim→model for BOTH paths. This previously ran only for VIN
+    // subjects, so a no-VIN (spec) lead priced off whatever thin trim-match
+    // came back — few comps → Low confidence → a median skewed by a handful
+    // of cars, while the Vantage appraisal page widened properly and got a
+    // different (better) number for the same vehicle.
     match = 'model'
     ;[active, dropped] = await Promise.all([
-      fetchListings({ vin, match, status: 'active', postal, radius }),
-      fetchListings({ vin, match, status: 'dropped', postal, radius, historyDays: 60 }),
+      fetchListings({ vin, specId, match, status: 'active', postal, radius, callerModel }),
+      fetchListings({ vin, specId, match, status: 'dropped', postal, radius, historyDays: 60, callerModel }),
     ])
   }
   // Mirror the proven /api/market chain EXACTLY so the mid matches the appraisal
@@ -2344,6 +2352,32 @@ app.post('/api/leads', leadSubmitLimiter, async (req, res) => {
     const thinMarket = noMarket || (Number(market?.compCount) || 0) < MIN_OFFER_COMPS
     const extremeKm = sb ? sb.kmExtreme === true : false
 
+    // ── What the customer will actually SEE ─────────────────────────────
+    // Computed HERE, once, so the response, the stored lead, and the team
+    // email all describe the same thing. Previously the email carried the
+    // market mid labelled "offer" while the customer saw the suggested buy —
+    // two different numbers for one lead, and neither matched Vantage.
+    const withhold = thinMarket || extremeKm
+    let customerMessage
+    if (extremeKm) {
+      customerMessage = "Because of your vehicle's mileage, we want a specialist to confirm an accurate offer for you. Someone will be in touch shortly."
+    } else if (thinMarket) {
+      customerMessage = "The market for your vehicle is limited right now, so we want a specialist to give you an accurate offer. Someone will be in touch shortly."
+    }
+    // On LOW-confidence offers (data's a bit thin but km is normal) we present a
+    // ±3% RANGE instead of a single number — honest about the uncertainty without
+    // killing the lead. High/Medium confidence show the precise number.
+    let offerRange = null
+    if (!withhold && confidence === 'Low' && offer > 0) {
+      offerRange = { low: Math.round(offer * 0.97), high: Math.round(offer * 1.03) }
+    }
+    // One string describing the customer's screen, for the email and the logs.
+    const customerShown = withhold
+      ? 'No number shown — specialist follow-up'
+      : offerRange
+        ? `${fmtMoney(offerRange.low)} – ${fmtMoney(offerRange.high)} (range, low confidence)`
+        : fmtMoney(offer)
+
     // Customer-reported detail — appraiser context only, does NOT affect the offer.
     const clean = v => (v == null ? null : String(v).trim().slice(0, 2000) || null)
     const conditionOpinion = clean(b.conditionOpinion)
@@ -2389,7 +2423,13 @@ app.post('/api/leads', leadSubmitLimiter, async (req, res) => {
            LIMIT 1`,
           [email, phone, vin, year, make, model]
         )
-        if (dupe.rows[0]) { leadId = dupe.rows[0].id; duplicate = true }
+        if (dupe.rows[0]) {
+          leadId = dupe.rows[0].id; duplicate = true
+          // Loud, structured log: a suppressed lead is invisible in the UI, and
+          // an appraiser comparing their inbox to the Leads page needs to know
+          // this submission existed and points at an existing row.
+          console.warn(`lead DUPLICATE suppressed → existing lead ${leadId}: ${year} ${make} ${model} vin=${vin || '—'} email=${email || '—'} phone=${phone || '—'}`)
+        }
       } catch (e) { console.error('lead dupe check:', e.message) }
     }
     if (pool && !duplicate) {
@@ -2426,7 +2466,16 @@ app.post('/api/leads', leadSubmitLimiter, async (req, res) => {
         customerName: name, customerEmail: email, customerPhone: phone,
         postal,
         source,
-        offer: market && market.mid ? market.mid : null,
+        // EXACTLY what the customer's screen said — number, range, or the
+        // specialist message. This is the headline figure for the email.
+        customerShown,
+        offer: withhold ? null : offer,
+        offerRange,
+        withheld: withhold,
+        // Context, clearly labelled as context — NOT the offer. (This field
+        // used to be sent AS "offer", which is why the email, the widget and
+        // Vantage all showed different numbers for the same car.)
+        marketMid: market && market.mid ? market.mid : null,
         confidence,
         thinMarket,
         submittedAt: new Date().toLocaleString('en-CA', { timeZone: 'America/Toronto' }),
@@ -2440,23 +2489,6 @@ app.post('/api/leads', leadSubmitLimiter, async (req, res) => {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(summary),
       }).catch(e => console.error('lead notify failed:', e.message))
-    }
-
-    // Withhold the number when EITHER gate trips; give the customer the reason.
-    const withhold = thinMarket || extremeKm
-    let customerMessage
-    if (extremeKm) {
-      customerMessage = "Because of your vehicle's mileage, we want a specialist to confirm an accurate offer for you. Someone will be in touch shortly."
-    } else if (thinMarket) {
-      customerMessage = "The market for your vehicle is limited right now, so we want a specialist to give you an accurate offer. Someone will be in touch shortly."
-    }
-
-    // On LOW-confidence offers (data's a bit thin but km is normal) we present a
-    // ±3% RANGE instead of a single number — honest about the uncertainty without
-    // killing the lead. High/Medium confidence show the precise number.
-    let offerRange = null
-    if (!withhold && confidence === 'Low' && offer > 0) {
-      offerRange = { low: Math.round(offer * 0.97), high: Math.round(offer * 1.03) }
     }
 
     res.json({
