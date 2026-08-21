@@ -2256,8 +2256,12 @@ function AppraisalForm({initial,onSave,onBack,showToast,onConvert,onFinalize,onU
 
   async function fetchMkt(){
     const dealer=onGetDealer?onGetDealer():null;
-    const postal=dealer?.postal;
-    if(!postal){showToast('Set your dealer postal code in Settings first','error');return;}
+    // The appraisal's own postal comes from the customer via the lead, which is
+    // the market the car actually sits in — and using it means an unset dealer
+    // postal can't silently block pricing, which is what left VIN-less leads
+    // showing no comparables at all.
+    const postal=(a.postal||'').trim()||dealer?.postal;
+    if(!postal){showToast('Add a postal code on this appraisal, or set one in Settings','error');return;}
     // A VIN gives the tightest match, but it isn't required — plenty of cars
     // arrive as a lead with year/make/model and no VIN, and the market can
     // still be searched on the spec. Refusing to price those was needlessly
@@ -2325,7 +2329,7 @@ function AppraisalForm({initial,onSave,onBack,showToast,onConvert,onFinalize,onU
     // produces a number that looks authoritative and isn't. Wait for it.
     if(!Number(a.odometer)) return;
     const dealer=onGetDealer?onGetDealer():null;
-    if(!dealer?.postal) return;
+    if(!((a.postal||'').trim()||dealer?.postal)) return;
     autoFetchedRef.current=true;
     fetchMkt();
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -2827,11 +2831,20 @@ function AppraisalForm({initial,onSave,onBack,showToast,onConvert,onFinalize,onU
         </div>
         {!a.marketMid?(
           <div style={{padding:'14px 0',fontSize:12.5,color:C.textLight,lineHeight:1.5}}>
-            {ml?'Pulling comparable listings…'
-              :a.vin.length!==17?'Enter the VIN to identify the vehicle.'
-              :!a.make?'Decoding the VIN…'
-              :!Number(a.odometer)?'Enter the odometer reading — pricing needs the kilometres.'
-              :'Comparable listings will load automatically.'}
+            {(()=>{
+              // Name the one thing actually missing. This said "Enter the VIN"
+              // even when year/make/model was enough, and said nothing at all
+              // when a postal was the blocker — so a lead with no VIN looked
+              // broken rather than incomplete.
+              if(ml) return 'Pulling comparable listings…';
+              const dealerP=(onGetDealer?onGetDealer():null)?.postal;
+              const identified=a.vin?.length===17||(a.year&&a.make&&a.model);
+              if(!identified) return 'Add a VIN, or the year, make and model.';
+              if(a.vin?.length===17&&!a.make) return 'Decoding the VIN…';
+              if(!Number(a.odometer)) return 'Enter the odometer reading — pricing needs the kilometres.';
+              if(!((a.postal||'').trim()||dealerP)) return 'Add a postal code so we know which market to search.';
+              return 'Comparable listings will load automatically.';
+            })()}
           </div>
         ):(
           <div>
