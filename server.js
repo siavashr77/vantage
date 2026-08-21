@@ -2179,7 +2179,7 @@ const WIDGET_DEALER = { marketPositionPct: 97, targetGross: 2500, avgRecon: 1500
 const MARKET_CACHE_TTL_HOURS = 24
 // Bump when the comp object gains or changes fields, so cached payloads from an
 // older shape are not served as though they were complete.
-const MARKET_SHAPE_VERSION = 'v4-subjectvin'
+const MARKET_SHAPE_VERSION = 'v5-leadpath-parity'
 // Build a stable cache key from VIN-or-spec + FSA (first 3 of postal). FSA-level
 // keying means nearby customers share a warm entry and the comp set is the same.
 function marketCacheKey({ vin, specId, postal }) {
@@ -2229,24 +2229,53 @@ async function marketForLeadRaw({ vin, specId, postal, callerModel }) {
   // misleading — it silently became ~160km. Stating the real figure keeps the
   // customer's quote and the appraiser's comps drawn from the same market.
   const radius = 160
-  let match = 'trim', active = [], dropped = []
-  try {
-    ;[active, dropped] = await Promise.all([
-      fetchListings({ vin, specId, match, status: 'active', postal, radius, callerModel }),
-      fetchListings({ vin, specId, match, status: 'dropped', postal, radius, historyDays: 60, callerModel }),
-    ])
-  } catch { active = []; dropped = [] }
-  if (active.length + dropped.length < MIN_COMPS) {
-    // Widen trim→model for BOTH paths. This previously ran only for VIN
-    // subjects, so a no-VIN (spec) lead priced off whatever thin trim-match
-    // came back — few comps → Low confidence → a median skewed by a handful
-    // of cars, while the Vantage appraisal page widened properly and got a
-    // different (better) number for the same vehicle.
+  let historyDays = 60
+  let match, active = [], dropped = []
+  if (specId && !vin) {
+    // NO-VIN subject → mirror /api/market-by-spec EXACTLY: a model-wide search
+    // with no trim/drivetrain narrowing (the endpoint never passes `match`, so
+    // the spec's trim segment is not sent to MarketCheck). The lead path used
+    // to open with a strict trim match here, find *just* enough comps to skip
+    // widening, and price off a thinner, different set than the appraisal page
+    // saw for the same car — Low confidence and a diverging number.
     match = 'model'
-    ;[active, dropped] = await Promise.all([
-      fetchListings({ vin, specId, match, status: 'active', postal, radius, callerModel }),
-      fetchListings({ vin, specId, match, status: 'dropped', postal, radius, historyDays: 60, callerModel }),
-    ])
+    try {
+      ;[active, dropped] = await Promise.all([
+        fetchListings({ specId, status: 'active', postal, radius, callerModel }),
+        fetchListings({ specId, status: 'dropped', postal, radius, historyDays, callerModel }),
+      ])
+    } catch { active = []; dropped = [] }
+  } else {
+    // VIN subject → mirror /api/market EXACTLY: strict trim match first,
+    // widen to model when the set is too small.
+    match = 'trim'
+    try {
+      ;[active, dropped] = await Promise.all([
+        fetchListings({ vin, match, status: 'active', postal, radius }),
+        fetchListings({ vin, match, status: 'dropped', postal, radius, historyDays }),
+      ])
+    } catch { active = []; dropped = [] }
+    if (active.length + dropped.length < MIN_COMPS) {
+      match = 'model'
+      try {
+        ;[active, dropped] = await Promise.all([
+          fetchListings({ vin, match, status: 'active', postal, radius }),
+          fetchListings({ vin, match, status: 'dropped', postal, radius, historyDays }),
+        ])
+      } catch { /* keep the strict results */ }
+    }
+  }
+  // History widening — same 180/365 ladder as both endpoints. Reach further
+  // back for sold comps ONLY while the set is still too sparse.
+  for (const step of [180, 365]) {
+    if (active.length + dropped.length >= MIN_COMPS) break
+    if (step <= historyDays) continue
+    historyDays = step
+    try {
+      dropped = specId && !vin
+        ? await fetchListings({ specId, status: 'dropped', postal, radius, historyDays, callerModel })
+        : await fetchListings({ vin, match, status: 'dropped', postal, radius, historyDays })
+    } catch { /* keep what we have */ }
   }
   // Mirror the proven /api/market chain EXACTLY so the mid matches the appraisal
   // page: blend → dedupe by VIN → build comps → split active/sold → outlier filter.
