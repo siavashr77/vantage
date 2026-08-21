@@ -7,8 +7,9 @@
     "dev": "vite",
     "server": "node server.js",
     "start": "node server.js",
-    "build": "vite build && node scripts/site-target.mjs",
-    "preview": "vite preview"
+    "build": "node scripts/check-tdz.mjs && vite build && node scripts/site-target.mjs",
+    "preview": "vite preview",
+    "check": "node scripts/check-tdz.mjs"
   },
   "dependencies": {
     "@clerk/backend": "^3.16.4",
