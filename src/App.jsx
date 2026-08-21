@@ -754,7 +754,13 @@ function CompSet({ comps, myPrice, myKm, myDays, subjectTrim }) {
               if(c.__mine){
                 return (
                   <tr key="__myvehicle" style={{background:C.tealMuted,outline:`2px solid ${C.teal}`,outlineOffset:'-2px'}}>
+                    {/* One cell per column, in the same order as the header:
+                        Price, Trim, KM, Days, Location, Dealer, More. Adding the
+                        Trim column without adding a cell here shifted every
+                        value one column left, so the odometer appeared under
+                        Trim. */}
                     <td style={{...cell,fontFamily:'monospace',fontWeight:800,color:C.teal,whiteSpace:'nowrap'}}>{mp?fmt(mp):'No price'}</td>
+                    <td style={{...cell,color:C.teal,fontWeight:700,maxWidth:150,overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'}}>{subjectTrim||'—'}</td>
                     <td style={{...cell,fontFamily:'monospace',fontWeight:700,color:C.teal}}>{myKm?fmtN(myKm):'—'}</td>
                     <td style={{...cell,fontWeight:700,color:C.teal}}>{myDays?myDays:'—'}</td>
                     <td style={{...cell,color:C.teal}}>—</td>
