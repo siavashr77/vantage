@@ -227,6 +227,24 @@ if (DATABASE_URL) {
       ADD COLUMN IF NOT EXISTS lien_balance INTEGER,
       ADD COLUMN IF NOT EXISTS photos JSONB`)
     .catch(e => console.error('Leads detail-cols alter error:', e.message))
+  // Correction resubmissions update the row in place; track when and how often.
+  pool.query(`ALTER TABLE pending_leads
+      ADD COLUMN IF NOT EXISTS updated_at TIMESTAMPTZ,
+      ADD COLUMN IF NOT EXISTS resubmit_count INTEGER DEFAULT 0`)
+    .catch(e => console.error('Leads resubmit-cols alter error:', e.message))
+  // Abuse guard: which vehicles each IP has priced in the last day. Rows are
+  // tiny and pruned opportunistically on read.
+  pool.query(`CREATE TABLE IF NOT EXISTS lead_vehicle_lookups (
+    ip TEXT NOT NULL,
+    vehicle_key TEXT NOT NULL,
+    created_at TIMESTAMPTZ DEFAULT now()
+  )`).then(() => pool.query(`CREATE INDEX IF NOT EXISTS lvl_ip_idx ON lead_vehicle_lookups (ip, created_at DESC)`))
+    .catch(e => console.error('Lookup table init error:', e.message))
+  // Budget guard: MarketCheck calls this calendar month, one row per month.
+  pool.query(`CREATE TABLE IF NOT EXISTS mc_call_log (
+    month TEXT PRIMARY KEY,
+    calls INTEGER NOT NULL DEFAULT 0
+  )`).catch(e => console.error('Call log init error:', e.message))
 
   // 24h market cache — keyed by VIN-or-spec + FSA. Lets the widget return an
   // instant offer (and the prefetch warm it) without re-paginating VinAudit.
@@ -1144,6 +1162,27 @@ const MARKETCHECK_API_KEY = process.env.MARKETCHECK_API_KEY || ''
 // Unset = no notifications, everything else unaffected.
 const LEAD_WEBHOOK_URL = process.env.LEAD_WEBHOOK_URL || ''
 const MC_HOST = 'https://api.marketcheck.com/v2'
+// ── MarketCheck call accounting ──────────────────────────────────────
+// Every HTTP request to MarketCheck draws from the same monthly quota (500 on
+// the free tier), so every call site goes through this wrapper. The counter
+// lives in Postgres because Railway restarts would wipe an in-memory one.
+function bumpMcCalls() {
+  if (!pool) return
+  const month = new Date().toISOString().slice(0, 7)   // '2026-08'
+  pool.query(
+    `INSERT INTO mc_call_log (month, calls) VALUES ($1, 1)
+     ON CONFLICT (month) DO UPDATE SET calls = mc_call_log.calls + 1`,
+    [month]
+  ).catch(() => {})
+}
+async function mcCallsThisMonth() {
+  if (!pool) return 0
+  try {
+    const r = await pool.query(`SELECT calls FROM mc_call_log WHERE month = $1`, [new Date().toISOString().slice(0, 7)])
+    return Number(r.rows[0]?.calls) || 0
+  } catch { return 0 }
+}
+function mcFetch(url) { bumpMcCalls(); return fetch(url) }
 
 // Minimal FSA→lat/long resolver. MarketCheck searches by lat/long + radius; the
 // customer's FSA (first 3 of postal) is enough to anchor the local market.
@@ -1241,7 +1280,7 @@ async function decodeVinRich(vin) {
   }
   try {
     const url = `${MC_HOST}/decode/car/neovin/${V}/specs?api_key=${encodeURIComponent(MARKETCHECK_API_KEY)}`
-    const r = await fetch(url)
+    const r = await mcFetch(url)
     if (!r.ok) return null
     const d = await r.json()
     const v = neovinCore(d)
@@ -1300,7 +1339,7 @@ async function decodeVinNeoVIN(vin) {
   if (!MARKETCHECK_API_KEY) return null
   try {
     const url = `${MC_HOST}/decode/car/neovin/${vin}/specs?api_key=${encodeURIComponent(MARKETCHECK_API_KEY)}`
-    const r = await fetch(url)
+    const r = await mcFetch(url)
     if (!r.ok) return null
     const d = await r.json()
     const v = neovinCore(d)
@@ -1474,7 +1513,7 @@ async function fetchListingsMarketCheck({ vin, specId, match, status, postal, ra
     throw new Error('No vehicle specified for market search')
   }
   const url = `${base}?${params.toString()}`
-  const r = await fetch(url)
+  const r = await mcFetch(url)
   if (!r.ok) {
     // The sold feed is supplementary: it powers Market Day Supply and the
     // "already on the market" check. If it fails, the appraisal should still
@@ -1504,7 +1543,7 @@ async function fetchListingsMarketCheck({ vin, specId, match, status, postal, ra
         const p2 = new URLSearchParams(params)
         p2.set('model', attempt.model)
         if (attempt.dropTrim) p2.delete('trim')
-        const r2 = await fetch(`${base}?${p2.toString()}`)
+        const r2 = await mcFetch(`${base}?${p2.toString()}`)
         if (!r2.ok) continue
         const d2 = await r2.json()
         if (Array.isArray(d2.listings) && d2.listings.length) {
@@ -2215,6 +2254,51 @@ async function setCachedMarket(key, market) {
 
 // Cached wrapper: returns { mid, mds, compCount, _cached } or null. Hits the
 // 24h cache first; on miss, runs the full (unlimited, accurate) fetch and stores.
+// ── Lead-path abuse guards ───────────────────────────────────────────
+// Two independent gates, checked ONLY when a lookup would cost a fresh
+// MarketCheck fetch (cache hits are free and always allowed):
+//
+// 1. Per-IP distinct-vehicle cap: real sellers price one or two cars; someone
+//    pricing their fourth different vehicle in a day is using the widget as a
+//    free appraisal terminal. Repeat lookups of the SAME vehicle never count
+//    against the cap (that's the correction/typo case).
+// 2. Monthly budget reserve: past ~80% of the MarketCheck quota, new lead
+//    lookups stop spending calls so the appraisal desk keeps working all month.
+//
+// Neither gate ever refuses the customer — they get the specialist message,
+// the lead persists, and the team calls with a hand-worked number.
+const LEAD_IP_VEHICLE_CAP = Number(process.env.LEAD_IP_VEHICLE_CAP || 3)
+const MC_MONTHLY_BUDGET = Number(process.env.MC_MONTHLY_BUDGET || 500)
+const MC_LEAD_CUTOFF_PCT = Number(process.env.MC_LEAD_CUTOFF_PCT || 0.8)
+
+async function leadLookupGate({ ip, vehicleKey }) {
+  // Budget first: cheapest query, protects everything downstream.
+  const used = await mcCallsThisMonth()
+  if (used >= Math.floor(MC_MONTHLY_BUDGET * MC_LEAD_CUTOFF_PCT)) {
+    console.warn(`lead lookup GATED (budget): ${used}/${MC_MONTHLY_BUDGET} MarketCheck calls used this month`)
+    return { allowed: false, reason: 'budget' }
+  }
+  if (pool && ip) {
+    try {
+      // Opportunistic prune keeps the table tiny without a scheduled job.
+      pool.query(`DELETE FROM lead_vehicle_lookups WHERE created_at < now() - interval '48 hours'`).catch(() => {})
+      const r = await pool.query(
+        `SELECT DISTINCT vehicle_key FROM lead_vehicle_lookups
+         WHERE ip = $1 AND created_at > now() - interval '24 hours'`, [ip])
+      const keys = r.rows.map(x => x.vehicle_key)
+      if (!keys.includes(vehicleKey) && keys.length >= LEAD_IP_VEHICLE_CAP) {
+        console.warn(`lead lookup GATED (ip cap): ${ip} already priced ${keys.length} vehicles today, wanted ${vehicleKey}`)
+        return { allowed: false, reason: 'ip_cap' }
+      }
+    } catch (e) { console.error('ip cap check:', e.message) }
+  }
+  return { allowed: true }
+}
+function recordLeadLookup(ip, vehicleKey) {
+  if (!pool || !ip) return
+  pool.query(`INSERT INTO lead_vehicle_lookups (ip, vehicle_key) VALUES ($1, $2)`, [ip, vehicleKey]).catch(() => {})
+}
+
 async function marketForLead(args) {
   const key = marketCacheKey(args)
   const hit = await getCachedMarket(key)
@@ -2345,13 +2429,28 @@ app.post('/api/leads', leadSubmitLimiter, async (req, res) => {
       return res.status(400).json({ error: 'Provide a VIN, or year + make + model' })
     }
 
-    // Market lookup (same engine as the appraisal page).
+    // Market lookup (same engine as the appraisal page). Cache hits are always
+    // served; a lookup that would SPEND a MarketCheck call first passes the
+    // abuse gates. A gated lead flows into the specialist path below — the
+    // customer is captured, just without an instant number.
     let market = null
     const specId = !vin
       ? [year, make, model, trim].filter(Boolean).map(s => s.toLowerCase().replace(/\s+/g, '-')).join('_')
       : null
     try {
-      market = await marketForLead({ vin: vin.length === 17 ? vin : undefined, specId, postal, callerModel: model })
+      const mArgs = { vin: vin.length === 17 ? vin : undefined, specId, postal, callerModel: model }
+      const vehicleKey = marketCacheKey(mArgs)
+      const cachedMkt = await getCachedMarket(vehicleKey)
+      if (cachedMkt) {
+        market = cachedMkt
+      } else {
+        const gate = await leadLookupGate({ ip: req.ip, vehicleKey })
+        if (gate.allowed) {
+          market = await marketForLead(mArgs)
+          recordLeadLookup(req.ip, vehicleKey)
+        }
+        // gate refused → market stays null → noMarket → specialist follow-up.
+      }
     } catch (e) { console.error('lead market error:', e.message) }
 
     // If the market lookup comes back empty, we DON'T lose the lead — persist it
@@ -2436,14 +2535,18 @@ app.post('/api/leads', leadSubmitLimiter, async (req, res) => {
     // Persist if DB available; otherwise still return the offer.
     let leadId = null
     let duplicate = false
+    let corrected = false
+    let changesNote = ''
     if (pool) {
-      // Don't record the same enquiry twice. Catches a customer double-tapping
-      // Submit, and blunts the cheapest form of abuse — replaying one payload —
-      // which would otherwise bury real leads in the inbox. The customer still
-      // gets their offer; only the duplicate row is suppressed.
+      // Same customer + same vehicle within 30 minutes is either a double-tap
+      // (nothing changed → suppress, as before) or a CORRECTION — they typed
+      // the wrong mileage, saw a wrong number, and resubmitted. A correction
+      // updates the existing row and re-notifies the team as "updated", so the
+      // inbox and the Leads page never keep quoting the wrong figure while the
+      // customer's screen shows the right one.
       try {
         const dupe = await pool.query(
-          `SELECT id FROM pending_leads
+          `SELECT id, odometer, offer_amount, accident, resubmit_count FROM pending_leads
            WHERE created_at > now() - interval '30 minutes'
              AND coalesce(customer_email,'') = $1
              AND coalesce(customer_phone,'') = $2
@@ -2453,11 +2556,43 @@ app.post('/api/leads', leadSubmitLimiter, async (req, res) => {
           [email, phone, vin, year, make, model]
         )
         if (dupe.rows[0]) {
-          leadId = dupe.rows[0].id; duplicate = true
-          // Loud, structured log: a suppressed lead is invisible in the UI, and
-          // an appraiser comparing their inbox to the Leads page needs to know
-          // this submission existed and points at an existing row.
-          console.warn(`lead DUPLICATE suppressed → existing lead ${leadId}: ${year} ${make} ${model} vin=${vin || '—'} email=${email || '—'} phone=${phone || '—'}`)
+          const prev = dupe.rows[0]
+          leadId = prev.id
+          duplicate = true
+          const kmChanged = (prev.odometer ?? null) !== (odometer ?? null)
+          const offerChanged = (prev.offer_amount ?? null) !== (withhold ? null : offer ?? null)
+          const accidentChanged = !!prev.accident !== !!accident
+          corrected = kmChanged || offerChanged || accidentChanged
+          if (!corrected) {
+            // True replay — same inputs, same number. Suppress as before.
+            console.warn(`lead DUPLICATE suppressed (unchanged replay) → lead ${leadId}: ${year} ${make} ${model}`)
+          } else {
+            const fmtKm = v => v == null ? '—' : Number(v).toLocaleString('en-CA') + ' km'
+            const parts = []
+            if (kmChanged) parts.push(`odometer ${fmtKm(prev.odometer)} → ${fmtKm(odometer)}`)
+            if (accidentChanged) parts.push(`accident ${prev.accident ? 'yes' : 'no'} → ${accident ? 'yes' : 'no'}`)
+            if (offerChanged) parts.push(`offer ${prev.offer_amount != null ? fmtMoney(prev.offer_amount) : '—'} → ${withhold ? 'withheld' : fmtMoney(offer)}`)
+            changesNote = parts.join('; ')
+            await pool.query(
+              `UPDATE pending_leads SET
+                 odometer=$1, accident=$2, accident_amount=$3,
+                 offer_amount=$4, base_offer=$5, accident_deduction=$6,
+                 offer_breakdown=$7, market_mid=$8, confidence=$9, thin_market=$10,
+                 condition_opinion=$11, known_issues=$12, tire_condition=$13, brake_condition=$14,
+                 ownership=$15, lien_holder=$16, lien_balance=$17,
+                 photos = COALESCE($18, photos),
+                 updated_at = now(), resubmit_count = coalesce(resubmit_count,0) + 1
+               WHERE id=$19`,
+              [odometer, accident, accidentAmount,
+               withhold ? null : offer, sb ? sb.suggested : null, deduction,
+               JSON.stringify(breakdown), market ? market.mid : null, confidence, thinMarket,
+               conditionOpinion, knownIssues, tireCondition, brakeCondition,
+               ownership, lienHolder, lienBalance,
+               photos.length ? JSON.stringify(photos) : null,
+               leadId]
+            )
+            console.warn(`lead CORRECTED → lead ${leadId} (resubmit #${(prev.resubmit_count || 0) + 1}): ${changesNote}`)
+          }
         }
       } catch (e) { console.error('lead dupe check:', e.message) }
     }
@@ -2486,9 +2621,12 @@ app.post('/api/leads', leadSubmitLimiter, async (req, res) => {
     // Notify the team. A trade-in lead is only worth what it's worth if someone
     // calls quickly, and nobody watches a dashboard all day. Fire-and-forget:
     // the customer's offer must never wait on, or fail because of, an email.
-    if (LEAD_WEBHOOK_URL && !duplicate) {
+    if (LEAD_WEBHOOK_URL && (!duplicate || corrected)) {
       const summary = {
         leadId,
+        // Corrections re-notify: the team must not keep working the old number.
+        updated: corrected,
+        ...(corrected ? { changes: changesNote } : {}),
         vehicle: [year, make, model, trim].filter(Boolean).join(' '),
         vin,
         odometer: odometer ? Number(odometer).toLocaleString('en-CA') + ' km' : '',
@@ -2570,7 +2708,15 @@ app.post('/api/offer/prefetch', strictLimiter, async (req, res) => {
     const already = await getCachedMarket(key)
     if (already) return res.json({ success: true, warmed: true, cached: true })
 
+    // Prefetch spends a real MarketCheck call, so it passes the same abuse
+    // gates as submission. A gated prefetch reports success anyway — no signal
+    // to an abuser, and the submit path degrades gracefully to the specialist
+    // message on its own.
+    const gate = await leadLookupGate({ ip: req.ip, vehicleKey: key })
+    if (!gate.allowed) return res.json({ success: true, warmed: true, cached: false })
+
     // Fire-and-forget the heavy fetch; don't await before responding.
+    recordLeadLookup(req.ip, key)
     marketForLead(args).catch(e => console.error('prefetch warm error:', e.message))
     res.json({ success: true, warmed: true, cached: false })
   } catch (err) {

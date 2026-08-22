@@ -1589,7 +1589,7 @@ function leadUrgency(lead){
 }
 function LeadsInbox({leads,loading,onRefresh,onOpen,onDismiss,error,filter,onFilter}){
   const [q,setQ]=useState('');
-  const [sort,setSort]=useState('urgency');
+  const [sort,setSort]=useState('newest');  // default: newest first (was urgency)
   const sorted=[...leads]
     .filter(l=>{
       if(!q) return true;
@@ -3971,7 +3971,7 @@ export default function Vantage() {
   const [leads,setLeads]=useState([]);
   const [leadsLoading,setLeadsLoading]=useState(false);
   const [leadsError,setLeadsError]=useState(null);
-  const [leadFilter,setLeadFilter]=useState('pending');
+  const [leadFilter,setLeadFilter]=useState('all');  // default: All leads (was pending)
   const showToast=useCallback((m,t='info')=>setToast({message:m,type:t}),[]);
 
   // Pull pending customer leads from the backend. Polls so new submissions show up.
