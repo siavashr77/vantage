@@ -4204,19 +4204,27 @@ export default function Vantage() {
           fetch(`${API_BASE}/api/vehicles`,{headers:teamHeaders()}).then(r=>r.ok?r.json():null),
           fetch(`${API_BASE}/api/dealer`,{headers:teamHeaders()}).then(r=>r.ok?r.json():null),
         ]);
-        // Adopt the server's copy — but never let an empty response destroy
-        // local records that have not been uploaded yet. On the first run after
-        // this change the database is empty while the device still holds
-        // everything, and overwriting would silently discard it. An empty
-        // server with a populated cache means "not migrated", not "no data".
-        const adopt=(items,current,setter,key)=>{
+        // Adopt the server's copy — but MERGE, never clobber. A record that
+        // exists only on this device (its upload failed silently, or it was
+        // created moments ago in another tab) must survive adoption and be
+        // pushed up, not overwritten by the server list. Discarding local-only
+        // records here is how a worked lead's appraisal vanished on reload:
+        // saved to localStorage, PUT failed quietly, next load adopted the
+        // server's 36 and threw away the 37th.
+        const adopt=(items,current,setter,key,path)=>{
           if(!Array.isArray(items)) return;
           if(items.length===0&&current.length>0) return;   // keep local, push it up
-          setter(items);
-          try{localStorage.setItem(key,JSON.stringify(items));}catch{}
+          const serverIds=new Set(items.map(r=>r.id));
+          const localOnly=(current||[]).filter(r=>r&&r.id&&!serverIds.has(r.id));
+          const merged=localOnly.length?[...localOnly,...items]:items;
+          setter(merged);
+          try{localStorage.setItem(key,JSON.stringify(merged));}catch{}
+          if(localOnly.length&&pushRecordsRef.current){
+            pushRecordsRef.current(path,localOnly,currentUserRef.current);
+          }
         };
-        adopt(av&&av.items, appraisalsRef.current||[], setAppraisals, 'vantage_appraisals');
-        adopt(vv&&vv.items, vehiclesRef.current||[], setVehicles, 'vantage_vehicles');
+        adopt(av&&av.items, appraisalsRef.current||[], setAppraisals, 'vantage_appraisals', 'appraisals');
+        adopt(vv&&vv.items, vehiclesRef.current||[], setVehicles, 'vantage_vehicles', 'vehicles');
         // Anything the device holds that the server doesn't gets uploaded, so a
         // first run migrates itself rather than needing a separate step.
         if(av&&Array.isArray(av.items)&&av.items.length===0&&(appraisalsRef.current||[]).length){
@@ -4252,15 +4260,35 @@ export default function Vantage() {
       seen.set(r.id,json);
       return true;
     });
+    let failures=0;
     for(const rec of changed){
       try{
-        await fetch(`${API_BASE}/api/${path}/${encodeURIComponent(rec.id)}`,{
+        const r=await fetch(`${API_BASE}/api/${path}/${encodeURIComponent(rec.id)}`,{
           method:'PUT',headers:teamHeaders({'Content-Type':'application/json'}),
           body:JSON.stringify({record:rec,user:user||''}),
         });
-      }catch{ /* cache still holds it; next save retries */ }
+        if(!r.ok){
+          failures++;
+          // Un-mark as saved so the next save retries this record.
+          seen.delete(rec.id);
+          console.error(`sync ${path}/${rec.id} failed: HTTP ${r.status}`);
+        }
+      }catch(e){
+        failures++;
+        seen.delete(rec.id);
+        console.error(`sync ${path}/${rec.id} failed:`,e?.message||e);
+      }
     }
-  },[]);
+    // A silent sync failure looks identical to a successful save, and a record
+    // that only exists on this device is one reload away from being lost. Say
+    // so — loudly enough to act on, once per batch rather than per record.
+    if(failures>0){
+      setDataError('sync');
+      showToast(`${failures} record${failures>1?'s':''} saved on this device but NOT synced to the server — do not clear this browser. Retrying on next save.`,'error');
+    } else if(changed.length>0){
+      setDataError(prev=>prev==='sync'?null:prev);
+    }
+  },[showToast]);
 
   useEffect(()=>{ pushRecordsRef.current=pushRecords; },[pushRecords]);
 
@@ -4523,6 +4551,12 @@ export default function Vantage() {
           <div style={{marginBottom:14,padding:'10px 14px',borderRadius:8,background:C.orangeBg,
             border:`1px solid ${C.orange}`,fontSize:12.5,color:C.textMid,lineHeight:1.5}}>
             Can't reach the server — showing the last data this device saw. Changes are saved locally and will sync when the connection returns.
+          </div>
+        )}
+        {dataError==='sync'&&(
+          <div style={{marginBottom:14,padding:'10px 14px',borderRadius:8,background:'#FEF2F2',
+            border:`1px solid ${C.red}`,fontSize:12.5,color:C.textMid,lineHeight:1.5}}>
+            Some records are saved on this device but <b>could not be synced to the server</b>. They will retry on the next save — don't clear this browser's data until this message goes away.
           </div>
         )}
         {page==='dashboard'&&<Dashboard vehicles={vehicles} appraisals={appraisals} dealer={dealer} leads={leads} onOpenLead={openLead} onNav={nav} onOpenVehicle={v=>{setActiveV({...v});goto('vehicle_detail',v);}} onOpenAppraisal={a=>{setActiveA({...a});goto('appraisal_form',a);}}/>}
