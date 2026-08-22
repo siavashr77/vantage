@@ -2135,7 +2135,13 @@ function AppraisalForm({initial,onSave,onBack,showToast,onConvert,onFinalize,onU
   // Auto-save when VIN + odometer present
   useEffect(()=>{
     if(locked) return;
-    if(!a.vin||a.vin.length<10||!a.odometer) return;
+    // A VIN is NOT required to save. Lead-converted appraisals often arrive
+    // with year/make/model and no VIN, and this guard silently skipped every
+    // autosave for them — the record lived only in the open tab, was never
+    // written to localStorage or the server, and vanished on close while the
+    // lead sat marked 'converted'. Any identifiable vehicle saves.
+    const identifiable=(a.vin&&a.vin.length>=10)||(a.year&&a.make&&a.model);
+    if(!identifiable||!a.odometer) return;
     if(!isDirty) return;
     clearTimeout(autoSaveRef.current);
     autoSaveRef.current=setTimeout(()=>{
@@ -4157,6 +4163,13 @@ export default function Vantage() {
       (lead.thin_market?' [Flagged: thin market — specialist follow-up]':'')+
       (lead.offer_amount?` Instant offer shown: $${Number(lead.offer_amount).toLocaleString('en-CA')}.`:'');
     a.comments=[{ts:new Date().toISOString(),user:'System',text:`Imported from customer lead #${lead.id}. Customer contact: ${lead.customer_email||''} ${lead.customer_phone||''}`.trim()}];
+    // Persist IMMEDIATELY — into the list, localStorage, and the server —
+    // before the lead is marked converted. Until now the record existed only
+    // in the open tab: the form's autosave skipped VIN-less appraisals, so
+    // closing the tab destroyed the appraisal while the lead already read
+    // 'converted', i.e. handled. A worked lead must never depend on a browser
+    // tab staying open.
+    saveAppraisal(a,true);
     setActiveA(a);
     goto('appraisal_form', a);
     // The lead only stores a single market_mid from submission time — no comps,
