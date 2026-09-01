@@ -86,6 +86,23 @@ function mockHistoricalData(make, model){
 const fmtN = n => n?Number(n).toLocaleString('en-CA'):'—';
 const daysAgo = d => Math.floor((Date.now()-new Date(d))/86400000);
 // Friendly, consistent date display: "Jun 12, 2026" (avoids raw ISO look).
+// How old is this market data? Every surface that shows a market number shows
+// this too. With automatic refreshing removed, staleness is invisible unless
+// stated — and a confident-looking mid built on month-old comps is exactly the
+// kind of number that loses money.
+const dataAgeLabel = (fetchedAt) => {
+  if(!fetchedAt) return '';
+  const d=new Date(fetchedAt); if(isNaN(d)) return '';
+  const days=Math.floor((Date.now()-d.getTime())/86400000);
+  if(days<=0) return ' · today';
+  if(days===1) return ' · 1 day old';
+  return ` · ${days} days old`;
+};
+const dataIsStale = (fetchedAt, thresholdDays=14) => {
+  if(!fetchedAt) return false;
+  const d=new Date(fetchedAt); if(isNaN(d)) return false;
+  return (Date.now()-d.getTime())/86400000 >= thresholdDays;
+};
 const fmtDate = d => { try { return new Date(d).toLocaleDateString('en-CA',{month:'short',day:'numeric',year:'numeric'}); } catch { return ''; } };
 // Deterministic muted colour from a make name, for photoless thumbnails so the
 // inventory list is scannable (each brand gets a consistent placeholder colour).
@@ -1322,6 +1339,38 @@ function StickerGenerator({vehicles,dealer,preselected,onBack}) {
 }
 
 // ─── DEALER SETTINGS ──────────────────────────────────────────────────
+// Market data usage. The quota is a hard monthly ceiling and running into it
+// takes the whole appraisal desk down until the 1st, so it belongs somewhere
+// visible rather than being discovered as an error mid-appraisal.
+function UsagePanel(){
+  const [u,setU]=useState(null);
+  useEffect(()=>{
+    fetch(`${API_BASE}/api/usage`).then(r=>r.ok?r.json():null).then(d=>{if(d&&d.success)setU(d);}).catch(()=>{});
+  },[]);
+  if(!u) return null;
+  const pct=Math.min(100,u.pct);
+  const tone = pct>=100 ? C.red : pct>=80 ? C.orange : C.green;
+  return (
+    <div style={{marginBottom:20,padding:'14px 16px',background:'#fff',border:`1px solid ${C.border}`,borderRadius:10}}>
+      <div style={{display:'flex',alignItems:'baseline',justifyContent:'space-between',marginBottom:8}}>
+        <div style={{fontSize:13,fontWeight:800,color:C.navy}}>Market data usage</div>
+        <div style={{fontSize:12,color:C.textLight}}>{u.month}</div>
+      </div>
+      <div style={{height:8,background:C.borderStr,borderRadius:99,overflow:'hidden',marginBottom:8}}>
+        <div style={{width:`${pct}%`,height:'100%',background:tone,transition:'width .3s'}}/>
+      </div>
+      <div style={{fontSize:12.5,color:C.textMid,lineHeight:1.5}}>
+        <strong style={{color:tone}}>{u.used}</strong> of {u.budget} calls used · {u.remaining} left.
+        {pct>=100
+          ? ' Quota exhausted — market lookups will fail until the 1st of next month.'
+          : pct>=80
+            ? ' Customer lead lookups are now paused to protect the appraisal desk.'
+            : ' Each vehicle costs 2–3 calls, once, and is reused for 30 days.'}
+      </div>
+    </div>
+  );
+}
+
 function DealerSettings({dealer,onSave,showToast}) {
   const [d,setD]=useState(dealer);
   const set=(f,v)=>setD(p=>({...p,[f]:v}));
@@ -1340,6 +1389,7 @@ function DealerSettings({dealer,onSave,showToast}) {
   return (
     <div>
       <div style={{marginBottom:20}}><h2 style={{fontSize:18,fontWeight:800,color:C.navy}}>Dealer Settings</h2><p style={{fontSize:13,color:C.textLight,marginTop:2}}>Your logo and details appear on stickers, reports, and documents</p></div>
+      <UsagePanel/>
       <div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:16,alignItems:'start'}}>
         {/* Logo Upload */}
         <Card style={{padding:20}}>
@@ -2224,20 +2274,16 @@ function AppraisalForm({initial,onSave,onBack,showToast,onConvert,onFinalize,onU
     return()=>clearTimeout(t);
   },[a.marketMid,a.marketDataFetched,a._comps,a.odometer,locked,marketStale,ml,runAppraisal]);
 
-  // ── Keep the market estimate in step with the trim ──────────────
+  // ── Trim changes NEVER refetch ──────────────────────────────────
   // The band is trim-sensitive (an XLT and a Platinum are different markets),
-  // so once market data exists, changing trim/drivetrain makes it stale. Flag
-  // it immediately, then re-run the lookup after a short debounce so toggling
-  // through the picker doesn't fire a request per keystroke.
-  const mktRefreshRef=useRef(null);
-  useEffect(()=>{
-    if(locked) return;
-    if(!marketStale) return;
-    if(a.vin?.length!==17) return;
-    clearTimeout(mktRefreshRef.current);
-    mktRefreshRef.current=setTimeout(()=>{ fetchMkt(); },1200);
-    return()=>clearTimeout(mktRefreshRef.current);
-  },[a.series,a.drivetrain,marketStale,locked]);
+  // so changing trim used to fire a fresh lookup 1.2s later — meaning an
+  // appraiser correcting a mis-decoded trim paid for a second comp set, and
+  // toggling through the picker could spend several.
+  //
+  // The stored comp set is model-wide and every listing carries its own trim,
+  // so a trim change is a FILTER over data we already hold. recompute() does
+  // that locally and instantly. The staleness flag still shows in the UI so the
+  // appraiser can press Refresh if the filtered set looks too thin to trust.
 
   function forceSave(){
     onSave(aRef.current, true); // silent
@@ -2317,6 +2363,16 @@ function AppraisalForm({initial,onSave,onBack,showToast,onConvert,onFinalize,onU
   // Auto-fetch ONCE after the vehicle is DECODED (make present), so the trim and
   // drivetrain are available to tighten the comp match. Firing on bare VIN alone
   // sent an empty trim → model-only match → the whole model's price range.
+  // ── NO automatic market fetch ────────────────────────────────────
+  // Opening an appraisal used to fire a market lookup on its own. Combined with
+  // the same behaviour on the lead path and the inventory refresh, a single car
+  // could be fetched several times over in a day. Market data is now fetched
+  // once, deliberately, by pressing Refresh — and reused from then on.
+  //
+  // The one exception is a SHAPE MISMATCH: comps saved under an older payload
+  // shape (the miles-to-km correction being the costly example) are wrong, not
+  // merely old, and would be served forever. Those still refetch once. That is
+  // a correctness repair, not a refresh.
   const autoFetchedRef=useRef(false);
   useEffect(()=>{
     if(locked) return;
@@ -2334,7 +2390,11 @@ function AppraisalForm({initial,onSave,onBack,showToast,onConvert,onFinalize,onU
     // it as "already fetched" meant the listings never loaded and the appraisal
     // showed a price nothing supported. Only a real comp set counts as loaded.
     const hasComps = (a._comps||[]).length > 0;
-    if(hasComps && !staleShape) return;
+    // Only a wrong-shape payload triggers a fetch. No comps at all means the
+    // appraiser hasn't pressed Refresh yet — that is their call to make, not
+    // something the page does on their behalf.
+    if(!staleShape) return;
+    if(!hasComps) return;
     if(autoFetchedRef.current) return;
     if(!a.make) return;                 // wait until decode has populated the vehicle
     // Odometer is not optional: pricing a car without knowing its kilometres
@@ -2659,9 +2719,12 @@ function AppraisalForm({initial,onSave,onBack,showToast,onConvert,onFinalize,onU
                 const n=(a._comps||[]).length||a.activeComps||0;
                 if(ml) return 'Loading…';
                 if(!n) return (a.year&&a.make&&a.model)||a.vin?.length===17
-                  ? 'Not loaded yet'
+                  ? 'Not loaded — tap to load market data'
                   : 'Add a VIN, or year make and model';
-                return `${n} listings · ${fmt(a.marketMid)} mid`;
+                // Nothing refreshes on its own any more, so the AGE of the data
+                // has to be visible wherever the number is. An appraiser
+                // pricing a car off three-week-old comps must know that.
+                return `${n} listings · ${fmt(a.marketMid)} mid${dataAgeLabel(a.marketDataFetched)}`;
               })()}
             </div>
           </div>
@@ -2802,7 +2865,25 @@ function AppraisalForm({initial,onSave,onBack,showToast,onConvert,onFinalize,onU
         {marketStale&&(
           <div style={{margin:'0 0 10px',padding:'8px 12px',background:'#FFF7ED',border:`1px solid ${C.orange}`,borderRadius:6,fontSize:11,color:C.textMid,display:'flex',alignItems:'center',gap:8}}>
             <RefreshCw size={12} color={C.orange}/>
-            <span>Trim changed — re-running the market lookup for <strong>{a.series||'this trim'}</strong>. Figures below are from the previous trim.</span>
+            <span>Trim changed to <strong>{a.series||'this trim'}</strong> — figures below are recalculated from the comps already loaded. Refresh only if the matching set looks too thin.</span>
+          </div>
+        )}
+        {/* Data age. Nothing refreshes itself, so this is the appraiser's only
+            signal that a confident-looking band is built on old comps. */}
+        {a.marketDataFetched&&(
+          <div style={{margin:'0 0 10px',padding:'8px 12px',borderRadius:6,fontSize:11,
+            background:dataIsStale(a.marketDataFetched)?'#FFF7ED':C.blueBg,
+            border:`1px solid ${dataIsStale(a.marketDataFetched)?C.orange:C.border}`,
+            color:C.textMid,display:'flex',alignItems:'center',gap:8}}>
+            <Clock size={12} color={dataIsStale(a.marketDataFetched)?C.orange:C.textLight}/>
+            <span>
+              Market data from <strong>{fmtDate(a.marketDataFetched)}</strong>{dataAgeLabel(a.marketDataFetched)}.
+              {dataIsStale(a.marketDataFetched)?' Consider refreshing before you commit to a number.':' Refresh only if you need today\u2019s market.'}
+            </span>
+            <button onClick={a.vin?.length===17?fetchMkt:fetchMktBySpec} disabled={ml}
+              style={{marginLeft:'auto',background:'none',border:`1px solid ${C.borderStr}`,borderRadius:5,padding:'3px 9px',fontSize:11,fontWeight:600,color:C.textDark,cursor:ml?'default':'pointer',fontFamily:'inherit',whiteSpace:'nowrap'}}>
+              {ml?'Refreshing\u2026':'Refresh'}
+            </button>
           </div>
         )}
         {/* Filters sit behind a control. Nobody opens this page to set a radius
@@ -2813,7 +2894,8 @@ function AppraisalForm({initial,onSave,onBack,showToast,onConvert,onFinalize,onU
             {filtersOpen?'Hide filters':'Filters'}
             <span style={{color:C.textLight}}>· {a.searchDistance||150} km</span>
           </button>
-          <button onClick={fetchMkt} disabled={ml||a.vin.length!==17} aria-label="Refresh"
+          <button onClick={a.vin?.length===17?fetchMkt:fetchMktBySpec}
+            disabled={ml||!(a.vin?.length===17||(a.year&&a.make&&a.model))} aria-label="Refresh"
             style={{background:'none',border:'none',padding:0,marginLeft:'auto',color:C.textLight,cursor:ml?'default':'pointer',display:'flex'}}>
             <RefreshCw size={14} style={{animation:ml?'spin 1s linear infinite':undefined}}/>
           </button>
@@ -4137,12 +4219,30 @@ export default function Vantage() {
     a.lastName=(lead.customer_name||'').split(' ').slice(1).join(' ')||'';
     a.email=lead.customer_email||''; a.phone=lead.customer_phone||'';
     a.postal=lead.postal||'';
-    // The lead's market mid was calculated at submission time from whatever the
-    // customer told us, and carrying it over made an unsupported figure look
-    // like a valuation — it displayed alongside "0 listings" and fed the
-    // suggested buy. The appraisal fetches its own market data; until it does,
-    // there is no number, which is the honest state.
-    a._leadMarketMid=lead.market_mid||null;   // kept for reference only
+    // INHERIT the lead's market snapshot — comps and all — instead of fetching
+    // the same car again minutes later. An earlier fix here deliberately
+    // dropped the lead's number because only a bare mid was carried across,
+    // which displayed a valuation next to "0 listings" and fed the suggested
+    // buy off nothing. The answer was to carry the whole comp set, not to
+    // refetch: the lead now stores its full payload, so the appraisal opens
+    // with real listings behind the number and costs no API call.
+    const lm = lead.market_payload || null;
+    if (lm && Array.isArray(lm.comps) && lm.comps.length) {
+      a._comps = lm.comps;
+      a.marketLow = lm.low ?? null; a.marketMid = lm.mid ?? null; a.marketHigh = lm.high ?? null;
+      a.marketAvgPrice = lm.avg ?? null;
+      a.activeComps = lm.compCount ?? lm.comps.length;
+      a.marketDaySupply = lm.daySupply ?? null;
+      a.medianDaysListed = lm.medianDaysListed ?? null;
+      a._soldStats = lm.soldStats || null;
+      a._medianCompMileage = lm.medianCompMileage ?? null;
+      a._marketMeta = lm.meta || null;
+      a.marketDataFetched = lm.fetchedAt || lead.created_at || new Date().toISOString();
+    } else {
+      // No comps behind it — a bare mid is not a valuation. Leave it blank and
+      // let the appraiser press Refresh.
+      a._leadMarketMid = lead.market_mid || null;   // reference only
+    }
     a.postal=lead.postal||a.postal;
     a.accidentVisible=!!lead.accident;
     a._leadId=lead.id;
@@ -4172,25 +4272,10 @@ export default function Vantage() {
     saveAppraisal(a,true);
     setActiveA(a);
     goto('appraisal_form', a);
-    // The lead only stores a single market_mid from submission time — no comps,
-    // no band, and possibly days old. Pull fresh market data straight away so
-    // the appraiser isn't staring at an empty Market Intelligence panel.
-    if(a.vin&&a.vin.length===17&&a.postal){
-      fetchMarketData(a.vin,a.postal,a.searchDistance||250,a.drivetrain||'',a.series||'')
-        .then(m=>{
-          if(!m) return;
-          setActiveA(prev=>{
-            if(!prev||prev._leadId!==lead.id) return prev;   // user moved on
-            return {...prev,
-              marketLow:m.marketLow,marketMid:m.marketMid,marketHigh:m.marketHigh,
-              marketAvg:m.marketAvg,marketCount:m.count,marketDataFetched:new Date().toISOString(),
-              _marketMeta:m.meta||null,_medianCompMileage:m.medianCompMileage,_comps:m.comps,
-              _marketTrim:(prev.series||''),_marketDrive:(prev.drivetrain||''),
-            };
-          });
-        })
-        .catch(()=>{});
-    }
+    // NO refetch here. The appraisal inherits the lead's stored comp set above,
+    // so it opens with real market data at zero API cost. If that data is old
+    // or the appraiser wants it re-run, the Refresh button on the Comparables
+    // panel does it — deliberately, once.
     if(lead.id) updateLeadStatus(lead.id,'converted');
     showToast('Lead opened as appraisal — verify details and finalize','success');
   }
@@ -4321,45 +4406,16 @@ export default function Vantage() {
     }).catch(()=>{});
   },[]);
 
-  // ── Daily market-data refresh for active inventory ──
-  // Refetches market data once on app load, ONLY for cars currently being
-  // ADVERTISED (at least one feed active) whose data is >24h old. Cars in recon
-  // or not yet listed don't burn API calls. Manual "Refresh" still works on any
-  // car. To disable entirely, set AUTO_DAILY_REFRESH = false.
-  const AUTO_DAILY_REFRESH = true;
-  const refreshRan = useRef(false);
-  const isAdvertised = (v) => v.feeds && Object.values(v.feeds).some(f => f && f.active);
-  useEffect(()=>{
-    if(!AUTO_DAILY_REFRESH || refreshRan.current) return;
-    refreshRan.current = true;
-    const postal = dealer?.postal;
-    if(!postal) return; // need dealer postal to fetch local comps
-    const DAY = 24*60*60*1000;
-    const stale = vehicles.filter(v =>
-      isAdvertised(v) &&                                   // only advertised units
-      v.vin && v.vin.length===17 &&
-      (!v.marketDataFetched || (Date.now()-new Date(v.marketDataFetched).getTime()) > DAY)
-    );
-    if(stale.length===0) return;
-    let cancelled=false;
-    (async()=>{
-      for(const v of stale){
-        if(cancelled) break;
-        try{
-          const m=await fetchMarketData(v.vin, postal, v.searchDistance||250, v.drivetrain||"", v.series||"");
-          if(m && m.found){
-            setVehicles(prev=>{
-              const n=prev.map(x=>x.id===v.id?{...x,marketLow:m.marketLow,marketMid:m.marketMid,marketHigh:m.marketHigh,marketAvgPrice:m.marketAvgPrice,activeComps:m.activeComps,marketDaySupply:m.marketDaySupply,medianDaysListed:m.medianDaysListed,_soldStats:m.soldStats,_comps:m.comps,_marketMeta:m.meta,_medianCompMileage:m.medianCompMileage,marketDataFetched:m.marketDataFetched||new Date().toISOString()}:x);
-              saveV(n);return n;
-            });
-          }
-        }catch{ /* skip cars that fail (e.g. invalid VIN); don't block the rest */ }
-        await new Promise(r=>setTimeout(r, 1200)); // pace requests
-      }
-    })();
-    return ()=>{cancelled=true;};
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  },[dealer]);
+  // ── NO automatic market refresh ──────────────────────────────────
+  // This used to refetch market data for every advertised vehicle on EVERY app
+  // load (2+ MarketCheck calls per car, paced 1.2s apart). With ~20 advertised
+  // units that was 40+ calls before anyone touched anything — the single
+  // largest consumer of a 500-call monthly quota, spent whether or not a human
+  // was pricing those cars that day.
+  //
+  // Market data is now fetched ONCE per vehicle and reused. Vehicle and
+  // appraisal pages show how old the data is; the Refresh button is the only
+  // thing that spends a call. Nothing refetches on its own.
 
   function pickUser(u){setCurrentUser(u);setShowUserMenu(false);try{localStorage.setItem('vantage_user',u);}catch{}}
 
@@ -4446,18 +4502,20 @@ export default function Vantage() {
   }
 
   // Decode (free) + market fetch (VinAudit) for freshly-imported records, paced.
+  // Bulk import enriches DECODE ONLY. It used to fetch market data for every
+  // imported car as well — a 50-car import was 100+ MarketCheck calls fired by
+  // a single button, most of them for cars nobody was pricing that week. Decode
+  // is free (vPIC first) and makes the list readable; market data is fetched
+  // per car, on demand, by opening it and pressing Refresh.
   async function bulkEnrich(items, postal, kind){
     for(const it of items){
       try{
         const d=await decodeVIN(it.vin)
         const patch={...d}
-        if(postal){
-          try{ const m=await fetchMarketData(it.vin,postal); if(m&&m.found){ Object.assign(patch,{marketLow:m.marketLow,marketMid:m.marketMid,marketHigh:m.marketHigh,marketAvgPrice:m.marketAvgPrice,activeComps:m.activeComps,marketDaySupply:m.marketDaySupply,medianDaysListed:m.medianDaysListed,_soldStats:m.soldStats,_comps:m.comps,_marketMeta:m.meta,_medianCompMileage:m.medianCompMileage,marketDataFetched:m.marketDataFetched||new Date().toISOString()}); } }catch{}
-        }
         if(kind==='vehicle'){ setVehicles(prev=>{const n=prev.map(x=>x.id===it.id?{...x,...patch}:x);saveV(n);return n;}); }
         else { setAppraisals(prev=>{const n=prev.map(x=>x.id===it.id?{...x,...patch}:x);saveA(n);return n;}); }
       }catch{ /* skip cars that fail to decode */ }
-      await new Promise(r=>setTimeout(r, 1200))  // pace VinAudit calls
+      await new Promise(r=>setTimeout(r, 250))  // pace free vPIC decodes
     }
   }
 

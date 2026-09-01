@@ -289,7 +289,6 @@ function Widget({ branding, theme } = {}) {
   const [submitting, setSubmitting] = useState(false)
   const [result, setResult] = useState(null)
   const [error, setError] = useState('')
-  const prefetched = useRef(false)
 
   // Keep the iframe sized to content.
   useEffect(() => { postHeight() })
@@ -322,19 +321,13 @@ function Widget({ branding, theme } = {}) {
 
   // Fire the cache-warming prefetch as soon as we have vehicle + FSA, so the
   // heavy market fetch overlaps with the customer finishing the form.
-  const tryPrefetch = useCallback((veh, f) => {
-    if (prefetched.current || !f) return
-    const body = veh.vin
-      ? { vin: veh.vin, postal: f, dealer: DEALER }
-      : { year: veh.year, make: veh.make, model: veh.model, trim: veh.trim, postal: f, dealer: DEALER }
-    if (!veh.vin && !(veh.year && veh.make && veh.model)) return
-    prefetched.current = true
-    fetch(`${API_BASE}/api/offer/prefetch`, {
-      method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body),
-    }).catch(() => { prefetched.current = false })
-  }, [])
+  // NO PREFETCH. This used to warm the market cache while the customer was
+  // still typing — a full MarketCheck lookup for every visitor who picked a
+  // vehicle, whether or not they ever submitted. Abandoned forms cost real
+  // calls, and any mismatch between the prefetch key and the submit key meant
+  // paying twice for one lead. The customer now waits ~2s at submit instead.
 
-  // Decode VIN → lock the field, show the vehicle, start prefetch.
+  // Decode VIN → lock the field, show the vehicle.
   async function decodeVin(vinArg) {
     const v = (typeof vinArg === 'string' ? vinArg : vin).toUpperCase().trim()
     if (v.length !== 17) { setError('Please enter a full 17-character VIN.'); return }
@@ -344,7 +337,6 @@ function Widget({ branding, theme } = {}) {
       if (r.success && r.data && (r.data.make || r.data.model)) {
         const veh = { vin: v, year: r.data.year || '', make: r.data.make || '', model: r.data.model || '', trim: r.data.trim || '' }
         setVehicle(veh); setVinLocked(true)
-        if (fsa) tryPrefetch(veh, fsa)
       } else {
         setError("We couldn't find that VIN. Double-check it, or enter your vehicle details instead.")
       }
@@ -360,14 +352,12 @@ function Widget({ branding, theme } = {}) {
     // the comp search widens honestly rather than hunting for a literal match.
     const veh = { vin: '', year, make, model, trim: trim === '__other' ? '' : trim }
     setVehicle(veh)
-    if (fsa) tryPrefetch(veh, fsa)
   }
 
   function confirmFsa() {
     const f = fsa.replace(/\s+/g, '').toUpperCase().slice(0, 3)
     if (!/^[A-Z]\d[A-Z]$/.test(f)) { setError('Please enter the first 3 characters of your postal code (e.g. M6H).'); return }
     setError(''); setFsa(f); setFsaConfirmed(true); setAskFsa(false)
-    if (vehicle) tryPrefetch(vehicle, f)
   }
 
   async function submit() {

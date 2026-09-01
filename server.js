@@ -230,7 +230,8 @@ if (DATABASE_URL) {
   // Correction resubmissions update the row in place; track when and how often.
   pool.query(`ALTER TABLE pending_leads
       ADD COLUMN IF NOT EXISTS updated_at TIMESTAMPTZ,
-      ADD COLUMN IF NOT EXISTS resubmit_count INTEGER DEFAULT 0`)
+      ADD COLUMN IF NOT EXISTS resubmit_count INTEGER DEFAULT 0,
+      ADD COLUMN IF NOT EXISTS market_payload JSONB`)
     .catch(e => console.error('Leads resubmit-cols alter error:', e.message))
   // Abuse guard: which vehicles each IP has priced in the last day. Rows are
   // tiny and pruned opportunistically on read.
@@ -439,10 +440,17 @@ if (!VINAUDIT_KEY) {
 
 // ── VIN DECODE via NHTSA (free, no key needed) ──────────────────────
 // GET /api/trims?year=&make=&model= — the trims that ACTUALLY exist in the
-// Canadian market for this year/make/model, from MarketCheck facets. Used to
-// populate the appraisal form's trim picker so the value the appraiser selects
-// always matches what the comp search expects (e.g. "Sport with EyeSight",
-// not "Sport"). One cheap Inventory Search call, cached 30 days in Postgres.
+// Canadian market for this year/make/model. Used to populate the trim picker
+// so the value selected always matches what the comp search expects
+// (e.g. "Sport with EyeSight", not "Sport").
+//
+// The store is PERMANENT. A trim ladder for a past model year is a historical
+// fact — a 2018 Q3 will never gain or lose a trim — so re-buying it every 30
+// days was pure waste. Once a model is learned it is free forever.
+//
+// A live MarketCheck facet call happens ONLY when ?fetch=1 is passed, i.e. a
+// human explicitly asked to learn a model we don't have yet. Normal page loads
+// read the store and never spend a call.
 app.get('/api/trims', strictLimiter, async (req, res) => {
   const year = (req.query.year || '').toString().trim()
   const make = (req.query.make || '').toString().trim()
@@ -450,13 +458,17 @@ app.get('/api/trims', strictLimiter, async (req, res) => {
   if (!make || !model) return res.status(400).json({ error: 'make and model required' })
   if (!MARKETCHECK_API_KEY) return res.json({ success: true, trims: [] })
   const key = `trims|${year}|${make}|${model}`.toLowerCase()
-  // Cache hit
+  // Permanent store — no TTL.
   if (pool) {
     try {
-      const c = await pool.query(
-        `SELECT market FROM market_cache WHERE cache_key=$1 AND cached_at > now() - interval '30 days'`, [key])
+      const c = await pool.query(`SELECT market FROM market_cache WHERE cache_key=$1`, [key])
       if (c.rows[0]) return res.json({ success: true, trims: c.rows[0].market.trims || [], cached: true })
     } catch {}
+  }
+  // Not learned yet. Without an explicit fetch request, say so and spend
+  // nothing — the form falls back to free text plus "Mine isn't listed".
+  if (req.query.fetch !== '1') {
+    return res.json({ success: true, trims: [], known: false })
   }
   try {
     const params = new URLSearchParams({
@@ -464,8 +476,8 @@ app.get('/api/trims', strictLimiter, async (req, res) => {
       make, model, rows: '1', facets: 'trim|0|60|1',
     })
     if (year) params.set('year', year)
-    const r = await fetch(`${MC_HOST}/search/car/active?${params.toString()}`)
-    if (!r.ok) throw new Error(`MarketCheck HTTP ${r.status}`)
+    const r = await mcFetch(`${MC_HOST}/search/car/active?${params.toString()}`)
+    if (!r.ok) throw new Error(await mcErrorMessage(r))
     const d = await r.json()
     const raw = (d.facets && d.facets.trim) || []
     // Sort by frequency (facets already are), keep the label only.
@@ -1184,6 +1196,27 @@ async function mcCallsThisMonth() {
 }
 function mcFetch(url) { bumpMcCalls(); return fetch(url) }
 
+// MarketCheck returns 429 for TWO different conditions and only the response
+// body distinguishes them: a per-second rate limit (wait ~1s and retry) versus
+// the monthly quota being exhausted (nothing works until the 1st of the month).
+// Throwing a bare "HTTP 429" made these indistinguishable and surfaced to the
+// appraiser as "Server error 500", which says nothing actionable.
+async function mcErrorMessage(r) {
+  let detail = ''
+  try {
+    const body = await r.clone().json()
+    detail = (body && (body.message || body.error || body.Message)) || ''
+  } catch { /* non-JSON error body */ }
+  if (r.status === 429) {
+    const quota = /quota|monthly|exhaust/i.test(detail)
+    return quota
+      ? 'MARKETCHECK_QUOTA_EXHAUSTED: monthly API quota is used up; resets on the 1st'
+      : 'MARKETCHECK_RATE_LIMITED: too many requests per second; retry shortly'
+  }
+  if (r.status === 401 || r.status === 403) return 'MARKETCHECK_AUTH: API key rejected'
+  return `MarketCheck HTTP ${r.status}${detail ? ` — ${detail}` : ''}`
+}
+
 // Minimal FSA→lat/long resolver. MarketCheck searches by lat/long + radius; the
 // customer's FSA (first 3 of postal) is enough to anchor the local market.
 // A few high-value GTA FSAs are pinned precisely; else a province-letter bucket;
@@ -1265,8 +1298,49 @@ function neovinCore(payload) {
 
 // Full NeoVIN field set for the appraisal form (cached alongside the search
 // decode — same Postgres row, so still one paid decode per VIN ever).
+// vPIC (NHTSA) is free and unlimited. It reliably returns year/make/model and
+// often the trim/series; manufacturers submit that field inconsistently, so it
+// is blank often enough that it can't be the only source. Trying it FIRST means
+// a VIN car costs 2 MarketCheck calls (listings only) instead of 3 whenever the
+// free decode is good enough — on a 500-call quota that is ~250 cars/month
+// instead of ~167.
+async function decodeVinVpic(vin) {
+  const V = vin.toUpperCase().trim()
+  try {
+    const r = await fetch(`https://vpic.nhtsa.dot.gov/api/vehicles/decodevinvalues/${V}?format=json`)
+    if (!r.ok) return null
+    const d = await r.json()
+    const x = d.Results && d.Results[0]
+    if (!x || !x.Make) return null
+    // vPIC's Series and Trim are both used for trim depending on the maker.
+    const trim = (x.Trim || x.Series || '').toString().trim()
+    return {
+      year: (x.ModelYear || '').toString(), make: (x.Make || '').toString(),
+      model: (x.Model || '').toString(), trim,
+      version: '',
+      drivetrain: normalizeDriveLabel(x.DriveType || '', null),
+      engine: [x.DisplacementL ? `${Number(x.DisplacementL).toFixed(1)}L` : '', x.EngineCylinders ? `${x.EngineCylinders}cyl` : ''].filter(Boolean).join(' '),
+      transmission: (x.TransmissionStyle || '').toString(),
+      bodyType: (x.BodyClass || '').toString(),
+      extColour: '', intColour: '', msrp: null,
+      powertrain: (x.ElectrificationLevel || '').toString(),
+      fuelType: (x.FuelTypePrimary || '').toString(),
+      source: 'vpic',
+      v: DECODE_VERSION,
+    }
+  } catch { return null }
+}
+
+// A vPIC decode is only "good enough" if it carries the fields the comp search
+// actually depends on. Trim drives which listings we compare against, so a
+// blank trim must fall through to NeoVIN rather than quietly producing a
+// wider, weaker comp set that looks identical to a good one.
+function vpicSufficient(d) {
+  return !!(d && d.make && d.model && d.year && d.trim && d.trim.length > 1)
+}
+
 async function decodeVinRich(vin) {
-  if (!vin || vin.length !== 17 || !USE_NEOVIN || !MARKETCHECK_API_KEY) return null
+  if (!vin || vin.length !== 17) return null
   const V = vin.toUpperCase().trim()
   if (pool) {
     try {
@@ -1278,6 +1352,20 @@ async function decodeVinRich(vin) {
       if (hit && hit.v === DECODE_VERSION && hit.trim !== undefined) return hit
     } catch {}
   }
+  // Free decode first.
+  const vp = await decodeVinVpic(V)
+  if (vpicSufficient(vp)) {
+    if (pool) {
+      try {
+        await pool.query(
+          `INSERT INTO vin_decode_cache(vin, decoded) VALUES($1,$2)
+           ON CONFLICT (vin) DO UPDATE SET decoded=$2, cached_at=now()`,
+          [V, JSON.stringify(vp)])
+      } catch {}
+    }
+    return vp
+  }
+  if (!USE_NEOVIN || !MARKETCHECK_API_KEY) return vp   // vPIC's partial answer beats nothing
   try {
     const url = `${MC_HOST}/decode/car/neovin/${V}/specs?api_key=${encodeURIComponent(MARKETCHECK_API_KEY)}`
     const r = await mcFetch(url)
@@ -1522,7 +1610,7 @@ async function fetchListingsMarketCheck({ vin, specId, match, status, postal, ra
       console.error(`MarketCheck recents HTTP ${r.status} — continuing without sold data`)
       return []
     }
-    throw new Error(`MarketCheck HTTP ${r.status}`)
+    throw new Error(await mcErrorMessage(r))
   }
   let data = await r.json()
   let listings = Array.isArray(data.listings) ? data.listings : []
@@ -2215,7 +2303,9 @@ const WIDGET_DEALER = { marketPositionPct: 97, targetGross: 2500, avgRecon: 1500
 // VinAudit path as /api/market. Returns { mid, mds, compCount } or null.
 
 // ── 24h market cache (Postgres-backed) ──
-const MARKET_CACHE_TTL_HOURS = 24
+// One fetch per vehicle per 30 days. Nothing auto-refreshes; the Refresh
+// button on the appraisal/vehicle page is the only thing that spends a call.
+const MARKET_CACHE_TTL_HOURS = Number(process.env.MARKET_CACHE_TTL_HOURS || 24 * 30)
 // Bump when the comp object gains or changes fields, so cached payloads from an
 // older shape are not served as though they were complete.
 const MARKET_SHAPE_VERSION = 'v5-leadpath-parity'
@@ -2578,6 +2668,7 @@ app.post('/api/leads', leadSubmitLimiter, async (req, res) => {
                  odometer=$1, accident=$2, accident_amount=$3,
                  offer_amount=$4, base_offer=$5, accident_deduction=$6,
                  offer_breakdown=$7, market_mid=$8, confidence=$9, thin_market=$10,
+                 market_payload=COALESCE($20, market_payload),
                  condition_opinion=$11, known_issues=$12, tire_condition=$13, brake_condition=$14,
                  ownership=$15, lien_holder=$16, lien_balance=$17,
                  photos = COALESCE($18, photos),
@@ -2589,7 +2680,8 @@ app.post('/api/leads', leadSubmitLimiter, async (req, res) => {
                conditionOpinion, knownIssues, tireCondition, brakeCondition,
                ownership, lienHolder, lienBalance,
                photos.length ? JSON.stringify(photos) : null,
-               leadId]
+               leadId,
+               market ? JSON.stringify(market) : null]
             )
             console.warn(`lead CORRECTED → lead ${leadId} (resubmit #${(prev.resubmit_count || 0) + 1}): ${changesNote}`)
           }
@@ -2604,15 +2696,19 @@ app.post('/api/leads', leadSubmitLimiter, async (req, res) => {
              customer_name,customer_email,customer_phone,offer_amount,base_offer,accident_deduction,
              offer_breakdown,market_mid,confidence,thin_market,
              condition_opinion,known_issues,tire_condition,brake_condition,ownership,lien_holder,lien_balance,photos,
-             status,source)
+             market_payload,status,source)
            VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,
-             $21,$22,$23,$24,$25,$26,$27,$28,'pending',$29)
+             $21,$22,$23,$24,$25,$26,$27,$28,$29,'pending',$30)
            RETURNING id`,
           [(b.dealer || '').toString().trim(), vin, year, make, model, trim, odometer, postal,
            accident, accidentAmount, name, email, phone, offer, sb ? sb.suggested : null, deduction,
            JSON.stringify(breakdown), market ? market.mid : null, confidence, thinMarket,
            conditionOpinion, knownIssues, tireCondition, brakeCondition, ownership, lienHolder, lienBalance,
-           photos.length ? JSON.stringify(photos) : null, source]
+           photos.length ? JSON.stringify(photos) : null,
+           // The FULL comp set the offer was built from. Storing only the mid
+           // meant working the lead into an appraisal had to fetch the same car
+           // again minutes later — a second charge for data we already had.
+           market ? JSON.stringify(market) : null, source]
         )
         leadId = ins.rows[0]?.id || null
       } catch (e) { console.error('lead insert error:', e.message) }
@@ -2679,49 +2775,27 @@ app.post('/api/leads', leadSubmitLimiter, async (req, res) => {
   }
 })
 
-// POST /api/offer/prefetch — warm the 24h market cache for a VIN-or-spec + postal
-// WITHOUT creating a lead or computing a final offer. The widget fires this as
-// soon as it has the vehicle + location, so the heavy VinAudit fetch overlaps
-// with the customer filling in the rest of the form → instant offer at submit.
-app.post('/api/offer/prefetch', strictLimiter, async (req, res) => {
+// NOTE: /api/offer/prefetch was REMOVED. It warmed the market cache while the
+// customer was still filling in the widget, spending a full MarketCheck lookup
+// for every visitor who picked a vehicle — including the ones who never
+// submitted. The offer path fetches once, at submit, and caches the result.
+
+// GET /api/usage — MarketCheck calls consumed this calendar month, so the
+// quota is visible BEFORE it runs out rather than discovered as a 429 in the
+// middle of pricing a car.
+app.get('/api/usage', async (req, res) => {
   try {
-    const b = req.body || {}
-    const vin = (b.vin || '').toString().toUpperCase().trim()
-    const postal = (b.postal || '').toString().trim()
-    if (!postal) return res.status(400).json({ error: 'postal required' })
-
-    const year = (b.year || '').toString().trim()
-    const make = (b.make || '').toString().trim()
-    const model = (b.model || '').toString().trim()
-    const trim = (b.trim || '').toString().trim()
-    const specId = !vin
-      ? [year, make, model, trim].filter(Boolean).map(s => s.toLowerCase().replace(/\s+/g, '-')).join('_')
-      : null
-    if (vin.length !== 17 && !(year && make && model)) {
-      return res.status(400).json({ error: 'Provide a VIN, or year + make + model' })
-    }
-
-    // Respond immediately; warm the cache in the background so the widget isn't
-    // blocked. If already cached, this is a no-op cache hit.
-    const args = { vin: vin.length === 17 ? vin : undefined, specId, postal }
-    const key = marketCacheKey(args)
-    const already = await getCachedMarket(key)
-    if (already) return res.json({ success: true, warmed: true, cached: true })
-
-    // Prefetch spends a real MarketCheck call, so it passes the same abuse
-    // gates as submission. A gated prefetch reports success anyway — no signal
-    // to an abuser, and the submit path degrades gracefully to the specialist
-    // message on its own.
-    const gate = await leadLookupGate({ ip: req.ip, vehicleKey: key })
-    if (!gate.allowed) return res.json({ success: true, warmed: true, cached: false })
-
-    // Fire-and-forget the heavy fetch; don't await before responding.
-    recordLeadLookup(req.ip, key)
-    marketForLead(args).catch(e => console.error('prefetch warm error:', e.message))
-    res.json({ success: true, warmed: true, cached: false })
-  } catch (err) {
-    console.error('POST /api/offer/prefetch error:', err.message)
-    res.status(500).json({ error: 'prefetch failed' })
+    const used = await mcCallsThisMonth()
+    const budget = MC_MONTHLY_BUDGET
+    res.json({
+      success: true, used, budget,
+      remaining: Math.max(0, budget - used),
+      pct: budget ? Math.round((used / budget) * 100) : 0,
+      leadCutoff: Math.floor(budget * MC_LEAD_CUTOFF_PCT),
+      month: new Date().toISOString().slice(0, 7),
+    })
+  } catch (e) {
+    res.json({ success: false, error: e.message })
   }
 })
 
