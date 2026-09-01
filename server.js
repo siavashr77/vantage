@@ -216,6 +216,11 @@ if (DATABASE_URL) {
   // Add columns that may not exist on an already-created table (safe, idempotent).
   pool.query(`ALTER TABLE pending_leads ADD COLUMN IF NOT EXISTS thin_market BOOLEAN DEFAULT false`)
     .catch(e => console.error('Leads alter error:', e.message))
+  // Soft delete, matching appraisals and vehicles. Leads are customer records,
+  // so removing one hides it rather than destroying it — a lead deleted by
+  // mistake is recoverable by clearing this column.
+  pool.query(`ALTER TABLE pending_leads ADD COLUMN IF NOT EXISTS deleted_at TIMESTAMPTZ`)
+    .catch(e => console.error('Leads alter error:', e.message))
   // Customer-reported detail (appraiser context only — does NOT affect the offer).
   pool.query(`ALTER TABLE pending_leads
       ADD COLUMN IF NOT EXISTS condition_opinion TEXT,
@@ -2806,8 +2811,8 @@ app.get('/api/leads', requireTeamKey, async (req, res) => {
   try {
     const status = (req.query.status || '').toString().trim()
     const params = []
-    let where = ''
-    if (status) { params.push(status); where = 'WHERE status = $1' }
+    let where = 'WHERE deleted_at IS NULL'
+    if (status) { params.push(status); where += ' AND status = $1' }
     const r = await pool.query(
       `SELECT * FROM pending_leads ${where} ORDER BY created_at DESC LIMIT 500`, params
     )
@@ -2834,6 +2839,25 @@ app.patch('/api/leads/:id', requireTeamKey, async (req, res) => {
   } catch (e) {
     console.error('PATCH /api/leads error:', e.message)
     res.status(500).json({ error: 'Could not update lead' })
+  }
+})
+
+// DELETE /api/leads/:id — soft delete, mirroring appraisals and vehicles.
+// The row stays; GET /api/leads stops returning it. Clearing deleted_at in the
+// database brings it back, so a mistaken bulk delete is not a data loss event.
+app.delete('/api/leads/:id', requireTeamKey, async (req, res) => {
+  logAccess(req, 'leads.delete', { subject: 'lead', subjectId: req.params.id })
+  if (!pool) return res.status(503).json({ error: 'No database connected' })
+  const id = Number(req.params.id)
+  if (!Number.isFinite(id)) return res.status(400).json({ error: 'Invalid id' })
+  try {
+    const r = await pool.query(
+      'UPDATE pending_leads SET deleted_at=now() WHERE id=$1 AND deleted_at IS NULL RETURNING id', [id])
+    if (!r.rows.length) return res.status(404).json({ error: 'Lead not found' })
+    res.json({ success: true })
+  } catch (e) {
+    console.error('DELETE /api/leads error:', e.message)
+    res.status(500).json({ error: 'Could not delete lead' })
   }
 })
 
