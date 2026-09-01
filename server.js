@@ -2313,7 +2313,24 @@ const WIDGET_DEALER = { marketPositionPct: 97, targetGross: 2500, avgRecon: 1500
 const MARKET_CACHE_TTL_HOURS = Number(process.env.MARKET_CACHE_TTL_HOURS || 24 * 30)
 // Bump when the comp object gains or changes fields, so cached payloads from an
 // older shape are not served as though they were complete.
-const MARKET_SHAPE_VERSION = 'v5-leadpath-parity'
+//
+// MUST equal MARKET_SHAPE in src/App.jsx. The appraisal page refetches whenever
+// the stamp on a payload differs from its own constant, so while this read
+// 'v5-leadpath-parity' and the frontend read 'v8-specfix' the comparison could
+// never come out equal: every appraisal holding comps refetched on EVERY open,
+// and each fresh payload was stale the moment it arrived. Measured before the
+// fix: 4 calls to open a lead-converted appraisal, 2 more to re-open the same
+// car a minute later with same-day comps already on screen.
+//
+// Matching the frontend's value here rather than the other way round costs one
+// cache generation — this string is part of the market cache key below, so
+// changing it orphans every warm entry. That was the cheaper trade only because
+// the appraisals and inventory those entries backed had just been cleared out.
+// Records still carrying the old stamp refetch once and then settle, which is
+// the self-healing this version check was designed for.
+//
+// Change the two constants in the same commit. Never one alone.
+const MARKET_SHAPE_VERSION = 'v8-specfix'
 // Build a stable cache key from VIN-or-spec + FSA (first 3 of postal). FSA-level
 // keying means nearby customers share a warm entry and the comp set is the same.
 function marketCacheKey({ vin, specId, postal }) {
